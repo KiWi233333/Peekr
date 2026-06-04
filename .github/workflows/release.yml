@@ -71,11 +71,17 @@ jobs:
           ditto -c -k --keepParent build/Peekr.app "dist/Peekr-${{ steps.meta.outputs.version }}.app.zip"
           ls -la dist
 
+      # Upload only the real outputs. `dist/stage/` holds an `Applications`
+      # symlink to /Applications (for the DMG drag-install affordance), and
+      # upload-artifact follows symlinks — `dist/*` would walk it and try to
+      # upload the runner's entire /Applications (Xcode included), hanging the job.
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
           name: peekr-${{ steps.meta.outputs.version }}
-          path: dist/*
+          path: |
+            dist/*.dmg
+            dist/*.app.zip
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
