@@ -1,8 +1,8 @@
 import SwiftUI
-import WebKit
 
-/// Hosts the active (cached) WKWebView. Re-attaches when `currentID` changes;
-/// the view itself is owned by `WebViewManager` so it survives swaps.
+/// Hosts the active (cached) web page view. Re-attaches when `currentID`
+/// changes; the view itself is owned by `WebViewManager` (via its `WebEngine`)
+/// so it survives swaps.
 struct WebContainer: NSViewRepresentable {
     let manager: WebViewManager
     let currentID: UUID?

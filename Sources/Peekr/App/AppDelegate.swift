@@ -23,7 +23,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         icons = IconStore()
         icons.warm(model.apps)
 
-        manager = WebViewManager(model: model)
+        manager = WebViewManager(model: model, factory: WebKitEngineFactory())
         panel = PanelController(model: model, settings: settings, manager: manager, icons: icons, bookmarks: bookmarks)
         panel.onVisibilityChange = { [weak self] visible in self?.edge.setArmed(!visible) }
 
