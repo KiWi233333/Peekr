@@ -178,7 +178,15 @@ final class PanelController {
         }
         settings.panelWidth = min(max(PanelGeometry.minSize.width, w), Double(vf.width))
         settings.panelHeight = min(max(PanelGeometry.minSize.height, h), Double(vf.height))
+        // Suppress implicit layer animations during the live drag. The glass
+        // backdrop (NSGlassEffectView) animates its bounds by default, which
+        // makes the panel lag behind the cursor ("resistance") on every frame.
+        // Disabling actions makes the resize track the cursor 1:1; the snap
+        // animation on `animate(...)` still applies elsewhere.
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
         panel.setFrame(currentLayout(on: screen).onscreen, display: true)
+        CATransaction.commit()
     }
 
     private func resizeEnded() {

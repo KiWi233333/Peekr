@@ -32,6 +32,12 @@ enum Theme {
     static let webCardCorner: CGFloat = 14
 }
 
+// `Glass`/`glassEffect`/`NSGlassEffectView`/`GlassEffectContainer` only exist in
+// the macOS 26 SDK (Xcode 26 = Swift 6.2). `@available` is a *runtime* guard and
+// can't hide a missing type from an older SDK, so the macOS-26 code paths are
+// also fenced behind `#if compiler(>=6.2)` — that's what lets Peekr still
+// compile on Xcode 16 / macOS 15, falling back to the material everywhere.
+#if compiler(>=6.2)
 @available(macOS 26.0, *)
 private func peekrGlass(tint: Color?, interactive: Bool) -> Glass {
     var glass: Glass = .regular
@@ -39,20 +45,32 @@ private func peekrGlass(tint: Color?, interactive: Bool) -> Glass {
     if interactive { glass = glass.interactive() }
     return glass
 }
+#endif
 
 extension View {
     /// Liquid Glass material clipped to `shape`. Real glass on Tahoe (26+),
-    /// `.ultraThinMaterial` with a hairline below.
+    /// `.ultraThinMaterial` with a hairline below (and when built pre-Xcode 26).
     @ViewBuilder
     func liquidGlass<S: Shape>(in shape: S, tint: Color? = nil, interactive: Bool = false) -> some View {
+        #if compiler(>=6.2)
         if #available(macOS 26.0, *) {
             self.glassEffect(peekrGlass(tint: tint, interactive: interactive), in: shape)
         } else {
-            self
-                .background(.ultraThinMaterial, in: shape)
-                .overlay(shape.stroke(.white.opacity(0.12), lineWidth: 0.8))
-                .shadow(color: .black.opacity(0.18), radius: 8, y: 3)
+            fallbackGlass(in: shape)
         }
+        #else
+        fallbackGlass(in: shape)
+        #endif
+    }
+
+    /// Frosted-material substitute used below macOS 26 or when built with an
+    /// older SDK that has no Liquid Glass.
+    @ViewBuilder
+    private func fallbackGlass<S: Shape>(in shape: S) -> some View {
+        self
+            .background(.ultraThinMaterial, in: shape)
+            .overlay(shape.stroke(.white.opacity(0.12), lineWidth: 0.8))
+            .shadow(color: .black.opacity(0.18), radius: 8, y: 3)
     }
 }
 
@@ -62,11 +80,13 @@ extension View {
 /// `liquidGlass`, so glass selection still lives in exactly one place.
 @MainActor
 func makePanelBackdrop(cornerRadius: CGFloat) -> NSView {
+    #if compiler(>=6.2)
     if #available(macOS 26.0, *) {
         let glass = NSGlassEffectView()
         glass.cornerRadius = cornerRadius
         return glass
     }
+    #endif
     let effect = NSVisualEffectView()
     effect.material = .popover
     effect.blendingMode = .behindWindow
@@ -99,9 +119,13 @@ func GlassGroup<Content: View>(
     spacing: CGFloat = 22,
     @ViewBuilder content: () -> Content
 ) -> some View {
+    #if compiler(>=6.2)
     if #available(macOS 26.0, *) {
         GlassEffectContainer(spacing: spacing) { content() }
     } else {
         content()
     }
+    #else
+    content()
+    #endif
 }
