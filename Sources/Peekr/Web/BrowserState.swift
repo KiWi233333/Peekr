@@ -13,6 +13,8 @@ final class BrowserState {
     var progress: Double = 0
     var urlString = ""
     var title = ""
+    /// Bumped to ask the nav bar to focus its omnibox (⌘L).
+    var focusOmniboxToken = 0
 
     /// Compact label for the omnibox when it isn't being edited.
     var displayURL: String {

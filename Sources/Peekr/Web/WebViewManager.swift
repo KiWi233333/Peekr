@@ -100,25 +100,29 @@ final class WebViewManager: NSObject {
     private func bindObservers(to view: WKWebView) {
         observations.forEach { $0.invalidate() }
         observations = [
-            view.observe(\.canGoBack, options: [.initial, .new]) { [weak self] wv, _ in
-                self?.state.canGoBack = wv.canGoBack
-            },
-            view.observe(\.canGoForward, options: [.initial, .new]) { [weak self] wv, _ in
-                self?.state.canGoForward = wv.canGoForward
-            },
-            view.observe(\.isLoading, options: [.initial, .new]) { [weak self] wv, _ in
-                self?.state.isLoading = wv.isLoading
-            },
-            view.observe(\.estimatedProgress, options: [.initial, .new]) { [weak self] wv, _ in
-                self?.state.progress = wv.estimatedProgress
-            },
-            view.observe(\.url, options: [.initial, .new]) { [weak self] wv, _ in
-                self?.state.urlString = wv.url?.absoluteString ?? ""
-            },
-            view.observe(\.title, options: [.initial, .new]) { [weak self] wv, _ in
-                self?.state.title = wv.title ?? ""
-            }
+            bind(view, \.canGoBack) { $0.canGoBack = $1 },
+            bind(view, \.canGoForward) { $0.canGoForward = $1 },
+            bind(view, \.isLoading) { $0.isLoading = $1 },
+            bind(view, \.estimatedProgress) { $0.progress = $1 },
+            bind(view, \.url) { $0.urlString = $1?.absoluteString ?? "" },
+            bind(view, \.title) { $0.title = $1 ?? "" }
         ]
+    }
+
+    /// Observe a WKWebView key path and mirror it into `state` on the main actor.
+    /// WKWebView posts these KVO notifications on the main thread already.
+    private func bind<Value: Sendable>(
+        _ view: WKWebView,
+        _ keyPath: KeyPath<WKWebView, Value>,
+        apply: @escaping @MainActor (BrowserState, Value) -> Void
+    ) -> NSKeyValueObservation {
+        view.observe(keyPath, options: [.initial, .new]) { [weak self] _, change in
+            guard let value = change.newValue else { return }
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                apply(self.state, value)
+            }
+        }
     }
 
     /// Per-app persistent isolation needs a bundle identifier; fall back to the

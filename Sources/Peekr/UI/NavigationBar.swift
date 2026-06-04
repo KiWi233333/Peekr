@@ -31,6 +31,7 @@ struct NavigationBar: View {
             text = isFocused ? state.urlString : state.displayURL
         }
         .onChange(of: state.urlString) { _, _ in if !focused { syncText() } }
+        .onChange(of: state.focusOmniboxToken) { _, _ in focused = true }
     }
 
     // MARK: - Pieces

@@ -161,9 +161,29 @@ final class PanelController {
             return event
         }
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown]) { [weak self] event in
-            if event.keyCode == 53 { self?.hide(); return nil } // Escape
+            guard let self else { return event }
+            if event.keyCode == 53 { self.hide(); return nil } // Escape
+            if event.modifierFlags.contains(.command), self.handleCommand(event) { return nil }
             return event
         }
+    }
+
+    /// Browser-style shortcuts while the panel is key. Returns true if consumed.
+    private func handleCommand(_ event: NSEvent) -> Bool {
+        guard let chars = event.charactersIgnoringModifiers else { return false }
+        switch chars {
+        case "l": manager.state.focusOmniboxToken += 1
+        case "r": manager.reloadOrStop()
+        case "[": manager.goBack()
+        case "]": manager.goForward()
+        case "w": hide()
+        default:
+            guard let n = Int(chars), (1...9).contains(n), n - 1 < model.apps.count else { return false }
+            let id = model.apps[n - 1].id
+            model.select(id)
+            manager.activate(id)
+        }
+        return true
     }
 
     private func removeMonitors() {
