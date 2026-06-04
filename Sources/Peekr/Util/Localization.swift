@@ -32,6 +32,11 @@ struct Localized {
     var pinOpen: String { t("Pin Open", "固定常开") }
     var preferences: String { t("Preferences…", "偏好设置…") }
     var quit: String { t("Quit Peekr", "退出 Peekr") }
+    var quitConfirmTitle: String { t("Quit Peekr?", "退出 Peekr？") }
+    var quitConfirmMessage: String {
+        t("Peekr and all open web pages will close.",
+          "将关闭 Peekr 和所有打开的网页。")
+    }
 
     // Main menu — editing (drives the ⌘X/C/V/A/Z key equivalents)
     var editMenu: String { t("Edit", "编辑") }

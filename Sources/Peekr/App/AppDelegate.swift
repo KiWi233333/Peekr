@@ -55,6 +55,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         applyBookmarkSync()
     }
 
+    /// Confirm before quitting — ⌘Q is easy to fat-finger while browsing in the
+    /// panel. Every quit path (the ⌘Q menu item, the status-bar item, logout)
+    /// funnels through `terminate(_:)`, so this one hook guards them all.
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        let loc = settings.strings
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = loc.quitConfirmTitle
+        alert.informativeText = loc.quitConfirmMessage
+        alert.addButton(withTitle: loc.quit)    // .alertFirstButtonReturn
+        alert.addButton(withTitle: loc.cancel)
+        // An .accessory agent isn't frontmost; without activating, the alert
+        // opens behind the active app where the user can't see it.
+        NSApp.activate(ignoringOtherApps: true)
+        return alert.runModal() == .alertFirstButtonReturn ? .terminateNow : .terminateCancel
+    }
+
     /// (Re)arm the periodic bookmark re-import based on the current setting.
     private func applyBookmarkSync() {
         bookmarkSyncTimer?.invalidate()
