@@ -29,7 +29,7 @@ final class PreferencesWindowController {
                 backing: .buffered,
                 defer: false
             )
-            window.title = "Peekr Preferences"
+            window.title = settings.strings.preferencesWindowTitle
             window.titlebarAppearsTransparent = true
             window.isReleasedWhenClosed = false
             window.center()

@@ -31,9 +31,7 @@ struct WebApp: Identifiable, Codable, Hashable {
 
     var url: URL? { URL(string: urlString) }
 
-    var host: String? {
-        url?.host?.replacingOccurrences(of: "www.", with: "")
-    }
+    var host: String? { url?.displayHost }
 
     var monogram: String {
         let source = title.isEmpty ? (host ?? "?") : title

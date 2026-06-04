@@ -1,6 +1,21 @@
 import Foundation
 import Observation
 
+/// How often to re-import bookmarks from the browsers already imported.
+enum BookmarkSyncInterval: String, Codable, CaseIterable, Identifiable {
+    case off, hourly, daily
+    var id: String { rawValue }
+
+    /// Repeat interval in seconds, or nil when disabled.
+    var seconds: TimeInterval? {
+        switch self {
+        case .off: return nil
+        case .hourly: return 3600
+        case .daily: return 86_400
+        }
+    }
+}
+
 /// Codable snapshot of all preferences — drives persistence + change detection.
 /// `panelWidth`/`panelHeight` of 0 mean "auto" (a ratio of the screen).
 struct SettingsData: Codable, Equatable {
@@ -15,6 +30,7 @@ struct SettingsData: Codable, Equatable {
     var lastScreenNumber: Int? = nil
     var autoHide: Bool = true
     var language: AppLanguage = .system
+    var bookmarkSync: BookmarkSyncInterval = .off
 
     init() {}
 
@@ -35,6 +51,7 @@ struct SettingsData: Codable, Equatable {
         lastScreenNumber = (try? c.decodeIfPresent(Int.self, forKey: .lastScreenNumber)) ?? nil
         autoHide = v(.autoHide, true)
         language = v(.language, .system)
+        bookmarkSync = v(.bookmarkSync, .off)
     }
 }
 
@@ -54,6 +71,7 @@ final class Settings {
     var lastScreenNumber: Int?
     var autoHide: Bool
     var language: AppLanguage
+    var bookmarkSync: BookmarkSyncInterval
 
     private let store: SettingsStore
 
@@ -71,6 +89,7 @@ final class Settings {
         lastScreenNumber = d.lastScreenNumber
         autoHide = d.autoHide
         language = d.language
+        bookmarkSync = d.bookmarkSync
     }
 
     var snapshot: SettingsData {
@@ -79,6 +98,7 @@ final class Settings {
         s.hoverDelay = hoverDelay; s.edgeThreshold = edgeThreshold; s.hotKey = hotKey
         s.launchAtLogin = launchAtLogin; s.followCursor = followCursor
         s.lastScreenNumber = lastScreenNumber; s.autoHide = autoHide; s.language = language
+        s.bookmarkSync = bookmarkSync
         return s
     }
 

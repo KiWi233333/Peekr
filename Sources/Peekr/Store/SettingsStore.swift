@@ -5,12 +5,7 @@ struct SettingsStore {
     let fileURL: URL
 
     init() {
-        let fm = FileManager.default
-        let base = (fm.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
-            ?? fm.homeDirectoryForCurrentUser)
-            .appendingPathComponent("Peekr", isDirectory: true)
-        try? fm.createDirectory(at: base, withIntermediateDirectories: true)
-        fileURL = base.appendingPathComponent("settings.json")
+        fileURL = AppPaths.supportDirectory.appendingPathComponent("settings.json")
     }
 
     func load() -> SettingsData {

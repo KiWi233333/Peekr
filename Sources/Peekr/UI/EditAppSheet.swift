@@ -18,7 +18,10 @@ struct EditAppSheet: View {
     @State private var title: String
     @State private var urlString: String
     @State private var pendingIconURL: URL?
+    @State private var pendingLibraryImage: NSImage?
     @State private var previewImage: NSImage?
+    @State private var librarySlug = ""
+    @State private var libraryLoading = false
 
     init(target: EditTarget, model: AppModel, settings: Settings, icons: IconStore, onClose: @escaping () -> Void) {
         self.target = target
@@ -46,6 +49,8 @@ struct EditAppSheet: View {
                     field(loc.address, text: $urlString, placeholder: "https://github.com")
                 }
             }
+
+            libraryRow
 
             HStack {
                 Button(loc.cancel, role: .cancel) { onClose() }
@@ -81,10 +86,29 @@ struct EditAppSheet: View {
 
             Button(loc.chooseIcon) { chooseIcon() }
                 .controlSize(.small)
-            if pendingIconURL != nil || (target.app?.usesCustomIcon ?? false) {
+            if pendingIconURL != nil || pendingLibraryImage != nil || (target.app?.usesCustomIcon ?? false) {
                 Button(loc.useFavicon) { resetIcon() }
                     .controlSize(.small)
             }
+        }
+    }
+
+    /// Pick a monochrome brand glyph from the simple-icons library by slug.
+    private var libraryRow: some View {
+        HStack(spacing: 8) {
+            Text(loc.iconLibrary)
+                .font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
+            TextField(loc.iconLibraryHint, text: $librarySlug)
+                .textFieldStyle(.roundedBorder)
+                .onSubmit(fetchLibraryIcon)
+            Button(action: fetchLibraryIcon) {
+                if libraryLoading {
+                    ProgressView().controlSize(.small)
+                } else {
+                    Image(systemName: "magnifyingglass")
+                }
+            }
+            .disabled(libraryLoading)
         }
     }
 
@@ -111,17 +135,45 @@ struct EditAppSheet: View {
 
     private func resetIcon() {
         pendingIconURL = nil
-        if let app = target.app {
-            icons.clearCustomIcon(app)
-            previewImage = nil
+        pendingLibraryImage = nil
+        if let app = target.app { icons.clearCustomIcon(app) }
+        previewImage = nil
+    }
+
+    private func fetchLibraryIcon() {
+        var slug = librarySlug.trimmingCharacters(in: .whitespaces)
+        if slug.isEmpty { slug = guessedSlug(); librarySlug = slug }
+        guard !slug.isEmpty, !libraryLoading else { return }
+        libraryLoading = true
+        Task {
+            let image = await IconStore.libraryIcon(slug: slug)
+            libraryLoading = false
+            if let image {
+                previewImage = image
+                pendingLibraryImage = image
+                pendingIconURL = nil
+            }
         }
     }
 
+    /// Best-guess simple-icons slug from the URL host's main label, else title.
+    private func guessedSlug() -> String {
+        if let host = URL(string: resolvedURLString())?.displayHost {
+            return (host.split(separator: ".").first.map(String.init) ?? host).lowercased()
+        }
+        return title.lowercased().replacingOccurrences(of: " ", with: "")
+    }
+
+    /// The URL with an `https://` scheme prepended when the user omitted one.
+    private func resolvedURLString() -> String {
+        let raw = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
+        return raw.lowercased().hasPrefix("http") ? raw : "https://" + raw
+    }
+
     private func save() {
-        var resolved = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !resolved.lowercased().hasPrefix("http") { resolved = "https://" + resolved }
+        let resolved = resolvedURLString()
         let resolvedTitle = title.trimmingCharacters(in: .whitespaces).isEmpty
-            ? (URL(string: resolved)?.host?.replacingOccurrences(of: "www.", with: "") ?? resolved)
+            ? (URL(string: resolved)?.displayHost ?? resolved)
             : title
 
         var app: WebApp
@@ -130,7 +182,9 @@ struct EditAppSheet: View {
             let urlChanged = existing.urlString != resolved
             app.title = resolvedTitle
             app.urlString = resolved
-            if let iconURL = pendingIconURL {
+            if let libImage = pendingLibraryImage {
+                app.usesCustomIcon = icons.setCustomIcon(app, image: libImage)
+            } else if let iconURL = pendingIconURL {
                 app.usesCustomIcon = icons.setCustomIcon(app, from: iconURL)
             } else if urlChanged && !app.usesCustomIcon {
                 icons.refreshFavicon(app)
@@ -138,7 +192,10 @@ struct EditAppSheet: View {
             model.update(app)
         } else {
             app = model.addApp(title: resolvedTitle, urlString: resolved)
-            if let iconURL = pendingIconURL, icons.setCustomIcon(app, from: iconURL) {
+            if let libImage = pendingLibraryImage, icons.setCustomIcon(app, image: libImage) {
+                app.usesCustomIcon = true
+                model.update(app)
+            } else if let iconURL = pendingIconURL, icons.setCustomIcon(app, from: iconURL) {
                 app.usesCustomIcon = true
                 model.update(app)
             } else {

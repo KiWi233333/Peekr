@@ -1,4 +1,5 @@
 import AppKit
+import Carbon.HIToolbox
 import SwiftUI
 
 /// Owns the slide panel: anchoring, slide animation, edge auto-hide, pin,
@@ -12,11 +13,12 @@ final class PanelController {
     let settings: Settings
     let manager: WebViewManager
     let icons: IconStore
+    let bookmarks: BookmarksModel
 
     var onVisibilityChange: ((Bool) -> Void)?
 
     private let panel: SlidePanel
-    private let backdrop = NSVisualEffectView()
+    private let backdrop = makePanelBackdrop(cornerRadius: Theme.panelCorner)
     private var hosting: NSHostingView<PanelRootView>!
 
     private(set) var isVisible = false
@@ -30,11 +32,12 @@ final class PanelController {
     private var dragStartMouse: NSPoint = .zero
     private var resizeStartSize: NSSize = .zero
 
-    init(model: AppModel, settings: Settings, manager: WebViewManager, icons: IconStore) {
+    init(model: AppModel, settings: Settings, manager: WebViewManager, icons: IconStore, bookmarks: BookmarksModel) {
         self.model = model
         self.settings = settings
         self.manager = manager
         self.icons = icons
+        self.bookmarks = bookmarks
 
         panel = SlidePanel(contentRect: NSRect(x: 0, y: 0, width: 440, height: 640))
 
@@ -43,14 +46,11 @@ final class PanelController {
         container.layer?.cornerRadius = Theme.panelCorner
         container.layer?.masksToBounds = true
 
-        backdrop.material = .popover
-        backdrop.blendingMode = .behindWindow
-        backdrop.state = .active
         backdrop.frame = container.bounds
         backdrop.autoresizingMask = [.width, .height]
         container.addSubview(backdrop)
 
-        hosting = NSHostingView(rootView: PanelRootView.placeholder(model: model, settings: settings, manager: manager, icons: icons))
+        hosting = NSHostingView(rootView: PanelRootView.placeholder(model: model, settings: settings, manager: manager, icons: icons, bookmarks: bookmarks))
         hosting.frame = container.bounds
         hosting.autoresizingMask = [.width, .height]
         container.addSubview(hosting)
@@ -58,7 +58,7 @@ final class PanelController {
 
         // Real callbacks once self is fully initialised.
         hosting.rootView = PanelRootView(
-            model: model, settings: settings, manager: manager, icons: icons,
+            model: model, settings: settings, manager: manager, icons: icons, bookmarks: bookmarks,
             onMoveBegan: { [weak self] in self?.moveBegan() },
             onMoveChanged: { [weak self] t in self?.moveChanged(t) },
             onMoveEnded: { [weak self] in self?.moveEnded() },
@@ -176,8 +176,8 @@ final class PanelController {
         case .top:      h = resizeStartSize.height + dy
         case .bottom:   h = resizeStartSize.height - dy
         }
-        settings.panelWidth = min(max(280, w), Double(vf.width))
-        settings.panelHeight = min(max(240, h), Double(vf.height))
+        settings.panelWidth = min(max(PanelGeometry.minSize.width, w), Double(vf.width))
+        settings.panelHeight = min(max(PanelGeometry.minSize.height, h), Double(vf.height))
         panel.setFrame(currentLayout(on: screen).onscreen, display: true)
     }
 
@@ -198,7 +198,7 @@ final class PanelController {
         }
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown]) { [weak self] event in
             guard let self else { return event }
-            if event.keyCode == 53 { self.hide(); return nil } // Escape
+            if event.keyCode == UInt16(kVK_Escape) { self.hide(); return nil }
             if event.modifierFlags.contains(.command), self.handleCommand(event) { return nil }
             return event
         }

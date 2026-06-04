@@ -8,6 +8,7 @@ struct PanelRootView: View {
     let settings: Settings
     let manager: WebViewManager
     let icons: IconStore
+    let bookmarks: BookmarksModel
 
     var onMoveBegan: () -> Void
     var onMoveChanged: (CGSize) -> Void
@@ -18,17 +19,19 @@ struct PanelRootView: View {
     var onResizeEnded: () -> Void
 
     @State private var editTarget: EditTarget?
+    @State private var bookmarksOpen = false
     @State private var moving = false
 
     /// Initial root for the hosting view before the controller wires callbacks.
-    static func placeholder(model: AppModel, settings: Settings, manager: WebViewManager, icons: IconStore) -> PanelRootView {
+    static func placeholder(model: AppModel, settings: Settings, manager: WebViewManager, icons: IconStore, bookmarks: BookmarksModel) -> PanelRootView {
         PanelRootView(
-            model: model, settings: settings, manager: manager, icons: icons,
+            model: model, settings: settings, manager: manager, icons: icons, bookmarks: bookmarks,
             onMoveBegan: {}, onMoveChanged: { _ in }, onMoveEnded: {}, onModalChange: { _ in },
             onResizeBegan: {}, onResizeChanged: { _, _ in }, onResizeEnded: {}
         )
     }
 
+    private var isModalOpen: Bool { editTarget != nil || bookmarksOpen }
     private var anchor: PanelAnchor { settings.anchor }
     private var widthEdge: PanelResizeEdge { anchor.isRightSide ? .leading : .trailing }
     private var heightEdge: PanelResizeEdge { anchor.isTopSide ? .bottom : .top }
@@ -77,7 +80,15 @@ struct PanelRootView: View {
         .sheet(item: $editTarget) { target in
             EditAppSheet(target: target, model: model, settings: settings, icons: icons) { editTarget = nil }
         }
-        .onChange(of: editTarget != nil) { _, open in onModalChange(open) }
+        .sheet(isPresented: $bookmarksOpen) {
+            BookmarkSheet(
+                bookmarks: bookmarks, settings: settings,
+                onOpen: { manager.loadAddress($0); bookmarksOpen = false },
+                onClose: { bookmarksOpen = false }
+            )
+        }
+        .onChange(of: editTarget != nil) { _, _ in onModalChange(isModalOpen) }
+        .onChange(of: bookmarksOpen) { _, _ in onModalChange(isModalOpen) }
         .animation(.smooth(duration: 0.3), value: anchor.railOnLeft)
     }
 
@@ -86,16 +97,25 @@ struct PanelRootView: View {
             model: model, settings: settings, icons: icons,
             onSelect: { id in manager.activate(id); model.select(id) },
             onAdd: { editTarget = EditTarget(app: nil) },
-            onEdit: { editTarget = EditTarget(app: $0) }
+            onEdit: { editTarget = EditTarget(app: $0) },
+            onWorkspaceSwitched: {
+                // Re-point the web area at the new workspace's active tab.
+                if let id = model.selectedID {
+                    manager.activate(id)
+                    model.select(id)
+                } else {
+                    manager.state.currentID = nil
+                }
+            }
         )
     }
 
     private var webArea: some View {
         ZStack(alignment: .top) {
             WebContainer(manager: manager, currentID: manager.state.currentID)
-                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                .clipShape(RoundedRectangle(cornerRadius: Theme.webCardCorner, style: .continuous))
                 .overlay {
-                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    RoundedRectangle(cornerRadius: Theme.webCardCorner, style: .continuous)
                         .stroke(Theme.hairline, lineWidth: 1)
                 }
                 .shadow(color: .black.opacity(0.16), radius: 10, y: 4)
@@ -104,7 +124,9 @@ struct PanelRootView: View {
 
             NavigationBar(
                 state: manager.state, manager: manager, settings: settings,
-                onMoveBegan: onMoveBegan, onMoveChanged: onMoveChanged, onMoveEnded: onMoveEnded
+                model: model, bookmarks: bookmarks,
+                onMoveBegan: onMoveBegan, onMoveChanged: onMoveChanged, onMoveEnded: onMoveEnded,
+                onBookmarks: { bookmarksOpen = true }
             )
             .padding(.horizontal, 12)
             .padding(.top, 8)

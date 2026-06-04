@@ -14,6 +14,11 @@ enum PanelResizeEdge {
 /// where it docks (flush to an edge/corner) and the slide-in direction — never
 /// the size. Aligns with SlidePad's resizable slide-over.
 enum PanelGeometry {
+    /// Floor the user can shrink the panel to — shared by the resize handles and
+    /// the preferences sliders so both agree on the minimum. (The maximum is the
+    /// screen's visible size when resizing; a fixed cap in the sliders.)
+    static let minSize = NSSize(width: 280, height: 240)
+
     /// On-screen (docked) and off-screen (hidden) frames for an anchor + size.
     static func layout(anchor: PanelAnchor, screen: NSScreen, size: NSSize) -> PanelLayout {
         let vf = screen.visibleFrame

@@ -62,7 +62,8 @@ final class WebViewManager: NSObject {
     }
 
     static func url(fromOmnibox text: String) -> URL? {
-        if text.lowercased().hasPrefix("http://") || text.lowercased().hasPrefix("https://") {
+        let lower = text.lowercased()
+        if lower.hasPrefix("http://") || lower.hasPrefix("https://") {
             return URL(string: text)
         }
         let looksLikeDomain = !text.contains(" ") && text.contains(".")

@@ -63,8 +63,8 @@ private struct GeneralTab: View {
             }
 
             Section(loc.panel) {
-                slider(loc.width, value: widthBinding, range: 280...1400, unit: "pt")
-                slider(loc.height, value: heightBinding, range: 240...1600, unit: "pt")
+                slider(loc.width, value: widthBinding, range: Double(PanelGeometry.minSize.width)...1400, unit: "pt")
+                slider(loc.height, value: heightBinding, range: Double(PanelGeometry.minSize.height)...1600, unit: "pt")
                 HStack {
                     Spacer()
                     Button(loc.defaultSize) {
@@ -88,6 +88,11 @@ private struct GeneralTab: View {
                 Picker(loc.language, selection: $settings.language) {
                     ForEach(AppLanguage.allCases) { lang in
                         Text(lang.nativeName).tag(lang)
+                    }
+                }
+                Picker(loc.bookmarkSync, selection: $settings.bookmarkSync) {
+                    ForEach(BookmarkSyncInterval.allCases) { interval in
+                        Text(loc.syncIntervalName(interval)).tag(interval)
                     }
                 }
             }
@@ -202,6 +207,7 @@ private struct AppsTab: View {
     let settings: Settings
     let icons: IconStore
     @State private var editTarget: EditTarget?
+    @State private var importing = false
 
     private var loc: Localized { settings.strings }
 
@@ -235,6 +241,9 @@ private struct AppsTab: View {
                 Button { editTarget = EditTarget(app: nil) } label: {
                     Label(loc.addWebApp, systemImage: "plus")
                 }
+                Button { importing = true } label: {
+                    Label(loc.importOpenTabs, systemImage: "square.and.arrow.down.on.square")
+                }
                 Spacer()
                 Text(loc.appsCount(model.apps.count))
                     .font(.caption).foregroundStyle(.secondary)
@@ -243,6 +252,9 @@ private struct AppsTab: View {
         }
         .sheet(item: $editTarget) { target in
             EditAppSheet(target: target, model: model, settings: settings, icons: icons) { editTarget = nil }
+        }
+        .sheet(isPresented: $importing) {
+            ImportTabsSheet(model: model, settings: settings, icons: icons) { importing = false }
         }
     }
 }

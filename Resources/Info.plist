@@ -24,5 +24,7 @@
     <true/>
     <key>NSPrincipalClass</key>
     <string>NSApplication</string>
+    <key>NSAppleEventsUsageDescription</key>
+    <string>Peekr reads the tabs currently open in your browsers so you can add them as web apps.</string>
 </dict>
 </plist>

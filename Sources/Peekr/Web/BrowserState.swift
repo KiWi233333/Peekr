@@ -18,7 +18,6 @@ final class BrowserState {
 
     /// Compact label for the omnibox when it isn't being edited.
     var displayURL: String {
-        guard let host = URL(string: urlString)?.host else { return urlString }
-        return host.replacingOccurrences(of: "www.", with: "")
+        URL(string: urlString)?.displayHost ?? urlString
     }
 }
