@@ -112,9 +112,9 @@ private struct AnchorGrid: View {
     @Binding var selection: PanelAnchor
 
     private let layout: [[PanelAnchor?]] = [
-        [.topLeft, .top, .topRight],
+        [.topLeft, nil, .topRight],
         [.left, nil, .right],
-        [.bottomLeft, .bottom, .bottomRight]
+        [.bottomLeft, nil, .bottomRight]
     ]
 
     var body: some View {

@@ -22,6 +22,12 @@ final class SlidePanel: NSPanel {
         isReleasedWhenClosed = false
         animationBehavior = .none
         collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
+
+        // Keep the active web app's timers / requestAnimationFrame running while
+        // the panel is occluded or slid off-screen — WebKit otherwise throttles
+        // offscreen views to ~1 Hz (browser-correct, but wrong for a live
+        // slide-over). See the native-feel WebView survival guide, A.1.
+        setValue(false, forKey: "windowOcclusionDetectionEnabled")
     }
 
     override var canBecomeKey: Bool { true }

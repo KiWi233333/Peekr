@@ -241,9 +241,17 @@ final class PanelController {
     }
 
     private func animate(to frame: NSRect, duration: TimeInterval, curve: CAMediaTimingFunctionName) {
+        // Honor the system reduced-motion preference (native apps do).
+        guard !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else {
+            panel.setFrame(frame, display: true)
+            return
+        }
         NSAnimationContext.runAnimationGroup { ctx in
             ctx.duration = duration
             ctx.timingFunction = CAMediaTimingFunction(name: curve)
+            // Let the hosted WKWebView keep painting during the slide instead of
+            // freezing (legacy Cocoa resize suspends subview drawing). Survival A.4.
+            ctx.allowsImplicitAnimation = true
             panel.animator().setFrame(frame, display: true)
         }
     }

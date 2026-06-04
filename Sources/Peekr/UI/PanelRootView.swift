@@ -18,6 +18,7 @@ struct PanelRootView: View {
     var onResizeEnded: () -> Void
 
     @State private var editTarget: EditTarget?
+    @State private var moving = false
 
     /// Initial root for the hosting view before the controller wires callbacks.
     static func placeholder(model: AppModel, settings: Settings, manager: WebViewManager, icons: IconStore) -> PanelRootView {
@@ -32,9 +33,23 @@ struct PanelRootView: View {
     private var widthEdge: PanelResizeEdge { anchor.isRightSide ? .leading : .trailing }
     private var heightEdge: PanelResizeEdge { anchor.isTopSide ? .bottom : .top }
 
+    private var moveGesture: some Gesture {
+        DragGesture(minimumDistance: 4)
+            .onChanged { value in
+                if !moving { moving = true; onMoveBegan() }
+                onMoveChanged(value.translation)
+            }
+            .onEnded { _ in moving = false; onMoveEnded() }
+    }
+
     var body: some View {
         ZStack {
             PanelBackground()
+            // The whole frosted background is a drag handle. Dragging just moves
+            // the window freely (no edge detection); snapping happens on release.
+            Color.clear
+                .contentShape(Rectangle())
+                .gesture(moveGesture)
             HStack(spacing: 0) {
                 if anchor.railOnLeft {
                     rail

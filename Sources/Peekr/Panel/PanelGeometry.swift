@@ -48,24 +48,21 @@ enum PanelGeometry {
         return PanelLayout(onscreen: onscreen, offscreen: off)
     }
 
-    /// Default size when the user hasn't resized yet — a ratio of the screen.
+    /// Default size when the user hasn't resized yet — 2/3 of the screen width.
     static func defaultSize(for screen: NSScreen) -> NSSize {
         let vf = screen.visibleFrame
-        return NSSize(width: vf.width * 0.30, height: vf.height * 0.92)
+        return NSSize(width: vf.width * (2.0 / 3.0), height: vf.height * 0.92)
     }
 
     /// The hover zone that peeks the panel out for a given anchor.
     static func triggerRegion(anchor: PanelAnchor, screen: NSScreen, thickness: CGFloat) -> NSRect {
         let f = screen.frame
         let t = max(2, thickness)
-        let frac: CGFloat = 0.42
-        let cornerH = f.height * frac
+        let cornerH = f.height * 0.42
 
         switch anchor {
-        case .left:   return NSRect(x: f.minX, y: f.minY, width: t, height: f.height)
-        case .right:  return NSRect(x: f.maxX - t, y: f.minY, width: t, height: f.height)
-        case .top:    return NSRect(x: f.minX, y: f.maxY - t, width: f.width, height: t)
-        case .bottom: return NSRect(x: f.minX, y: f.minY, width: f.width, height: t)
+        case .left:        return NSRect(x: f.minX, y: f.minY, width: t, height: f.height)
+        case .right:       return NSRect(x: f.maxX - t, y: f.minY, width: t, height: f.height)
         case .topLeft:     return NSRect(x: f.minX, y: f.maxY - cornerH, width: t, height: cornerH)
         case .topRight:    return NSRect(x: f.maxX - t, y: f.maxY - cornerH, width: t, height: cornerH)
         case .bottomLeft:  return NSRect(x: f.minX, y: f.minY, width: t, height: cornerH)
@@ -73,23 +70,17 @@ enum PanelGeometry {
         }
     }
 
-    /// Nearest of the 8 anchors to a point (used when releasing a drag).
+    /// Nearest of the 6 anchors to a point (used when releasing a drag).
     static func nearestAnchor(to point: NSPoint, on screen: NSScreen) -> PanelAnchor {
         let f = screen.frame
         let nx = (point.x - f.minX) / max(1, f.width)
         let ny = (point.y - f.minY) / max(1, f.height) // 0 = bottom, 1 = top
-        let left = nx < 0.34, right = nx > 0.66
-        let bottom = ny < 0.34, top = ny > 0.66
+        let onLeft = nx < 0.5
+        let top = ny > 0.66, bottom = ny < 0.34
 
-        if top && left { return .topLeft }
-        if top && right { return .topRight }
-        if bottom && left { return .bottomLeft }
-        if bottom && right { return .bottomRight }
-        if left { return .left }
-        if right { return .right }
-        if top { return .top }
-        if bottom { return .bottom }
-        return nx < 0.5 ? .left : .right
+        if top { return onLeft ? .topLeft : .topRight }
+        if bottom { return onLeft ? .bottomLeft : .bottomRight }
+        return onLeft ? .left : .right
     }
 }
 
