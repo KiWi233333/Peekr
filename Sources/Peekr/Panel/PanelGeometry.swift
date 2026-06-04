@@ -5,40 +5,53 @@ struct PanelLayout {
     let offscreen: NSRect
 }
 
-/// Pure geometry for anchoring, sliding and snapping the panel.
-enum PanelGeometry {
-    static let margin: CGFloat = 14
-    static let cornerHeightFraction: CGFloat = 0.82
+/// Which panel edge a resize handle drags.
+enum PanelResizeEdge {
+    case leading, trailing, top, bottom
+}
 
-    /// On-screen (docked) and off-screen (hidden) frames for an anchor.
-    static func layout(anchor: PanelAnchor, screen: NSScreen, width: CGFloat) -> PanelLayout {
+/// Pure geometry. The panel keeps a user-chosen `size`; snapping only changes
+/// where it docks (flush to an edge/corner) and the slide-in direction — never
+/// the size. Aligns with SlidePad's resizable slide-over.
+enum PanelGeometry {
+    /// On-screen (docked) and off-screen (hidden) frames for an anchor + size.
+    static func layout(anchor: PanelAnchor, screen: NSScreen, size: NSSize) -> PanelLayout {
         let vf = screen.visibleFrame
         let full = screen.frame
-        let w = min(width, vf.width - 2 * margin)
+        let w = min(size.width, vf.width)
+        let h = min(size.height, vf.height)
+        let centerX = vf.minX + (vf.width - w) / 2
+        let centerY = vf.minY + (vf.height - h) / 2
 
-        switch anchor {
-        case .left:
-            let on = NSRect(x: vf.minX, y: vf.minY, width: w, height: vf.height)
-            return .init(onscreen: on, offscreen: NSRect(x: full.minX - w, y: vf.minY, width: w, height: vf.height))
-        case .right:
-            let on = NSRect(x: vf.maxX - w, y: vf.minY, width: w, height: vf.height)
-            return .init(onscreen: on, offscreen: NSRect(x: full.maxX, y: vf.minY, width: w, height: vf.height))
-        case .top:
-            let h = min(width, vf.height - 2 * margin)
-            let on = NSRect(x: vf.minX, y: vf.maxY - h, width: vf.width, height: h)
-            return .init(onscreen: on, offscreen: NSRect(x: vf.minX, y: full.maxY, width: vf.width, height: h))
-        case .bottom:
-            let h = min(width, vf.height - 2 * margin)
-            let on = NSRect(x: vf.minX, y: vf.minY, width: vf.width, height: h)
-            return .init(onscreen: on, offscreen: NSRect(x: vf.minX, y: full.minY - h, width: vf.width, height: h))
-        case .topLeft, .topRight, .bottomLeft, .bottomRight:
-            let ch = vf.height * cornerHeightFraction
-            let y = anchor.isTopSide ? vf.maxY - margin - ch : vf.minY + margin
-            let x = anchor.isLeftSide ? vf.minX + margin : vf.maxX - margin - w
-            let on = NSRect(x: x, y: y, width: w, height: ch)
-            let offX = anchor.isLeftSide ? full.minX - w : full.maxX
-            return .init(onscreen: on, offscreen: NSRect(x: offX, y: y, width: w, height: ch))
+        // Docked position: flush to the docked edge(s); centered on the free axis.
+        let onX: CGFloat
+        switch true {
+        case anchor.isLeftSide: onX = vf.minX
+        case anchor.isRightSide: onX = vf.maxX - w
+        default: onX = centerX
         }
+        let onY: CGFloat
+        switch true {
+        case anchor.isTopSide: onY = vf.maxY - h
+        case anchor.isBottomSide: onY = vf.minY
+        default: onY = centerY
+        }
+        let onscreen = NSRect(x: onX, y: onY, width: w, height: h)
+
+        // Slide-in direction (off-screen origin), keeping size fixed.
+        var off = onscreen
+        if anchor.slidesHorizontally {
+            off.origin.x = anchor.isRightSide ? full.maxX : full.minX - w
+        } else {
+            off.origin.y = anchor.isTopSide ? full.maxY : full.minY - h
+        }
+        return PanelLayout(onscreen: onscreen, offscreen: off)
+    }
+
+    /// Default size when the user hasn't resized yet — a ratio of the screen.
+    static func defaultSize(for screen: NSScreen) -> NSSize {
+        let vf = screen.visibleFrame
+        return NSSize(width: vf.width * 0.30, height: vf.height * 0.92)
     }
 
     /// The hover zone that peeks the panel out for a given anchor.

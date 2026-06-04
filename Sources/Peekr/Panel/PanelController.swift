@@ -2,7 +2,10 @@ import AppKit
 import SwiftUI
 
 /// Owns the slide panel: anchoring, slide animation, edge auto-hide, pin,
-/// and drag-to-snap across 8 positions and multiple displays.
+/// drag-to-snap (8 positions, multi-display) and edge resizing.
+///
+/// The panel keeps a user-chosen size. Snapping only re-docks it and changes
+/// the slide direction — it never resizes the window.
 @MainActor
 final class PanelController {
     let model: AppModel
@@ -24,6 +27,7 @@ final class PanelController {
     private var moveMonitorLocal: Any?
     private var keyMonitor: Any?
     private var dragStartOrigin: NSPoint = .zero
+    private var resizeStartSize: NSSize = .zero
 
     init(model: AppModel, settings: Settings, manager: WebViewManager, icons: IconStore) {
         self.model = model
@@ -31,7 +35,7 @@ final class PanelController {
         self.manager = manager
         self.icons = icons
 
-        panel = SlidePanel(contentRect: NSRect(x: 0, y: 0, width: settings.panelWidth, height: 640))
+        panel = SlidePanel(contentRect: NSRect(x: 0, y: 0, width: 440, height: 640))
 
         let container = NSView(frame: panel.frame)
         container.wantsLayer = true
@@ -45,27 +49,22 @@ final class PanelController {
         backdrop.autoresizingMask = [.width, .height]
         container.addSubview(backdrop)
 
-        let root = PanelRootView(
-            model: model, settings: settings, manager: manager, icons: icons,
-            onMoveBegan: { },
-            onMoveChanged: { _ in },
-            onMoveEnded: { },
-            onModalChange: { _ in }
-        )
-        hosting = NSHostingView(rootView: root)
+        hosting = NSHostingView(rootView: PanelRootView.placeholder(model: model, settings: settings, manager: manager, icons: icons))
         hosting.frame = container.bounds
         hosting.autoresizingMask = [.width, .height]
         container.addSubview(hosting)
-
         panel.contentView = container
 
-        // Wire callbacks now that self is fully initialised.
+        // Real callbacks once self is fully initialised.
         hosting.rootView = PanelRootView(
             model: model, settings: settings, manager: manager, icons: icons,
             onMoveBegan: { [weak self] in self?.moveBegan() },
             onMoveChanged: { [weak self] t in self?.moveChanged(t) },
             onMoveEnded: { [weak self] in self?.moveEnded() },
-            onModalChange: { [weak self] open in self?.autoHideSuspended = open }
+            onModalChange: { [weak self] open in self?.autoHideSuspended = open },
+            onResizeBegan: { [weak self] in self?.resizeBegan() },
+            onResizeChanged: { [weak self] edge, t in self?.resizeChanged(edge, t) },
+            onResizeEnded: { [weak self] in self?.resizeEnded() }
         )
     }
 
@@ -85,7 +84,7 @@ final class PanelController {
         if model.selectedID == nil { model.selectedID = model.apps.first?.id }
         if let id = model.selectedID { manager.activate(id) }
 
-        let layout = PanelGeometry.layout(anchor: settings.anchor, screen: screen, width: settings.panelWidth)
+        let layout = currentLayout(on: screen)
         panel.setFrame(layout.offscreen, display: false)
         panel.makeKeyAndOrderFront(nil)
         animate(to: layout.onscreen, duration: 0.24, curve: .easeOut)
@@ -98,8 +97,7 @@ final class PanelController {
         onVisibilityChange?(false)
         removeMonitors()
 
-        let screen = activeScreen ?? resolveScreen()
-        let layout = PanelGeometry.layout(anchor: settings.anchor, screen: screen, width: settings.panelWidth)
+        let layout = currentLayout(on: activeScreen ?? resolveScreen())
         NSAnimationContext.runAnimationGroup({ ctx in
             ctx.duration = 0.2
             ctx.timingFunction = CAMediaTimingFunction(name: .easeIn)
@@ -112,14 +110,13 @@ final class PanelController {
         })
     }
 
-    /// Re-apply width/anchor while visible (called after preference changes).
+    /// Re-apply size/anchor while visible (after preference changes).
     func applyLayout() {
         guard isVisible, let screen = activeScreen else { return }
-        let layout = PanelGeometry.layout(anchor: settings.anchor, screen: screen, width: settings.panelWidth)
-        animate(to: layout.onscreen, duration: 0.25, curve: .easeInEaseOut)
+        animate(to: currentLayout(on: screen).onscreen, duration: 0.25, curve: .easeInEaseOut)
     }
 
-    // MARK: - Drag to snap
+    // MARK: - Drag to snap (position + slide direction only — never size)
 
     private func moveBegan() {
         autoHideSuspended = true
@@ -140,13 +137,39 @@ final class PanelController {
             ?? activeScreen ?? NSScreen.main ?? NSScreen.screens[0]
         activeScreen = screen
 
-        let anchor = PanelGeometry.nearestAnchor(to: center, on: screen)
-        settings.anchor = anchor
+        settings.anchor = PanelGeometry.nearestAnchor(to: center, on: screen)
         persistScreen(screen)
         settings.persist()
 
-        let layout = PanelGeometry.layout(anchor: anchor, screen: screen, width: settings.panelWidth)
-        animate(to: layout.onscreen, duration: 0.3, curve: .easeOut)
+        animate(to: currentLayout(on: screen).onscreen, duration: 0.3, curve: .easeOut)
+        autoHideSuspended = false
+    }
+
+    // MARK: - Resize
+
+    private func resizeBegan() {
+        autoHideSuspended = true
+        resizeStartSize = panel.frame.size
+    }
+
+    private func resizeChanged(_ edge: PanelResizeEdge, _ translation: CGSize) {
+        guard let screen = activeScreen else { return }
+        let vf = screen.visibleFrame
+        var w = resizeStartSize.width
+        var h = resizeStartSize.height
+        switch edge {
+        case .trailing: w = resizeStartSize.width + translation.width
+        case .leading:  w = resizeStartSize.width - translation.width
+        case .bottom:   h = resizeStartSize.height + translation.height
+        case .top:      h = resizeStartSize.height - translation.height
+        }
+        settings.panelWidth = min(max(280, w), Double(vf.width))
+        settings.panelHeight = min(max(240, h), Double(vf.height))
+        panel.setFrame(currentLayout(on: screen).onscreen, display: true)
+    }
+
+    private func resizeEnded() {
+        settings.persist()
         autoHideSuspended = false
     }
 
@@ -168,6 +191,23 @@ final class PanelController {
         }
     }
 
+    private func removeMonitors() {
+        for monitor in [moveMonitorGlobal, moveMonitorLocal, keyMonitor].compactMap({ $0 }) {
+            NSEvent.removeMonitor(monitor)
+        }
+        moveMonitorGlobal = nil; moveMonitorLocal = nil; keyMonitor = nil
+    }
+
+    private func checkLeave() {
+        guard isVisible, settings.autoHide, !model.isPinned, !autoHideSuspended,
+              NSApp.modalWindow == nil
+        else { return }
+        let loc = NSEvent.mouseLocation
+        if !panel.frame.insetBy(dx: -12, dy: -12).contains(loc) {
+            hide()
+        }
+    }
+
     /// Browser-style shortcuts while the panel is key. Returns true if consumed.
     private func handleCommand(_ event: NSEvent) -> Bool {
         guard let chars = event.charactersIgnoringModifiers else { return false }
@@ -186,24 +226,19 @@ final class PanelController {
         return true
     }
 
-    private func removeMonitors() {
-        for monitor in [moveMonitorGlobal, moveMonitorLocal, keyMonitor].compactMap({ $0 }) {
-            NSEvent.removeMonitor(monitor)
-        }
-        moveMonitorGlobal = nil; moveMonitorLocal = nil; keyMonitor = nil
-    }
-
-    private func checkLeave() {
-        guard isVisible, settings.autoHide, !model.isPinned, !autoHideSuspended,
-              NSApp.modalWindow == nil
-        else { return }
-        let loc = NSEvent.mouseLocation
-        if !panel.frame.insetBy(dx: -12, dy: -12).contains(loc) {
-            hide()
-        }
-    }
-
     // MARK: - Helpers
+
+    private func currentLayout(on screen: NSScreen) -> PanelLayout {
+        PanelGeometry.layout(anchor: settings.anchor, screen: screen, size: panelSize(on: screen))
+    }
+
+    private func panelSize(on screen: NSScreen) -> NSSize {
+        let fallback = PanelGeometry.defaultSize(for: screen)
+        let w = settings.panelWidth > 0 ? CGFloat(settings.panelWidth) : fallback.width
+        let h = settings.panelHeight > 0 ? CGFloat(settings.panelHeight) : fallback.height
+        let vf = screen.visibleFrame
+        return NSSize(width: min(w, vf.width), height: min(h, vf.height))
+    }
 
     private func animate(to frame: NSRect, duration: TimeInterval, curve: CAMediaTimingFunctionName) {
         NSAnimationContext.runAnimationGroup { ctx in

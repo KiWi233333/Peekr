@@ -4,6 +4,7 @@ import SwiftUI
 struct NavigationBar: View {
     let state: BrowserState
     let manager: WebViewManager
+    let settings: Settings
 
     var onMoveBegan: () -> Void
     var onMoveChanged: (CGSize) -> Void
@@ -50,7 +51,7 @@ struct NavigationBar: View {
                     }
                     .onEnded { _ in isDragging = false; onMoveEnded() }
             )
-            .help("Drag to move • release near an edge or corner to snap")
+            .help(settings.strings.dragHint)
     }
 
     private func navButton(_ symbol: String, enabled: Bool, action: @escaping () -> Void) -> some View {
@@ -66,7 +67,7 @@ struct NavigationBar: View {
     }
 
     private var omnibox: some View {
-        TextField("Search or enter address", text: $text)
+        TextField(settings.strings.omniboxPlaceholder, text: $text)
             .textFieldStyle(.plain)
             .font(.system(size: 12.5))
             .lineLimit(1)

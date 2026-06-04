@@ -6,16 +6,18 @@ struct PreferencesView: View {
     let icons: IconStore
     var onApply: () -> Void
 
+    private var loc: Localized { settings.strings }
+
     var body: some View {
         TabView {
             GeneralTab(settings: settings, onApply: onApply)
-                .tabItem { Label("General", systemImage: "gearshape") }
-            AppsTab(model: model, icons: icons)
-                .tabItem { Label("Apps", systemImage: "square.grid.2x2") }
-            AboutTab()
-                .tabItem { Label("About", systemImage: "info.circle") }
+                .tabItem { Label(loc.general, systemImage: "gearshape") }
+            AppsTab(model: model, settings: settings, icons: icons)
+                .tabItem { Label(loc.apps, systemImage: "square.grid.2x2") }
+            AboutTab(settings: settings)
+                .tabItem { Label(loc.about, systemImage: "info.circle") }
         }
-        .frame(width: 480, height: 540)
+        .frame(width: 500, height: 560)
         .onChange(of: settings.snapshot) { _, _ in
             settings.persist()
             onApply()
@@ -32,37 +34,62 @@ private struct GeneralTab: View {
     @Bindable var settings: Settings
     var onApply: () -> Void
 
+    private var loc: Localized { settings.strings }
+    private var defaultSize: NSSize { PanelGeometry.defaultSize(for: NSScreen.main ?? NSScreen.screens[0]) }
+
+    private var widthBinding: Binding<Double> {
+        Binding(get: { settings.panelWidth > 0 ? settings.panelWidth : Double(defaultSize.width) },
+                set: { settings.panelWidth = $0 })
+    }
+    private var heightBinding: Binding<Double> {
+        Binding(get: { settings.panelHeight > 0 ? settings.panelHeight : Double(defaultSize.height) },
+                set: { settings.panelHeight = $0 })
+    }
+
     var body: some View {
         Form {
-            Section("Docking") {
+            Section(loc.docking) {
                 HStack(alignment: .top, spacing: 20) {
                     AnchorGrid(selection: $settings.anchor)
                     VStack(alignment: .leading, spacing: 4) {
                         Text(settings.anchor.label)
                             .font(.system(size: 13, weight: .semibold, design: .rounded))
-                        Text("Hover this edge or corner — or drag the panel by its grip and release near any edge/corner to re-snap.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+                        Text(loc.dockingHint)
+                            .font(.caption).foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }
-                Toggle("Follow cursor across displays", isOn: $settings.followCursor)
+                Toggle(loc.followCursor, isOn: $settings.followCursor)
             }
 
-            Section("Panel") {
-                slider("Width", value: $settings.panelWidth, range: 320...760, unit: "pt")
-                slider("Hover delay", value: $settings.hoverDelay, range: 0...0.6, unit: "s", decimals: 2)
-                slider("Edge sensitivity", value: $settings.edgeThreshold, range: 1...14, unit: "px")
-                Toggle("Auto-hide when the cursor leaves", isOn: $settings.autoHide)
-            }
-
-            Section("Shortcut & Startup") {
+            Section(loc.panel) {
+                slider(loc.width, value: widthBinding, range: 280...1400, unit: "pt")
+                slider(loc.height, value: heightBinding, range: 240...1600, unit: "pt")
                 HStack {
-                    Text("Toggle shortcut")
+                    Spacer()
+                    Button(loc.defaultSize) {
+                        settings.panelWidth = 0
+                        settings.panelHeight = 0
+                    }
+                    .controlSize(.small)
+                }
+                slider(loc.hoverDelay, value: $settings.hoverDelay, range: 0...0.6, unit: "s", decimals: 2)
+                slider(loc.edgeSensitivity, value: $settings.edgeThreshold, range: 1...14, unit: "px")
+                Toggle(loc.autoHide, isOn: $settings.autoHide)
+            }
+
+            Section(loc.shortcutStartup) {
+                HStack {
+                    Text(loc.toggleShortcut)
                     Spacer()
                     HotKeyRecorder(settings: settings, onApply: onApply)
                 }
-                Toggle("Launch Peekr at login", isOn: $settings.launchAtLogin)
+                Toggle(loc.launchAtLogin, isOn: $settings.launchAtLogin)
+                Picker(loc.language, selection: $settings.language) {
+                    ForEach(AppLanguage.allCases) { lang in
+                        Text(lang.nativeName).tag(lang)
+                    }
+                }
             }
         }
         .formStyle(.grouped)
@@ -80,7 +107,7 @@ private struct GeneralTab: View {
     }
 }
 
-/// 3×3 grid of dock positions (centre is inert).
+/// 3×3 grid of dock positions (centre is inert). Monochrome selection.
 private struct AnchorGrid: View {
     @Binding var selection: PanelAnchor
 
@@ -111,12 +138,12 @@ private struct AnchorGrid: View {
                 withAnimation(.snappy) { selection = anchor }
             } label: {
                 Image(systemName: anchor.symbol)
-                    .font(.system(size: 15))
+                    .font(.system(size: 14, weight: .medium))
                     .frame(width: 34, height: 34)
-                    .foregroundStyle(selection == anchor ? AnyShapeStyle(Theme.accentGradient) : AnyShapeStyle(.secondary))
+                    .foregroundStyle(selection == anchor ? AnyShapeStyle(.white) : AnyShapeStyle(.secondary))
                     .background(
                         RoundedRectangle(cornerRadius: 8)
-                            .fill(selection == anchor ? Theme.accent.opacity(0.18) : .clear)
+                            .fill(selection == anchor ? AnyShapeStyle(Color.primary) : AnyShapeStyle(Color.clear))
                     )
             }
             .buttonStyle(.plain)
@@ -138,13 +165,13 @@ private struct HotKeyRecorder: View {
         Button {
             recording ? stop() : start()
         } label: {
-            Text(recording ? "Press keys…" : settings.hotKey.displayString)
+            Text(recording ? settings.strings.pressKeys : settings.hotKey.displayString)
                 .font(.system(.body, design: .rounded).weight(.medium))
                 .frame(minWidth: 92)
                 .padding(.vertical, 3)
         }
         .buttonStyle(.bordered)
-        .tint(recording ? Theme.accentDeep : nil)
+        .tint(recording ? .primary : nil)
         .onDisappear { stop() }
     }
 
@@ -152,7 +179,7 @@ private struct HotKeyRecorder: View {
         recording = true
         monitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown]) { event in
             let mods = carbonModifiers(from: event.modifierFlags)
-            guard mods != 0 else { return event } // require at least one modifier
+            guard mods != 0 else { return event }
             settings.hotKey = HotKeyConfig(keyCode: UInt32(event.keyCode), modifiers: mods)
             settings.persist()
             onApply()
@@ -172,8 +199,11 @@ private struct HotKeyRecorder: View {
 
 private struct AppsTab: View {
     let model: AppModel
+    let settings: Settings
     let icons: IconStore
     @State private var editTarget: EditTarget?
+
+    private var loc: Localized { settings.strings }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -195,9 +225,7 @@ private struct AppsTab: View {
                     }
                     .padding(.vertical, 2)
                 }
-                .onMove { from, to in
-                    model.moveApps(fromOffsets: from, toOffset: to)
-                }
+                .onMove { from, to in model.moveApps(fromOffsets: from, toOffset: to) }
                 .onDelete { offsets in
                     offsets.map { model.apps[$0].id }.forEach { model.removeApp($0) }
                 }
@@ -205,16 +233,16 @@ private struct AppsTab: View {
 
             HStack {
                 Button { editTarget = EditTarget(app: nil) } label: {
-                    Label("Add Web App", systemImage: "plus")
+                    Label(loc.addWebApp, systemImage: "plus")
                 }
                 Spacer()
-                Text("\(model.apps.count) apps")
+                Text(loc.appsCount(model.apps.count))
                     .font(.caption).foregroundStyle(.secondary)
             }
             .padding(12)
         }
         .sheet(item: $editTarget) { target in
-            EditAppSheet(target: target, model: model, icons: icons) { editTarget = nil }
+            EditAppSheet(target: target, model: model, settings: settings, icons: icons) { editTarget = nil }
         }
     }
 }
@@ -222,16 +250,19 @@ private struct AppsTab: View {
 // MARK: - About
 
 private struct AboutTab: View {
+    let settings: Settings
+
     var body: some View {
         VStack(spacing: 14) {
             Image(systemName: "sidebar.trailing")
                 .font(.system(size: 46, weight: .light))
-                .foregroundStyle(Theme.accentGradient)
+                .foregroundStyle(.primary)
             Text("Peekr")
                 .font(.system(size: 26, weight: .bold, design: .rounded))
-            Text("A liquid-glass slide-over browser for macOS.")
+            Text(settings.strings.tagline)
                 .font(.callout).foregroundStyle(.secondary)
-            Text("Version 0.2.0")
+                .multilineTextAlignment(.center)
+            Text("Version 0.3.0")
                 .font(.caption).foregroundStyle(.tertiary)
             Spacer()
         }

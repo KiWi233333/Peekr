@@ -11,6 +11,7 @@ struct EditTarget: Identifiable {
 struct EditAppSheet: View {
     let target: EditTarget
     let model: AppModel
+    let settings: Settings
     let icons: IconStore
     var onClose: () -> Void
 
@@ -19,9 +20,10 @@ struct EditAppSheet: View {
     @State private var pendingIconURL: URL?
     @State private var previewImage: NSImage?
 
-    init(target: EditTarget, model: AppModel, icons: IconStore, onClose: @escaping () -> Void) {
+    init(target: EditTarget, model: AppModel, settings: Settings, icons: IconStore, onClose: @escaping () -> Void) {
         self.target = target
         self.model = model
+        self.settings = settings
         self.icons = icons
         self.onClose = onClose
         _title = State(initialValue: target.app?.title ?? "")
@@ -29,29 +31,30 @@ struct EditAppSheet: View {
         _previewImage = State(initialValue: target.app.flatMap { icons.image(for: $0) })
     }
 
+    private var loc: Localized { settings.strings }
     private var isEditing: Bool { target.app != nil }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
-            Text(isEditing ? "Edit Web App" : "Add Web App")
+            Text(isEditing ? loc.editWebApp : loc.addWebApp)
                 .font(.system(size: 17, weight: .bold, design: .rounded))
 
             HStack(spacing: 16) {
                 iconWell
                 VStack(alignment: .leading, spacing: 10) {
-                    field("Title", text: $title, placeholder: "GitHub")
-                    field("Address", text: $urlString, placeholder: "https://github.com")
+                    field(loc.title, text: $title, placeholder: "GitHub")
+                    field(loc.address, text: $urlString, placeholder: "https://github.com")
                 }
             }
 
             HStack {
-                Button("Cancel", role: .cancel) { onClose() }
+                Button(loc.cancel, role: .cancel) { onClose() }
                     .keyboardShortcut(.cancelAction)
                 Spacer()
-                Button(isEditing ? "Save" : "Add") { save() }
+                Button(isEditing ? loc.save : loc.add) { save() }
                     .keyboardShortcut(.defaultAction)
                     .buttonStyle(.borderedProminent)
-                    .tint(Theme.accentDeep)
+                    .tint(.primary)
                     .disabled(urlString.trimmingCharacters(in: .whitespaces).isEmpty)
             }
         }
@@ -62,12 +65,12 @@ struct EditAppSheet: View {
     private var iconWell: some View {
         VStack(spacing: 8) {
             ZStack {
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .fill(.quaternary)
+                RoundedRectangle(cornerRadius: 16, style: .continuous).fill(.quaternary)
                 if let previewImage {
                     Image(nsImage: previewImage)
-                        .resizable().interpolation(.high).aspectRatio(contentMode: .fit)
-                        .frame(width: 40, height: 40)
+                        .resizable().interpolation(.high).aspectRatio(contentMode: .fill)
+                        .frame(width: 44, height: 44)
+                        .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
                 } else {
                     Text(title.first.map { String($0).uppercased() } ?? "?")
                         .font(.system(size: 28, weight: .bold, design: .rounded))
@@ -76,10 +79,10 @@ struct EditAppSheet: View {
             }
             .frame(width: 68, height: 68)
 
-            Button("Choose…") { chooseIcon() }
+            Button(loc.chooseIcon) { chooseIcon() }
                 .controlSize(.small)
             if pendingIconURL != nil || (target.app?.usesCustomIcon ?? false) {
-                Button("Use favicon") { resetIcon() }
+                Button(loc.useFavicon) { resetIcon() }
                     .controlSize(.small)
             }
         }

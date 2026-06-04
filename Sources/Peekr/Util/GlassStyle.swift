@@ -4,21 +4,27 @@ import SwiftUI
 /// single `liquidGlass` entry point that uses the real macOS 26 Liquid Glass
 /// material where available and falls back to a tasteful material below it.
 enum Theme {
-    static let accent = Color(red: 0.16, green: 0.80, blue: 0.88)   // aqua
-    static let accentDeep = Color(red: 0.18, green: 0.50, blue: 0.98) // blue
+    // Monochrome / shadcn: the accent IS the foreground (near-black in light,
+    // near-white in dark). No colour — restraint and contrast carry the design.
+    static let accent = Color.primary
+    static let accentDeep = Color.primary
 
     static var accentGradient: LinearGradient {
         LinearGradient(
-            colors: [accent, accentDeep],
-            startPoint: .topLeading,
-            endPoint: .bottomTrailing
+            colors: [Color.primary, Color.primary.opacity(0.62)],
+            startPoint: .top,
+            endPoint: .bottom
         )
     }
 
-    static let railWidth: CGFloat = 70
-    static let tile: CGFloat = 46
-    static let panelCorner: CGFloat = 20
-    static let tileCorner: CGFloat = 13
+    /// Hairline border tuned for shadcn-style surfaces.
+    static let hairline = Color.primary.opacity(0.12)
+
+    static let railWidth: CGFloat = 64
+    static let tile: CGFloat = 44
+    static let iconCorner: CGFloat = 10
+    static let panelCorner: CGFloat = 18
+    static let tileCorner: CGFloat = 12
 }
 
 @available(macOS 26.0, *)

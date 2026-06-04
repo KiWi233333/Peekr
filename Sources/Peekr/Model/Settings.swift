@@ -2,9 +2,11 @@ import Foundation
 import Observation
 
 /// Codable snapshot of all preferences — drives persistence + change detection.
+/// `panelWidth`/`panelHeight` of 0 mean "auto" (a ratio of the screen).
 struct SettingsData: Codable, Equatable {
     var anchor: PanelAnchor = .right
-    var panelWidth: Double = 440
+    var panelWidth: Double = 0
+    var panelHeight: Double = 0
     var hoverDelay: Double = 0.12
     var edgeThreshold: Double = 3
     var hotKey: HotKeyConfig = .default
@@ -12,6 +14,28 @@ struct SettingsData: Codable, Equatable {
     var followCursor: Bool = true
     var lastScreenNumber: Int? = nil
     var autoHide: Bool = true
+    var language: AppLanguage = .system
+
+    init() {}
+
+    // Decode tolerantly so the schema can evolve without losing the file.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        func v<T: Decodable>(_ key: CodingKeys, _ fallback: T) -> T {
+            (try? c.decodeIfPresent(T.self, forKey: key)) .flatMap { $0 } ?? fallback
+        }
+        anchor = v(.anchor, .right)
+        panelWidth = v(.panelWidth, 0)
+        panelHeight = v(.panelHeight, 0)
+        hoverDelay = v(.hoverDelay, 0.12)
+        edgeThreshold = v(.edgeThreshold, 3)
+        hotKey = v(.hotKey, .default)
+        launchAtLogin = v(.launchAtLogin, false)
+        followCursor = v(.followCursor, true)
+        lastScreenNumber = (try? c.decodeIfPresent(Int.self, forKey: .lastScreenNumber)) ?? nil
+        autoHide = v(.autoHide, true)
+        language = v(.language, .system)
+    }
 }
 
 /// Observable, persisted preferences. UI binds to the fields; `snapshot`
@@ -21,6 +45,7 @@ struct SettingsData: Codable, Equatable {
 final class Settings {
     var anchor: PanelAnchor
     var panelWidth: Double
+    var panelHeight: Double
     var hoverDelay: Double
     var edgeThreshold: Double
     var hotKey: HotKeyConfig
@@ -28,6 +53,7 @@ final class Settings {
     var followCursor: Bool
     var lastScreenNumber: Int?
     var autoHide: Bool
+    var language: AppLanguage
 
     private let store: SettingsStore
 
@@ -36,6 +62,7 @@ final class Settings {
         let d = store.load()
         anchor = d.anchor
         panelWidth = d.panelWidth
+        panelHeight = d.panelHeight
         hoverDelay = d.hoverDelay
         edgeThreshold = d.edgeThreshold
         hotKey = d.hotKey
@@ -43,15 +70,20 @@ final class Settings {
         followCursor = d.followCursor
         lastScreenNumber = d.lastScreenNumber
         autoHide = d.autoHide
+        language = d.language
     }
 
     var snapshot: SettingsData {
-        SettingsData(
-            anchor: anchor, panelWidth: panelWidth, hoverDelay: hoverDelay,
-            edgeThreshold: edgeThreshold, hotKey: hotKey, launchAtLogin: launchAtLogin,
-            followCursor: followCursor, lastScreenNumber: lastScreenNumber, autoHide: autoHide
-        )
+        var s = SettingsData()
+        s.anchor = anchor; s.panelWidth = panelWidth; s.panelHeight = panelHeight
+        s.hoverDelay = hoverDelay; s.edgeThreshold = edgeThreshold; s.hotKey = hotKey
+        s.launchAtLogin = launchAtLogin; s.followCursor = followCursor
+        s.lastScreenNumber = lastScreenNumber; s.autoHide = autoHide; s.language = language
+        return s
     }
+
+    /// Two-language string table reflecting the current language preference.
+    var strings: Localized { Localized(isChinese: language.resolved == .chinese) }
 
     func persist() {
         store.save(snapshot)

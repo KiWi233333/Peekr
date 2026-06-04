@@ -1,22 +1,29 @@
 import AppKit
 
-/// Menu-bar item: toggle / pin / preferences / quit.
+/// Menu-bar item: toggle / pin / preferences / quit. Titles localize live.
 @MainActor
 final class StatusBarController: NSObject {
     private let item: NSStatusItem
     private let model: AppModel
+    private let settings: Settings
     private let onToggle: () -> Void
     private let onTogglePin: () -> Void
     private let onPreferences: () -> Void
+
+    private var toggleItem: NSMenuItem!
     private var pinItem: NSMenuItem!
+    private var prefsItem: NSMenuItem!
+    private var quitItem: NSMenuItem!
 
     init(
         model: AppModel,
+        settings: Settings,
         onToggle: @escaping () -> Void,
         onTogglePin: @escaping () -> Void,
         onPreferences: @escaping () -> Void
     ) {
         self.model = model
+        self.settings = settings
         self.onToggle = onToggle
         self.onTogglePin = onTogglePin
         self.onPreferences = onPreferences
@@ -30,18 +37,17 @@ final class StatusBarController: NSObject {
 
         let menu = NSMenu()
         menu.delegate = self
-        addItem(to: menu, title: "Toggle Peekr", action: #selector(toggleAction), key: "")
-        pinItem = addItem(to: menu, title: "Pin Open", action: #selector(pinAction), key: "")
+        toggleItem = addItem(to: menu, action: #selector(toggleAction), key: "")
+        pinItem = addItem(to: menu, action: #selector(pinAction), key: "")
         menu.addItem(.separator())
-        addItem(to: menu, title: "Preferences…", action: #selector(prefsAction), key: ",")
+        prefsItem = addItem(to: menu, action: #selector(prefsAction), key: ",")
         menu.addItem(.separator())
-        addItem(to: menu, title: "Quit Peekr", action: #selector(quitAction), key: "q")
+        quitItem = addItem(to: menu, action: #selector(quitAction), key: "q")
         item.menu = menu
     }
 
-    @discardableResult
-    private func addItem(to menu: NSMenu, title: String, action: Selector, key: String) -> NSMenuItem {
-        let menuItem = NSMenuItem(title: title, action: action, keyEquivalent: key)
+    private func addItem(to menu: NSMenu, action: Selector, key: String) -> NSMenuItem {
+        let menuItem = NSMenuItem(title: "", action: action, keyEquivalent: key)
         menuItem.target = self
         menu.addItem(menuItem)
         return menuItem
@@ -55,6 +61,11 @@ final class StatusBarController: NSObject {
 
 extension StatusBarController: NSMenuDelegate {
     func menuNeedsUpdate(_ menu: NSMenu) {
+        let loc = settings.strings
+        toggleItem.title = loc.toggle
+        pinItem.title = loc.pinOpen
         pinItem.state = model.isPinned ? .on : .off
+        prefsItem.title = loc.preferences
+        quitItem.title = loc.quit
     }
 }

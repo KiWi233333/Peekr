@@ -1,9 +1,10 @@
 import SwiftUI
 
-/// The vertical dock of web-app icons. Glass tiles, drag-to-reorder,
-/// right-click context menu, favicons with monogram fallback.
+/// The vertical dock of web-app icons. Rounded favicons, drag-to-reorder,
+/// right-click context menu, monochrome selection. The icon group is centered.
 struct AppRail: View {
     let model: AppModel
+    let settings: Settings
     let icons: IconStore
     var onSelect: (UUID) -> Void
     var onAdd: () -> Void
@@ -11,19 +12,23 @@ struct AppRail: View {
 
     @State private var dropTarget: UUID?
 
+    private var loc: Localized { settings.strings }
+
     var body: some View {
-        ScrollView(.vertical, showsIndicators: false) {
-            VStack(spacing: 12) {
-                GlassGroup(spacing: 16) {
-                    ForEach(model.apps) { app in
-                        tile(for: app)
+        GeometryReader { geo in
+            ScrollView(.vertical, showsIndicators: false) {
+                VStack(spacing: 10) {
+                    Spacer(minLength: 0)
+                    GlassGroup(spacing: 14) {
+                        ForEach(model.apps) { app in
+                            tile(for: app)
+                        }
                     }
+                    addButton
+                    Spacer(minLength: 0)
                 }
-                addButton
-                Spacer(minLength: 0)
+                .frame(maxWidth: .infinity, minHeight: geo.size.height)
             }
-            .padding(.vertical, 16)
-            .frame(maxWidth: .infinity)
         }
         .frame(width: Theme.railWidth)
     }
@@ -46,16 +51,16 @@ struct AppRail: View {
             }
             .overlay {
                 RoundedRectangle(cornerRadius: Theme.tileCorner, style: .continuous)
-                    .stroke(Theme.accent, lineWidth: 2)
-                    .opacity(dropTarget == app.id ? 1 : 0)
+                    .stroke(Color.primary, lineWidth: 1.5)
+                    .opacity(dropTarget == app.id ? 0.9 : 0)
             }
             .contextMenu {
-                Button { onEdit(app) } label: { Label("Edit…", systemImage: "pencil") }
-                Button { onSelect(app.id) } label: { Label("Open", systemImage: "arrow.up.forward.app") }
-                Button { icons.refreshFavicon(app) } label: { Label("Refresh Icon", systemImage: "arrow.clockwise") }
+                Button { onEdit(app) } label: { Label(loc.edit, systemImage: "pencil") }
+                Button { onSelect(app.id) } label: { Label(loc.open, systemImage: "arrow.up.forward.app") }
+                Button { icons.refreshFavicon(app) } label: { Label(loc.refreshIcon, systemImage: "arrow.clockwise") }
                 Divider()
                 Button(role: .destructive) { model.removeApp(app.id) } label: {
-                    Label("Delete", systemImage: "trash")
+                    Label(loc.delete, systemImage: "trash")
                 }
             }
     }
@@ -63,26 +68,26 @@ struct AppRail: View {
     @ViewBuilder
     private func selectionIndicator(_ app: WebApp) -> some View {
         Capsule()
-            .fill(Theme.accentGradient)
-            .frame(width: 3.5, height: app.id == model.selectedID ? 26 : 0)
-            .offset(x: -9)
+            .fill(Color.primary)
+            .frame(width: 3, height: app.id == model.selectedID ? 24 : 0)
+            .offset(x: -8)
             .animation(.spring(response: 0.3, dampingFraction: 0.7), value: model.selectedID)
     }
 
     private var addButton: some View {
         Button(action: onAdd) {
             Image(systemName: "plus")
-                .font(.system(size: 16, weight: .semibold))
+                .font(.system(size: 15, weight: .semibold))
                 .foregroundStyle(.secondary)
                 .frame(width: Theme.tile, height: Theme.tile)
                 .liquidGlass(in: RoundedRectangle(cornerRadius: Theme.tileCorner, style: .continuous), interactive: true)
         }
         .buttonStyle(.plain)
-        .help("Add web app")
+        .help(loc.addWebApp)
     }
 }
 
-/// A single dock tile: favicon or monogram on a glass square.
+/// A single dock tile: a centered, rounded favicon (or monogram) on a glass square.
 struct AppTile: View {
     let app: WebApp
     let selected: Bool
@@ -94,29 +99,33 @@ struct AppTile: View {
                 Image(nsImage: icon)
                     .resizable()
                     .interpolation(.high)
-                    .aspectRatio(contentMode: .fit)
-                    .frame(width: 26, height: 26)
+                    .aspectRatio(contentMode: .fill)
+                    .frame(width: 28, height: 28)
+                    .clipShape(RoundedRectangle(cornerRadius: Theme.iconCorner, style: .continuous))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: Theme.iconCorner, style: .continuous)
+                            .stroke(Theme.hairline, lineWidth: 0.5)
+                    }
             } else {
                 Text(app.monogram)
-                    .font(.system(size: 18, weight: .semibold, design: .rounded))
-                    .foregroundStyle(monogramColor)
+                    .font(.system(size: 17, weight: .semibold, design: .rounded))
+                    .foregroundStyle(.primary.opacity(0.85))
+                    .frame(width: 28, height: 28)
+                    .background(.quaternary, in: RoundedRectangle(cornerRadius: Theme.iconCorner, style: .continuous))
             }
         }
         .frame(width: Theme.tile, height: Theme.tile)
         .liquidGlass(
             in: RoundedRectangle(cornerRadius: Theme.tileCorner, style: .continuous),
-            tint: selected ? Theme.accent.opacity(0.55) : nil,
             interactive: true
         )
-        .scaleEffect(selected ? 1.0 : 0.93)
-        .shadow(color: .black.opacity(selected ? 0.22 : 0.12), radius: selected ? 5 : 2, y: 1.5)
+        .overlay {
+            RoundedRectangle(cornerRadius: Theme.tileCorner, style: .continuous)
+                .stroke(Color.primary.opacity(selected ? 0.85 : 0), lineWidth: 1.5)
+        }
+        .scaleEffect(selected ? 1.0 : 0.92)
+        .shadow(color: .black.opacity(selected ? 0.2 : 0.1), radius: selected ? 4 : 2, y: 1)
         .animation(.spring(response: 0.28, dampingFraction: 0.72), value: selected)
         .help(app.title)
-    }
-
-    private var monogramColor: Color {
-        var hash = 5381
-        for byte in app.urlString.utf8 { hash = (hash &* 33) &+ Int(byte) }
-        return Color(hue: Double(abs(hash) % 360) / 360.0, saturation: 0.6, brightness: 0.92)
     }
 }

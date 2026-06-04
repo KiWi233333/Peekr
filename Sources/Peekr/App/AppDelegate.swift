@@ -35,6 +35,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         statusBar = StatusBarController(
             model: model,
+            settings: settings,
             onToggle: { [weak self] in self?.panel.toggle() },
             onTogglePin: { [weak self] in self?.model.isPinned.toggle() },
             onPreferences: { [weak self] in self?.prefs.show() }
