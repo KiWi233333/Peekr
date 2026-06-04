@@ -62,7 +62,8 @@ make clean
 - `PanelAnchor`：6 个停靠点（左右 2 边 + 4 角；不支持上/下边，因为 rail 是竖向的）。各种 `isLeftSide`/`slidesHorizontally`/`railOnLeft` 派生属性集中在这里，**不要在视图里重复判断方位**。
 - `PanelGeometry`：纯几何函数（无副作用），算 onscreen/offscreen 两个 frame、触发热区、最近 anchor。`defaultSize` 默认宽度 = 屏幕可见区宽度的 2/3。
 - **核心不变量**：拖拽吸附（6 方向自动 snap）只改变停靠位置和滑入方向，**永不改变面板尺寸**；尺寸由用户通过 resize handle 决定，存在 `settings.panelWidth/Height`（0 表示「按屏幕比例自动」）。拖拽：整面板的毛玻璃背景都是 move 手柄（`PanelRootView` 的透明 drag 层），拖动时不检测边缘、**松手才 snap**。改动 `PanelController` 的拖拽/缩放/动画逻辑时请守住这条线。
-- **原生体验细节**（参考 native-feel WebView 生存指南）：`SlidePanel` 关掉 `windowOcclusionDetectionEnabled`，让活动 WebView 在面板滑走/被遮挡时仍保持 timers/rAF 不被节流；`PanelController.animate` 用 `allowsImplicitAnimation = true`（滑动时 WebView 持续绘制不冻结）并遵守系统「减弱动态效果」。
+- **原生体验细节**（参考 native-feel WebView 生存指南）：`PanelController.animate` 用 `allowsImplicitAnimation = true`（滑动时 WebView 持续绘制不冻结）并遵守系统「减弱动态效果」。
+  - ⚠️ 踩坑记录：曾想用 `window.setValue(false, forKey: "windowOcclusionDetectionEnabled")` 关闭遮挡节流（生存指南 A.1），但该私有 KVC key 在本机 macOS 上**不存在**，`setValue:forKey:` 抛 `NSUnknownKeyException`。它发生在 `applicationDidFinishLaunching` 内、被 NSApp 运行循环吞掉 → 进程不崩但启动半途夭折（菜单栏状态项再没创建）。**教训：在 `applicationDidFinishLaunching` 里调私有 KVC / 可能抛 ObjC 异常的 API 前要确认 key 存在；"进程还活着"≠"启动成功"，要验证 `NSStatusItem` 真的出现（`osascript … count of menu bars`）。**
 - `SlidePanel` 是 borderless `.nonactivatingPanel`：`canBecomeKey = true` 但 `canBecomeMain = false` —— 这是「能在网页里打字、却不抢前台 App 焦点」的关键，别改。
 
 ### 滑出触发链路
