@@ -6,8 +6,15 @@ struct PanelLayout {
 }
 
 /// Which panel edge a resize handle drags.
-enum PanelResizeEdge {
+enum PanelResizeEdge: Hashable {
     case leading, trailing, top, bottom
+}
+
+/// A draggable region on the panel's free (non-docked) perimeter. An edge resizes
+/// one axis; a corner (a width edge + a height edge) resizes both at once.
+enum PanelResizeZone: Hashable {
+    case edge(PanelResizeEdge)
+    case corner(PanelResizeEdge, PanelResizeEdge)   // (horizontal, vertical)
 }
 
 /// Pure geometry. The panel keeps a user-chosen `size`; snapping only changes

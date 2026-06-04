@@ -64,7 +64,7 @@ final class PanelController {
             onMoveEnded: { [weak self] in self?.moveEnded() },
             onModalChange: { [weak self] open in self?.autoHideSuspended = open },
             onResizeBegan: { [weak self] in self?.resizeBegan() },
-            onResizeChanged: { [weak self] edge, t in self?.resizeChanged(edge, t) },
+            onResizeChanged: { [weak self] edges, t in self?.resizeChanged(edges, t) },
             onResizeEnded: { [weak self] in self?.resizeEnded() }
         )
     }
@@ -161,7 +161,8 @@ final class PanelController {
         dragStartMouse = NSEvent.mouseLocation
     }
 
-    private func resizeChanged(_ edge: PanelResizeEdge, _ translation: CGSize) {
+    /// One edge for an edge handle, two (a width + a height edge) for a corner.
+    private func resizeChanged(_ edges: [PanelResizeEdge], _ translation: CGSize) {
         guard let screen = activeScreen else { return }
         let vf = screen.visibleFrame
         // Absolute screen-coordinate deltas (y is up), same anti-jitter reason
@@ -170,11 +171,13 @@ final class PanelController {
         let dy = NSEvent.mouseLocation.y - dragStartMouse.y
         var w = resizeStartSize.width
         var h = resizeStartSize.height
-        switch edge {
-        case .trailing: w = resizeStartSize.width + dx
-        case .leading:  w = resizeStartSize.width - dx
-        case .top:      h = resizeStartSize.height + dy
-        case .bottom:   h = resizeStartSize.height - dy
+        for edge in edges {
+            switch edge {
+            case .trailing: w = resizeStartSize.width + dx
+            case .leading:  w = resizeStartSize.width - dx
+            case .top:      h = resizeStartSize.height + dy
+            case .bottom:   h = resizeStartSize.height - dy
+            }
         }
         settings.panelWidth = min(max(PanelGeometry.minSize.width, w), Double(vf.width))
         settings.panelHeight = min(max(PanelGeometry.minSize.height, h), Double(vf.height))

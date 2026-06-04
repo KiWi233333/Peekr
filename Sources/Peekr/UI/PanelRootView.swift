@@ -15,7 +15,7 @@ struct PanelRootView: View {
     var onMoveEnded: () -> Void
     var onModalChange: (Bool) -> Void
     var onResizeBegan: () -> Void
-    var onResizeChanged: (PanelResizeEdge, CGSize) -> Void
+    var onResizeChanged: ([PanelResizeEdge], CGSize) -> Void
     var onResizeEnded: () -> Void
 
     @State private var editTarget: EditTarget?
@@ -33,8 +33,6 @@ struct PanelRootView: View {
 
     private var isModalOpen: Bool { editTarget != nil || bookmarksOpen }
     private var anchor: PanelAnchor { settings.anchor }
-    private var widthEdge: PanelResizeEdge { anchor.isRightSide ? .leading : .trailing }
-    private var heightEdge: PanelResizeEdge { anchor.isTopSide ? .bottom : .top }
 
     private var moveGesture: some Gesture {
         DragGesture(minimumDistance: 4)
@@ -68,12 +66,9 @@ struct PanelRootView: View {
             RoundedRectangle(cornerRadius: Theme.panelCorner, style: .continuous)
                 .stroke(Theme.hairline, lineWidth: 1)
         }
-        .overlay(alignment: widthEdge == .leading ? .leading : .trailing) {
-            ResizeHandle(edge: widthEdge, hint: settings.strings.resizeHint,
-                         onBegan: onResizeBegan, onChanged: onResizeChanged, onEnded: onResizeEnded)
-        }
-        .overlay(alignment: heightEdge == .top ? .top : .bottom) {
-            ResizeHandle(edge: heightEdge, hint: settings.strings.resizeHint,
+        // Native-style resize border on the panel's free edges + corner.
+        .overlay {
+            ResizeBorder(zones: anchor.resizeZones, hint: settings.strings.resizeHint,
                          onBegan: onResizeBegan, onChanged: onResizeChanged, onEnded: onResizeEnded)
         }
         .ignoresSafeArea()
@@ -186,5 +181,64 @@ private struct ResizeHandle: View {
         Capsule()
             .fill(Color.primary.opacity(active || hovering ? 0.4 : 0.22))
             .frame(width: isVertical ? 3 : 30, height: isVertical ? 30 : 3)
+    }
+}
+
+/// A diagonal grab at a corner anchor's free inner corner — resizes width and
+/// height together ("free resize"). AppKit ships no public diagonal-resize
+/// cursor, so it's drawn from an SF Symbol (falls back to crosshair).
+private struct CornerResizeHandle: View {
+    let horizontal: PanelResizeEdge   // .leading / .trailing — the free side edge
+    let vertical: PanelResizeEdge     // .top / .bottom — the free top/bottom edge
+    let hint: String
+    var onBegan: () -> Void
+    var onChanged: (CGSize) -> Void
+    var onEnded: () -> Void
+
+    @State private var active = false
+    @State private var hovering = false
+
+    // Which diagonal the corner sits on: NE–SW (top-right / bottom-left) vs NW–SE.
+    private var symbol: String {
+        let neSW = (horizontal == .trailing && vertical == .top)
+                || (horizontal == .leading && vertical == .bottom)
+        return neSW ? "arrow.up.right.and.arrow.down.left"
+                    : "arrow.up.left.and.arrow.down.right"
+    }
+
+    var body: some View {
+        Color.primary.opacity(active || hovering ? 0.08 : 0.001)
+            .frame(width: 20, height: 20)
+            .overlay(
+                Image(systemName: symbol)
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(Color.primary.opacity(active || hovering ? 0.5 : 0.25))
+            )
+            .contentShape(Rectangle())
+            .onHover { inside in
+                hovering = inside
+                if inside { Self.cursor(for: symbol).set() } else { NSCursor.arrow.set() }
+            }
+            .gesture(
+                DragGesture(minimumDistance: 1)
+                    .onChanged { value in
+                        if !active { active = true; onBegan() }
+                        onChanged(value.translation)
+                    }
+                    .onEnded { _ in active = false; onEnded() }
+            )
+            .help(hint)
+    }
+
+    private static let cursors: [String: NSCursor] = [
+        "arrow.up.right.and.arrow.down.left": make("arrow.up.right.and.arrow.down.left"),
+        "arrow.up.left.and.arrow.down.right": make("arrow.up.left.and.arrow.down.right"),
+    ]
+    private static func cursor(for symbol: String) -> NSCursor { cursors[symbol] ?? .crosshair }
+    private static func make(_ symbol: String) -> NSCursor {
+        let cfg = NSImage.SymbolConfiguration(pointSize: 13, weight: .semibold)
+        guard let img = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)?
+            .withSymbolConfiguration(cfg) else { return .crosshair }
+        return NSCursor(image: img, hotSpot: NSPoint(x: img.size.width / 2, y: img.size.height / 2))
     }
 }
