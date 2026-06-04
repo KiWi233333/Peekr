@@ -264,11 +264,20 @@ private struct AppsTab: View {
 private struct AboutTab: View {
     let settings: Settings
 
+    /// The real colored app icon (AppIcon.icns) in `.app` mode; falls back to the
+    /// drawn brand glyph when running the bare executable (`swift run`), which has
+    /// no bundle icon.
+    private var appIcon: NSImage {
+        let icon = NSApplication.shared.applicationIconImage
+        if let icon, icon.isValid, icon.size.width > 0 { return icon }
+        return BrandGlyph.image(size: 84)
+    }
+
     var body: some View {
         VStack(spacing: 14) {
-            Image(systemName: "sidebar.trailing")
-                .font(.system(size: 46, weight: .light))
-                .foregroundStyle(.primary)
+            Image(nsImage: appIcon)
+                .resizable()
+                .frame(width: 84, height: 84)
             Text("Peekr")
                 .font(.system(size: 26, weight: .bold, design: .rounded))
             Text(settings.strings.tagline)

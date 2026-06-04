@@ -32,17 +32,7 @@ final class StatusBarController: NSObject {
 
         item.isVisible = true
         if let button = item.button {
-            // Try a few symbol names (availability varies); fall back to text so
-            // the item never collapses to zero width and vanishes.
-            let symbols = ["sidebar.right", "sidebar.trailing", "rectangle.righthalf.inset.filled", "macwindow"]
-            let image = symbols.lazy.compactMap {
-                NSImage(systemSymbolName: $0, accessibilityDescription: "Peekr")
-            }.first
-            image?.isTemplate = true
-            button.image = image
-            if image == nil {
-                button.title = "Peekr"
-            }
+            button.image = BrandGlyph.image(size: 18)
         }
 
         let menu = NSMenu()
