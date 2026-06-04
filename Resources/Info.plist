@@ -10,6 +10,8 @@
     <string>com.peekr.app</string>
     <key>CFBundleExecutable</key>
     <string>Peekr</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>

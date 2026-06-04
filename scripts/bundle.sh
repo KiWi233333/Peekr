@@ -13,6 +13,7 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN_DIR/Peekr" "$APP/Contents/MacOS/Peekr"
 cp Resources/Info.plist "$APP/Contents/Info.plist"
+[ -f Resources/AppIcon.icns ] && cp Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 
 # Sign so WebKit + per-app data stores work. Prefer a real, stable signing
 # identity over ad-hoc: macOS binds Automation/TCC grants (e.g. "allow Peekr to
