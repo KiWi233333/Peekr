@@ -27,6 +27,7 @@ final class PanelController {
     private var moveMonitorLocal: Any?
     private var keyMonitor: Any?
     private var dragStartOrigin: NSPoint = .zero
+    private var dragStartMouse: NSPoint = .zero
     private var resizeStartSize: NSSize = .zero
 
     init(model: AppModel, settings: Settings, manager: WebViewManager, icons: IconStore) {
@@ -121,12 +122,19 @@ final class PanelController {
     private func moveBegan() {
         autoHideSuspended = true
         dragStartOrigin = panel.frame.origin
+        dragStartMouse = NSEvent.mouseLocation
     }
 
+    /// Move by the delta of the *absolute* screen mouse position, not the
+    /// gesture's translation. The gesture lives inside the window, so its
+    /// reference frame moves as the window moves — using it creates a feedback
+    /// loop that jitters (and worsens across displays). Screen coordinates are
+    /// stable, so the window tracks the cursor 1:1 with no oscillation.
     private func moveChanged(_ translation: CGSize) {
+        let mouse = NSEvent.mouseLocation
         panel.setFrameOrigin(NSPoint(
-            x: dragStartOrigin.x + translation.width,
-            y: dragStartOrigin.y - translation.height
+            x: dragStartOrigin.x + (mouse.x - dragStartMouse.x),
+            y: dragStartOrigin.y + (mouse.y - dragStartMouse.y)
         ))
     }
 
@@ -150,18 +158,23 @@ final class PanelController {
     private func resizeBegan() {
         autoHideSuspended = true
         resizeStartSize = panel.frame.size
+        dragStartMouse = NSEvent.mouseLocation
     }
 
     private func resizeChanged(_ edge: PanelResizeEdge, _ translation: CGSize) {
         guard let screen = activeScreen else { return }
         let vf = screen.visibleFrame
+        // Absolute screen-coordinate deltas (y is up), same anti-jitter reason
+        // as moveChanged.
+        let dx = NSEvent.mouseLocation.x - dragStartMouse.x
+        let dy = NSEvent.mouseLocation.y - dragStartMouse.y
         var w = resizeStartSize.width
         var h = resizeStartSize.height
         switch edge {
-        case .trailing: w = resizeStartSize.width + translation.width
-        case .leading:  w = resizeStartSize.width - translation.width
-        case .bottom:   h = resizeStartSize.height + translation.height
-        case .top:      h = resizeStartSize.height - translation.height
+        case .trailing: w = resizeStartSize.width + dx
+        case .leading:  w = resizeStartSize.width - dx
+        case .top:      h = resizeStartSize.height + dy
+        case .bottom:   h = resizeStartSize.height - dy
         }
         settings.panelWidth = min(max(280, w), Double(vf.width))
         settings.panelHeight = min(max(240, h), Double(vf.height))
