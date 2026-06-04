@@ -1,0 +1,161 @@
+name: Release
+
+# Triggered by pushing a semver tag, e.g.:
+#   git tag v0.3.0 && git push origin v0.3.0
+# Tag the commit on `main` you want to ship.
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write # needed to create the GitHub Release
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build & package
+    runs-on: macos-15
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+      dmg: ${{ steps.meta.outputs.dmg }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve version
+        id: meta
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "dmg=Peekr-$VERSION.dmg" >> "$GITHUB_OUTPUT"
+
+      - name: Show toolchain
+        run: swift --version && xcodebuild -version
+
+      - name: Cache SwiftPM
+        uses: actions/cache@v4
+        with:
+          path: .build
+          key: ${{ runner.os }}-spm-${{ hashFiles('Package.swift') }}
+          restore-keys: ${{ runner.os }}-spm-
+
+      # Basic CI gate — fail the release if it doesn't compile.
+      - name: Build (release)
+        run: swift build -c release -v
+
+      # Assemble the .app bundle (ad-hoc signed on CI; no identity available).
+      - name: Bundle .app
+        run: ./scripts/bundle.sh release
+
+      - name: Create DMG
+        run: |
+          set -euo pipefail
+          mkdir -p dist/stage
+          cp -R build/Peekr.app dist/stage/
+          ln -s /Applications dist/stage/Applications
+          hdiutil create -volname "Peekr" \
+            -srcfolder dist/stage \
+            -ov -format UDZO \
+            "dist/${{ steps.meta.outputs.dmg }}"
+          # also ship a plain zip of the .app
+          ditto -c -k --keepParent build/Peekr.app "dist/Peekr-${{ steps.meta.outputs.version }}.app.zip"
+          ls -la dist
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: peekr-${{ steps.meta.outputs.version }}
+          path: dist/*
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Peekr ${{ steps.meta.outputs.version }}
+          tag_name: ${{ github.ref_name }}
+          generate_release_notes: true
+          draft: false
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          files: |
+            dist/${{ steps.meta.outputs.dmg }}
+            dist/Peekr-${{ steps.meta.outputs.version }}.app.zip
+
+  # Optional Lark / Feishu notification.
+  # Configure repo secrets to enable (the job is a no-op when LARK_WEBHOOK_URL is unset):
+  #   LARK_WEBHOOK_URL     — required. Your custom-bot webhook URL.
+  #   LARK_WEBHOOK_SECRET  — optional. Set only if the bot has "signature verification" on.
+  notify:
+    name: Notify Lark
+    needs: build
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send Lark card
+        env:
+          LARK_WEBHOOK_URL: ${{ secrets.LARK_WEBHOOK_URL }}
+          LARK_WEBHOOK_SECRET: ${{ secrets.LARK_WEBHOOK_SECRET }}
+          VERSION: ${{ needs.build.outputs.version }}
+          STATUS: ${{ needs.build.result }}
+          REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          RELEASE_URL: ${{ github.server_url }}/${{ github.repository }}/releases/tag/${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          if [ -z "${LARK_WEBHOOK_URL:-}" ]; then
+            echo "LARK_WEBHOOK_URL not set — skipping notification."
+            exit 0
+          fi
+
+          if [ "$STATUS" = "success" ]; then
+            HEADER="🚀 Peekr $VERSION released"; COLOR="green"
+          else
+            HEADER="❌ Peekr $VERSION release failed"; COLOR="red"
+          fi
+
+          # Optional signed-request fields (only when the bot enforces a signature).
+          SIGN_FIELDS=""
+          if [ -n "${LARK_WEBHOOK_SECRET:-}" ]; then
+            TIMESTAMP="$(date +%s)"
+            # Lark's algorithm: HMAC-SHA256 over empty data, using
+            # (timestamp + "\n" + secret) as the KEY; then base64.
+            SIGN="$(printf '' | openssl dgst -sha256 \
+              -hmac "$(printf '%s\n%s' "$TIMESTAMP" "$LARK_WEBHOOK_SECRET")" \
+              -binary | base64)"
+            SIGN_FIELDS="\"timestamp\":\"$TIMESTAMP\",\"sign\":\"$SIGN\","
+          fi
+
+          PAYLOAD=$(cat <<JSON
+          {
+            ${SIGN_FIELDS}
+            "msg_type": "interactive",
+            "card": {
+              "config": { "wide_screen_mode": true },
+              "header": {
+                "template": "$COLOR",
+                "title": { "tag": "plain_text", "content": "$HEADER" }
+              },
+              "elements": [
+                { "tag": "div", "text": {
+                    "tag": "lark_md",
+                    "content": "**Repo:** $REPO\n**Status:** $STATUS" } },
+                { "tag": "action", "actions": [
+                    { "tag": "button", "text": { "tag": "plain_text", "content": "Release" },
+                      "type": "primary", "url": "$RELEASE_URL" },
+                    { "tag": "button", "text": { "tag": "plain_text", "content": "Workflow run" },
+                      "type": "default", "url": "$RUN_URL" }
+                ] }
+              ]
+            }
+          }
+          JSON
+          )
+
+          curl -sS -X POST "$LARK_WEBHOOK_URL" \
+            -H 'Content-Type: application/json' \
+            -d "$PAYLOAD" | tee /tmp/lark_resp.json
+          echo
+          # Lark returns {"code":0,...} on success.
+          grep -q '"code":0\|"StatusCode":0' /tmp/lark_resp.json || {
+            echo "::warning::Lark webhook responded with a non-zero code"; }
