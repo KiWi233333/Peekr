@@ -13,7 +13,7 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN_DIR/Peekr" "$APP/Contents/MacOS/Peekr"
 cp Resources/Info.plist "$APP/Contents/Info.plist"
-[ -f Resources/AppIcon.icns ] && cp Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
+[ -f Resources/AppIcon.icns ] && cp Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns" || true
 
 # Sign so WebKit + per-app data stores work. Prefer a real, stable signing
 # identity over ad-hoc: macOS binds Automation/TCC grants (e.g. "allow Peekr to
@@ -27,9 +27,12 @@ cp Resources/Info.plist "$APP/Contents/Info.plist"
 if [ -n "${PEEKR_SIGN_IDENTITY:-}" ]; then
   IDENTITY="$PEEKR_SIGN_IDENTITY"
 else
+  # `|| true`: with `set -o pipefail`, grep matching no identity (e.g. on CI, where
+  # none exist) exits non-zero and would abort the script before the ad-hoc fallback
+  # below ever runs. An empty IDENTITY is the intended "no identity" signal, not an error.
   IDENTITY="$(security find-identity -v -p codesigning 2>/dev/null \
     | grep -oE '"(Developer ID Application|Apple Development)[^"]*"' \
-    | head -1 | tr -d '"')"
+    | head -1 | tr -d '"' || true)"
 fi
 
 if [ -n "$IDENTITY" ]; then
