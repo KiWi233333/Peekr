@@ -6,7 +6,7 @@ import WebKit
 /// nav state out of KVO and handles OAuth / `window.open` popups.
 @MainActor
 final class WebKitEngine: NSObject, WebEngine {
-    let webView: WKWebView
+    let webView: NavigatingWebView
     var hostView: NSView { webView }
     private(set) var navState = NavState()
     var onNavStateChange: ((NavState) -> Void)?
@@ -25,9 +25,13 @@ final class WebKitEngine: NSObject, WebEngine {
         // initial click gesture.
         configuration.preferences.javaScriptCanOpenWindowsAutomatically = true
 
-        webView = WKWebView(frame: .zero, configuration: configuration)
+        webView = NavigatingWebView(frame: .zero, configuration: configuration)
         super.init()
 
+        // Mouse thumb buttons (button 3 = back, 4 = forward) — WKWebView ignores
+        // them by default, so wire them to history navigation like every browser.
+        webView.onBack = { [weak self] in self?.goBack() }
+        webView.onForward = { [weak self] in self?.goForward() }
         webView.allowsBackForwardNavigationGestures = true
         webView.allowsMagnification = true
         // Handle `window.open` / `target="_blank"`; without a UI delegate WebKit
@@ -66,13 +70,30 @@ final class WebKitEngine: NSObject, WebEngine {
         _ keyPath: KeyPath<WKWebView, Value>,
         apply: @escaping (inout NavState, Value) -> Void
     ) -> NSKeyValueObservation {
-        webView.observe(keyPath, options: [.initial, .new]) { [weak self] _, change in
+        (webView as WKWebView).observe(keyPath, options: [.initial, .new]) { [weak self] _, change in
             guard let value = change.newValue else { return }
             MainActor.assumeIsolated {
                 guard let self else { return }
                 apply(&self.navState, value)
                 self.onNavStateChange?(self.navState)
             }
+        }
+    }
+}
+
+/// `WKWebView` that maps the mouse thumb buttons to history navigation.
+/// WebKit's content view doesn't consume `otherMouseDown` for buttons 3/4, so
+/// AppKit walks them up the responder chain to here — overriding on the subview
+/// would be unreachable. Buttons are fixed by the HID spec: 3 = back, 4 = forward.
+final class NavigatingWebView: WKWebView {
+    var onBack: (() -> Void)?
+    var onForward: (() -> Void)?
+
+    override func otherMouseDown(with event: NSEvent) {
+        switch event.buttonNumber {
+        case 3: onBack?()
+        case 4: onForward?()
+        default: super.otherMouseDown(with: event)
         }
     }
 }
