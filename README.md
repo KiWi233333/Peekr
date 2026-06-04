@@ -55,11 +55,8 @@ Most "slide-over browser" tools are Electron wrappers that eat hundreds of MB an
 
 ## Screenshots
 
-> Drop your images into `assets/` and they'll render here.
-
 <div align="center">
-<img src="assets/screenshot-panel.png" alt="Slide-over panel" width="48%" />
-<img src="assets/screenshot-prefs.png" alt="Preferences" width="48%" />
+<img src="assets/screenshot.png" alt="Peekr slide-over panel with the icon rail, navigation bar, and a loaded web app" width="720" />
 </div>
 
 ## Install
@@ -117,13 +114,13 @@ A few load-bearing conventions (see [`CLAUDE.md`](CLAUDE.md) for the full tour):
 
 ## Roadmap
 
-- [x] Browser shortcuts (`⌘1`–`⌘9`, `⌘L`, `⌘W`, …)
-- [x] Bookmarks & open-tab import
-- [ ] Workspaces / tab groups
-- [ ] Per-app unread / notification badges
-- [ ] App "hibernation" to free memory for idle apps
-- [ ] App icon / DMG packaging & notarization
-- [ ] Online icon library
+See **[ROADMAP.md](ROADMAP.md)** for the full, user-need-driven plan. Highlights:
+
+- [x] Browser shortcuts, bookmarks & open-tab import
+- [ ] Per-app panel size memory + real hibernation with a sleep/wake hotkey
+- [ ] App identity: aliases, active-app emphasis, unread / notification badges
+- [ ] Custom CSS / JS injection per URL pattern
+- [ ] Built-in content blocking, app quick-switcher
 
 ## Contributing
 

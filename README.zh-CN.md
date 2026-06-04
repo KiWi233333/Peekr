@@ -55,11 +55,8 @@
 
 ## 截图
 
-> 把图片放进 `assets/`，即可在此处渲染。
-
 <div align="center">
-<img src="assets/screenshot-panel.png" alt="滑出面板" width="48%" />
-<img src="assets/screenshot-prefs.png" alt="偏好设置" width="48%" />
+<img src="assets/screenshot.png" alt="Peekr 滑出面板：图标 rail、导航栏与加载中的网页应用" width="720" />
 </div>
 
 ## 安装
@@ -117,13 +114,13 @@ Sources/Peekr/
 
 ## 路线图
 
-- [x] 浏览器快捷键（`⌘1`–`⌘9`、`⌘L`、`⌘W`…）
-- [x] 书签与打开标签导入
-- [ ] 工作区 / 标签分组
-- [ ] 每应用未读 / 通知角标
-- [ ] 空闲应用「休眠」以释放内存
-- [ ] App 图标 / DMG 打包与公证
-- [ ] 在线图标库
+完整路线图（基于用户需求洞察）见 **[ROADMAP.md](ROADMAP.md)**。重点：
+
+- [x] 浏览器快捷键、书签与打开标签导入
+- [ ] 每应用面板尺寸记忆 + 真休眠（含睡眠/唤醒热键）
+- [ ] 应用辨识度：别名、活动应用强调、未读 / 通知角标
+- [ ] 按 URL 模式注入自定义 CSS / JS
+- [ ] 内置内容拦截、应用快速切换器
 
 ## 贡献
 
