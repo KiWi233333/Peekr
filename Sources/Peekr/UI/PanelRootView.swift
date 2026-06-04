@@ -142,100 +142,116 @@ struct PanelBackground: View {
     }
 }
 
-/// A draggable resize strip on one free edge of the panel.
-private struct ResizeHandle: View {
-    let edge: PanelResizeEdge
+/// Native-style resize border: near-invisible hit-zones along the panel's free
+/// edges + corner. A real macOS window shows no visible grab — just the resize
+/// cursor — so these stay transparent at rest and light up only faintly on
+/// hover/drag. Docked edges have no zone (they stay flush to the screen).
+private struct ResizeBorder: View {
+    let zones: [PanelResizeZone]
     let hint: String
     var onBegan: () -> Void
-    var onChanged: (PanelResizeEdge, CGSize) -> Void
+    var onChanged: ([PanelResizeEdge], CGSize) -> Void
     var onEnded: () -> Void
 
-    @State private var active = false
-    @State private var hovering = false
-
-    private var isVertical: Bool { edge == .leading || edge == .trailing }
-
     var body: some View {
-        Rectangle()
-            .fill(Color.primary.opacity(active || hovering ? 0.08 : 0.001))
-            .frame(width: isVertical ? 10 : nil, height: isVertical ? nil : 10)
-            .overlay(grabber)
-            .contentShape(Rectangle())
-            .onHover { inside in
-                hovering = inside
-                if inside { (isVertical ? NSCursor.resizeLeftRight : NSCursor.resizeUpDown).set() }
-                else { NSCursor.arrow.set() }
+        ZStack {
+            // `zones` lists the corner last, so it stacks above the edge zones
+            // and wins the pixels they share at the corner.
+            ForEach(zones, id: \.self) { zone in
+                ResizeZoneHandle(zone: zone, hint: hint,
+                                 onBegan: onBegan, onChanged: onChanged, onEnded: onEnded)
             }
-            .gesture(
-                DragGesture(minimumDistance: 1)
-                    .onChanged { value in
-                        if !active { active = true; onBegan() }
-                        onChanged(edge, value.translation)
-                    }
-                    .onEnded { _ in active = false; onEnded() }
-            )
-            .help(hint)
-    }
-
-    private var grabber: some View {
-        Capsule()
-            .fill(Color.primary.opacity(active || hovering ? 0.4 : 0.22))
-            .frame(width: isVertical ? 3 : 30, height: isVertical ? 30 : 3)
+        }
     }
 }
 
-/// A diagonal grab at a corner anchor's free inner corner — resizes width and
-/// height together ("free resize"). AppKit ships no public diagonal-resize
-/// cursor, so it's drawn from an SF Symbol (falls back to crosshair).
-private struct CornerResizeHandle: View {
-    let horizontal: PanelResizeEdge   // .leading / .trailing — the free side edge
-    let vertical: PanelResizeEdge     // .top / .bottom — the free top/bottom edge
+/// One resize zone — a thin edge band or a corner square — positioned on the
+/// panel's perimeter and carrying the matching native resize cursor.
+private struct ResizeZoneHandle: View {
+    let zone: PanelResizeZone
     let hint: String
     var onBegan: () -> Void
-    var onChanged: (CGSize) -> Void
+    var onChanged: ([PanelResizeEdge], CGSize) -> Void
     var onEnded: () -> Void
 
     @State private var active = false
     @State private var hovering = false
 
-    // Which diagonal the corner sits on: NE–SW (top-right / bottom-left) vs NW–SE.
-    private var symbol: String {
-        let neSW = (horizontal == .trailing && vertical == .top)
-                || (horizontal == .leading && vertical == .bottom)
-        return neSW ? "arrow.up.right.and.arrow.down.left"
-                    : "arrow.up.left.and.arrow.down.right"
-    }
+    private static let edgeThickness: CGFloat = 8
+    private static let cornerSize: CGFloat = 18
 
     var body: some View {
-        Color.primary.opacity(active || hovering ? 0.08 : 0.001)
-            .frame(width: 20, height: 20)
-            .overlay(
-                Image(systemName: symbol)
-                    .font(.system(size: 9, weight: .semibold))
-                    .foregroundStyle(Color.primary.opacity(active || hovering ? 0.5 : 0.25))
-            )
+        // Size + hit-test the zone first, THEN position it. The fill axis (nil
+        // dimension) stretches to the panel edge; contentShape/gestures bind to
+        // this sized band — never the full-panel positioning frame below, or the
+        // zone would swallow hits across the whole panel.
+        Color.primary.opacity(active || hovering ? 0.06 : 0.001)
+            .frame(width: fixedWidth, height: fixedHeight)
             .contentShape(Rectangle())
             .onHover { inside in
                 hovering = inside
-                if inside { Self.cursor(for: symbol).set() } else { NSCursor.arrow.set() }
+                if inside { cursor.set() } else { NSCursor.arrow.set() }
             }
             .gesture(
                 DragGesture(minimumDistance: 1)
                     .onChanged { value in
                         if !active { active = true; onBegan() }
-                        onChanged(value.translation)
+                        onChanged(edges, value.translation)
                     }
                     .onEnded { _ in active = false; onEnded() }
             )
             .help(hint)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: alignment)
     }
 
-    private static let cursors: [String: NSCursor] = [
-        "arrow.up.right.and.arrow.down.left": make("arrow.up.right.and.arrow.down.left"),
-        "arrow.up.left.and.arrow.down.right": make("arrow.up.left.and.arrow.down.right"),
-    ]
-    private static func cursor(for symbol: String) -> NSCursor { cursors[symbol] ?? .crosshair }
-    private static func make(_ symbol: String) -> NSCursor {
+    // The zone's fixed dimension(s); the other axis fills the panel edge.
+    private var fixedWidth: CGFloat? {
+        switch zone {
+        case .edge(.leading), .edge(.trailing): return Self.edgeThickness
+        case .edge(.top), .edge(.bottom):       return nil
+        case .corner:                           return Self.cornerSize
+        }
+    }
+    private var fixedHeight: CGFloat? {
+        switch zone {
+        case .edge(.top), .edge(.bottom):       return Self.edgeThickness
+        case .edge(.leading), .edge(.trailing): return nil
+        case .corner:                           return Self.cornerSize
+        }
+    }
+    private var alignment: Alignment {
+        switch zone {
+        case .edge(.leading):  return .leading
+        case .edge(.trailing): return .trailing
+        case .edge(.top):      return .top
+        case .edge(.bottom):   return .bottom
+        case .corner(let h, let v):
+            return Alignment(horizontal: h == .leading ? .leading : .trailing,
+                             vertical: v == .top ? .top : .bottom)
+        }
+    }
+    private var edges: [PanelResizeEdge] {
+        switch zone {
+        case .edge(let e):          return [e]
+        case .corner(let h, let v): return [h, v]
+        }
+    }
+    private var cursor: NSCursor {
+        switch zone {
+        case .edge(.leading), .edge(.trailing): return .resizeLeftRight
+        case .edge(.top), .edge(.bottom):       return .resizeUpDown
+        case .corner(let h, let v):
+            // NE–SW corners (top-right / bottom-left) vs NW–SE (top-left / bottom-right).
+            let neSW = (h == .trailing && v == .top) || (h == .leading && v == .bottom)
+            return neSW ? Self.diagNESW : Self.diagNWSE
+        }
+    }
+
+    // AppKit ships no public diagonal-resize cursor, so build them from SF
+    // Symbols once (falling back to crosshair if unavailable).
+    private static let diagNESW = makeDiagonalCursor("arrow.up.right.and.arrow.down.left")
+    private static let diagNWSE = makeDiagonalCursor("arrow.up.left.and.arrow.down.right")
+    private static func makeDiagonalCursor(_ symbol: String) -> NSCursor {
         let cfg = NSImage.SymbolConfiguration(pointSize: 13, weight: .semibold)
         guard let img = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)?
             .withSymbolConfiguration(cfg) else { return .crosshair }
