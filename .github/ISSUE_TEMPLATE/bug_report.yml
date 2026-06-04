@@ -1,0 +1,66 @@
+name: 🐞 Bug report
+description: Report something that isn't working as expected
+title: "fix: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug! Please fill out the sections below.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: A clear and concise description of the bug.
+      placeholder: When I hover the left edge, the panel...
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: How can we reproduce it?
+      placeholder: |
+        1. Dock an app to the top-right corner
+        2. Press ⌃⌥Space
+        3. ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      placeholder: The panel should slide out without stealing focus.
+    validations:
+      required: true
+  - type: dropdown
+    id: run-mode
+    attributes:
+      label: How did you run Peekr?
+      options:
+        - "make run (.app bundle)"
+        - "make dev (swift run)"
+        - "A downloaded release"
+    validations:
+      required: true
+  - type: input
+    id: macos-version
+    attributes:
+      label: macOS version
+      placeholder: "e.g. 26.0 / 14.5"
+    validations:
+      required: true
+  - type: input
+    id: xcode-version
+    attributes:
+      label: Xcode version
+      placeholder: "e.g. Xcode 26.0"
+    validations:
+      required: false
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs / screenshots
+      description: Console output, crash logs, or screenshots, if any.
+    validations:
+      required: false
