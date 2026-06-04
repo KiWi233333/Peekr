@@ -1,74 +1,109 @@
 import AppKit
+import SwiftUI
 
-/// Owns the slide panel and drives the show / hide / slide animations,
-/// edge auto-hide and pin behaviour.
+/// Owns the slide panel: anchoring, slide animation, edge auto-hide, pin,
+/// and drag-to-snap across 8 positions and multiple displays.
 @MainActor
 final class PanelController {
     let model: AppModel
-    let webManager: WebViewManager
+    let settings: Settings
+    let manager: WebViewManager
+    let icons: IconStore
+
+    var onVisibilityChange: ((Bool) -> Void)?
 
     private let panel: SlidePanel
-    private let content: PanelContentView
+    private let backdrop = NSVisualEffectView()
+    private var hosting: NSHostingView<PanelRootView>!
 
-    var panelWidth: CGFloat = 440
     private(set) var isVisible = false
+    private var autoHideSuspended = false
+    private var activeScreen: NSScreen?
 
     private var moveMonitorGlobal: Any?
     private var moveMonitorLocal: Any?
     private var keyMonitor: Any?
+    private var dragStartOrigin: NSPoint = .zero
 
-    init(model: AppModel) {
+    init(model: AppModel, settings: Settings, manager: WebViewManager, icons: IconStore) {
         self.model = model
-        webManager = WebViewManager(model: model)
-        panel = SlidePanel(contentRect: NSRect(x: 0, y: 0, width: panelWidth, height: 600))
-        content = PanelContentView(model: model, webManager: webManager)
-        panel.contentView = content
+        self.settings = settings
+        self.manager = manager
+        self.icons = icons
+
+        panel = SlidePanel(contentRect: NSRect(x: 0, y: 0, width: settings.panelWidth, height: 640))
+
+        let container = NSView(frame: panel.frame)
+        container.wantsLayer = true
+        container.layer?.cornerRadius = Theme.panelCorner
+        container.layer?.masksToBounds = true
+
+        backdrop.material = .popover
+        backdrop.blendingMode = .behindWindow
+        backdrop.state = .active
+        backdrop.frame = container.bounds
+        backdrop.autoresizingMask = [.width, .height]
+        container.addSubview(backdrop)
+
+        let root = PanelRootView(
+            model: model, settings: settings, manager: manager, icons: icons,
+            onMoveBegan: { },
+            onMoveChanged: { _ in },
+            onMoveEnded: { },
+            onModalChange: { _ in }
+        )
+        hosting = NSHostingView(rootView: root)
+        hosting.frame = container.bounds
+        hosting.autoresizingMask = [.width, .height]
+        container.addSubview(hosting)
+
+        panel.contentView = container
+
+        // Wire callbacks now that self is fully initialised.
+        hosting.rootView = PanelRootView(
+            model: model, settings: settings, manager: manager, icons: icons,
+            onMoveBegan: { [weak self] in self?.moveBegan() },
+            onMoveChanged: { [weak self] t in self?.moveChanged(t) },
+            onMoveEnded: { [weak self] in self?.moveEnded() },
+            onModalChange: { [weak self] open in self?.autoHideSuspended = open }
+        )
     }
 
-    // MARK: - Public
+    // MARK: - Show / hide
 
-    func toggle() {
-        isVisible ? hide() : show()
-    }
+    func toggle() { isVisible ? hide() : show() }
 
     func show() {
         guard !isVisible else { return }
         isVisible = true
+        onVisibilityChange?(true)
 
-        let screen = targetScreen
-        let vf = screen.visibleFrame
-        let onscreen = NSRect(x: vf.maxX - panelWidth, y: vf.minY, width: panelWidth, height: vf.height)
-        let offscreen = NSRect(x: screen.frame.maxX, y: vf.minY, width: panelWidth, height: vf.height)
+        let screen = resolveScreen()
+        activeScreen = screen
+        persistScreen(screen)
 
         if model.selectedID == nil { model.selectedID = model.apps.first?.id }
-        if let id = model.selectedID { webManager.show(id) }
+        if let id = model.selectedID { manager.activate(id) }
 
-        panel.setFrame(offscreen, display: false)
+        let layout = PanelGeometry.layout(anchor: settings.anchor, screen: screen, width: settings.panelWidth)
+        panel.setFrame(layout.offscreen, display: false)
         panel.makeKeyAndOrderFront(nil)
-
-        NSAnimationContext.runAnimationGroup { ctx in
-            ctx.duration = 0.22
-            ctx.timingFunction = CAMediaTimingFunction(name: .easeOut)
-            ctx.allowsImplicitAnimation = true
-            panel.animator().setFrame(onscreen, display: true)
-        }
-
+        animate(to: layout.onscreen, duration: 0.24, curve: .easeOut)
         installMonitors()
     }
 
     func hide() {
         guard isVisible else { return }
         isVisible = false
+        onVisibilityChange?(false)
         removeMonitors()
 
-        let screen = targetScreen
-        let f = panel.frame
-        let offscreen = NSRect(x: screen.frame.maxX, y: f.minY, width: f.width, height: f.height)
-
+        let screen = activeScreen ?? resolveScreen()
+        let layout = PanelGeometry.layout(anchor: settings.anchor, screen: screen, width: settings.panelWidth)
         NSAnimationContext.runAnimationGroup({ ctx in
-            ctx.duration = 0.18
+            ctx.duration = 0.2
             ctx.timingFunction = CAMediaTimingFunction(name: .easeIn)
-            panel.animator().setFrame(offscreen, display: true)
+            panel.animator().setFrame(layout.offscreen, display: true)
         }, completionHandler: {
             MainActor.assumeIsolated { [weak self] in
                 guard let self, !self.isVisible else { return }
@@ -77,7 +112,45 @@ final class PanelController {
         })
     }
 
-    // MARK: - Auto-hide
+    /// Re-apply width/anchor while visible (called after preference changes).
+    func applyLayout() {
+        guard isVisible, let screen = activeScreen else { return }
+        let layout = PanelGeometry.layout(anchor: settings.anchor, screen: screen, width: settings.panelWidth)
+        animate(to: layout.onscreen, duration: 0.25, curve: .easeInEaseOut)
+    }
+
+    // MARK: - Drag to snap
+
+    private func moveBegan() {
+        autoHideSuspended = true
+        dragStartOrigin = panel.frame.origin
+    }
+
+    private func moveChanged(_ translation: CGSize) {
+        panel.setFrameOrigin(NSPoint(
+            x: dragStartOrigin.x + translation.width,
+            y: dragStartOrigin.y - translation.height
+        ))
+    }
+
+    private func moveEnded() {
+        let center = NSPoint(x: panel.frame.midX, y: panel.frame.midY)
+        let screen = NSScreen.screens.first { NSMouseInRect(NSEvent.mouseLocation, $0.frame, false) }
+            ?? NSScreen.screens.first { $0.frame.contains(center) }
+            ?? activeScreen ?? NSScreen.main ?? NSScreen.screens[0]
+        activeScreen = screen
+
+        let anchor = PanelGeometry.nearestAnchor(to: center, on: screen)
+        settings.anchor = anchor
+        persistScreen(screen)
+        settings.persist()
+
+        let layout = PanelGeometry.layout(anchor: anchor, screen: screen, width: settings.panelWidth)
+        animate(to: layout.onscreen, duration: 0.3, curve: .easeOut)
+        autoHideSuspended = false
+    }
+
+    // MARK: - Auto-hide monitors
 
     private func installMonitors() {
         moveMonitorGlobal = NSEvent.addGlobalMonitorForEvents(matching: [.mouseMoved]) { [weak self] _ in
@@ -88,10 +161,7 @@ final class PanelController {
             return event
         }
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown]) { [weak self] event in
-            if event.keyCode == 53 { // Escape
-                self?.hide()
-                return nil
-            }
+            if event.keyCode == 53 { self?.hide(); return nil } // Escape
             return event
         }
     }
@@ -100,24 +170,47 @@ final class PanelController {
         for monitor in [moveMonitorGlobal, moveMonitorLocal, keyMonitor].compactMap({ $0 }) {
             NSEvent.removeMonitor(monitor)
         }
-        moveMonitorGlobal = nil
-        moveMonitorLocal = nil
-        keyMonitor = nil
+        moveMonitorGlobal = nil; moveMonitorLocal = nil; keyMonitor = nil
     }
 
     private func checkLeave() {
-        guard isVisible, !model.isPinned, NSApp.modalWindow == nil else { return }
+        guard isVisible, settings.autoHide, !model.isPinned, !autoHideSuspended,
+              NSApp.modalWindow == nil
+        else { return }
         let loc = NSEvent.mouseLocation
-        // Hide once the cursor leaves the panel to the left (with a small margin).
-        if !panel.frame.insetBy(dx: -8, dy: 0).contains(loc) {
+        if !panel.frame.insetBy(dx: -12, dy: -12).contains(loc) {
             hide()
         }
     }
 
-    private var targetScreen: NSScreen {
-        let loc = NSEvent.mouseLocation
-        return NSScreen.screens.first { NSMouseInRect(loc, $0.frame, false) }
-            ?? NSScreen.main
-            ?? NSScreen.screens[0]
+    // MARK: - Helpers
+
+    private func animate(to frame: NSRect, duration: TimeInterval, curve: CAMediaTimingFunctionName) {
+        NSAnimationContext.runAnimationGroup { ctx in
+            ctx.duration = duration
+            ctx.timingFunction = CAMediaTimingFunction(name: curve)
+            panel.animator().setFrame(frame, display: true)
+        }
+    }
+
+    private func resolveScreen() -> NSScreen {
+        if settings.followCursor {
+            let loc = NSEvent.mouseLocation
+            if let screen = NSScreen.screens.first(where: { NSMouseInRect(loc, $0.frame, false) }) {
+                return screen
+            }
+        }
+        if let number = settings.lastScreenNumber,
+           let screen = NSScreen.screens.first(where: { $0.screenNumber == number }) {
+            return screen
+        }
+        return NSScreen.main ?? NSScreen.screens[0]
+    }
+
+    private func persistScreen(_ screen: NSScreen) {
+        if let number = screen.screenNumber, number != settings.lastScreenNumber {
+            settings.lastScreenNumber = number
+            settings.persist()
+        }
     }
 }

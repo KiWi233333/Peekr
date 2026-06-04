@@ -1,30 +1,44 @@
 # Peekr
 
-A blazing-fast, SlidePad-style slide-out web browser for macOS. Pin your web
-apps to a dock that lives off the right screen edge; flick the cursor to the
-edge (or hit a hotkey) and the panel peeks out — without stealing focus from
-whatever you're doing.
+A blazing-fast, SlidePad-style slide-over web browser for macOS, dressed in
+**Liquid Glass**. Pin your web apps to a dock that lives off any screen edge or
+corner; flick the cursor there (or hit a hotkey) and the panel peeks out —
+without stealing focus from whatever you're doing.
 
-Native Swift + AppKit + `WKWebView`. No Electron, no web runtime — a menu-bar
-agent with a tiny footprint.
+Native Swift + AppKit + SwiftUI + `WKWebView`. No Electron, no web runtime — a
+menu-bar agent with a tiny footprint (~58 MB idle, 0% CPU, WebViews created
+lazily on first peek).
 
-## Features (v0.1)
+## Design
 
-- **Edge peek** — hover the right screen edge to slide the panel out.
-- **Global hotkey** — `⌃⌥Space` toggles the panel from anywhere.
-- **Non-activating panel** — appears over your work without taking focus, yet
-  you can still type into web apps.
-- **Icon dock** — a frosted vertical rail of your web apps; click to switch.
-- **Persistent, isolated sessions** — each app gets its own `WKWebsiteDataStore`
-  (separate cookies/logins), and web views stay alive across show/hide so
-  scroll position and playback are never lost.
-- **Pin** — keep the panel open from the menu-bar menu.
-- **Auto-hide** — slides away when the cursor leaves (unless pinned).
+The navigation layer floats in real macOS 26 **Liquid Glass** (`glassEffect`,
+`GlassEffectContainer`) over a full-bleed web "card"; below Tahoe it degrades to
+`.ultraThinMaterial`. Both paths go through one `liquidGlass()` modifier. The
+signature aqua→blue accent ties to the "peek/water" name.
+
+## Features
+
+- **8-way docking** — dock to any edge **or corner**. Drag the panel by its grip
+  and release near any edge/corner to **auto-snap** to the nearest of 8 anchors.
+- **Edge peek + hover delay** — hover the docked edge/corner to slide out; the
+  dwell delay is configurable.
+- **Global hotkey** — re-bindable (default `⌃⌥Space`); record any shortcut.
+- **Per-app navigation bar** — glass omnibox with back/forward/reload-stop, a
+  load/search address field, progress, and open-in-Safari.
+- **Icon dock** — real favicons (auto-fetched + cached) with monogram fallback;
+  drag to reorder; right-click to Edit / Reload / Delete; set a **custom icon**.
+- **Isolated, persistent sessions** — each app gets its own
+  `WKWebsiteDataStore`; web views stay alive across show/hide.
+- **Preferences window** — docking grid, panel width, hover delay, edge
+  sensitivity, hotkey recorder, auto-hide, follow-cursor, **launch at login**.
+- **Multi-display** — follows the cursor's screen, and remembers the last one.
+- **Pin & auto-hide** — keep it open, or let it slide away when you leave.
 - **Menu-bar agent** — no Dock icon, no main window.
 
 ## Build & run
 
-Requires Xcode 15+ (uses `WKWebsiteDataStore(forIdentifier:)`, macOS 14+).
+Requires Xcode 26 (real Liquid Glass) — builds and runs below it with the
+material fallback. macOS 14+.
 
 ```bash
 make run     # build the .app bundle and launch it (isolated sessions)
@@ -33,35 +47,33 @@ make app     # just build build/Peekr.app
 make clean
 ```
 
-Quit from the menu-bar menu (the sidebar icon) → **Quit Peekr**.
+Quit from the menu-bar item (sidebar icon) → **Quit Peekr**. Open
+**Preferences…** (`⌘,`) from the same menu.
 
-## Default apps
-
-ChatGPT · GitHub · YouTube · Gmail. Use **+** in the rail to add more; the list
-is stored at `~/Library/Application Support/Peekr/apps.json`.
-
-## Roadmap toward full SlidePad parity
-
-- [ ] Favicons / custom icons per app (currently coloured monograms)
-- [ ] Reorder & remove apps (drag in rail, right-click menu)
-- [ ] Configurable trigger edge (left/right), panel width, hotkey
-- [ ] Multi-display: remember which screen to peek on
-- [ ] Per-app navigation chrome (back/forward/reload/address)
-- [ ] Preferences window
-- [ ] "Pull" gesture / trigger zone tuning, hover delay
-- [ ] Launch at login
-- [ ] App groups / spaces
+State lives in `~/Library/Application Support/Peekr/`
+(`apps.json`, `settings.json`, `icons/`).
 
 ## Project layout
 
 ```
 Sources/Peekr/
-  App/          main, AppDelegate, AppModel (observable state)
-  Model/        WebApp
-  Store/        AppStore (JSON persistence)
-  Panel/        SlidePanel, PanelController, EdgeTrigger, PanelContentView
-  Web/          WebViewManager (cached, isolated WKWebViews)
-  UI/           SidebarRail (SwiftUI icon dock)
+  App/          main, AppDelegate, AppModel (observable dock state)
+  Model/        WebApp, PanelAnchor, Settings, HotKeyConfig
+  Store/        AppStore, SettingsStore (JSON persistence)
+  Web/          WebViewManager (cached/isolated WebViews + KVO), BrowserState
+  Panel/        SlidePanel, PanelController, PanelGeometry, EdgeTrigger
+  UI/           PanelRootView, AppRail, NavigationBar, WebContainer, EditAppSheet
+  Preferences/  PreferencesWindowController, PreferencesView
   Input/        GlobalHotKey (Carbon)
   StatusBar/    StatusBarController
+  Util/         GlassStyle (liquidGlass + theme), IconStore, LaunchAtLogin
+```
+
+## Roadmap
+
+- [ ] Keyboard switching (`⌘1`–`⌘9`), `⌘L` focus omnibox, `⌘W` close
+- [ ] Per-app unread/notification badges
+- [ ] App "hibernation" to free memory for idle apps
+- [ ] App icon / DMG packaging & notarization
+- [ ] Top/bottom docks with a horizontal rail layout
 ```
