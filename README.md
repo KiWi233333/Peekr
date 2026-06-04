@@ -17,7 +17,7 @@ Pin your web apps to a dock on any screen edge or corner. Flick the cursor there
 
 English · [简体中文](README.zh-CN.md)
 
-<img src="assets/hero.png" alt="Peekr peeking out from the screen edge" width="820" />
+<img src="assets/screenshot.png" alt="Peekr peeking out from the screen edge" width="820" />
 
 </div>
 
@@ -56,7 +56,7 @@ Most "slide-over browser" tools are Electron wrappers that eat hundreds of MB an
 ## Screenshots
 
 <div align="center">
-<img src="assets/screenshot.png" alt="Peekr slide-over panel with the icon rail, navigation bar, and a loaded web app" width="720" />
+<img src="assets/hero.png" alt="Peekr slide-over panel with the icon rail, navigation bar, and a loaded web app" width="720" />
 </div>
 
 ## Install
