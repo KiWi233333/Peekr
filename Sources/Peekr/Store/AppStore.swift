@@ -10,6 +10,11 @@ struct AppStore {
         fileURL = AppPaths.supportDirectory.appendingPathComponent("apps.json")
     }
 
+    /// Inject a custom location (used by tests to avoid touching real user data).
+    init(fileURL: URL) {
+        self.fileURL = fileURL
+    }
+
     func load() -> WorkspacesData {
         guard let data = try? Data(contentsOf: fileURL) else { return Self.defaults }
         // Current format: a workspaces object.
