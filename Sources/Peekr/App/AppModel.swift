@@ -39,8 +39,8 @@ final class AppModel {
     // MARK: - Tabs (operate on the active workspace)
 
     @discardableResult
-    func addApp(title: String, urlString: String) -> WebApp {
-        let app = WebApp(title: title, urlString: urlString)
+    func addApp(title: String, urlString: String, alias: String = "") -> WebApp {
+        let app = WebApp(title: title, urlString: urlString, alias: alias)
         workspaces[activeIndex].tabs.append(app)
         selectedID = app.id
         persist()
@@ -53,7 +53,26 @@ final class AppModel {
         persist()
     }
 
-    /// Inline-rename a tab's label.
+    /// Remember the panel size the user dragged this tab to, so activating it
+    /// later restores that size. `0` for an axis means "inherit the default".
+    func setPanelSize(_ id: WebApp.ID, width: Double, height: Double) {
+        guard let idx = workspaces[activeIndex].tabs.firstIndex(where: { $0.id == id }) else { return }
+        workspaces[activeIndex].tabs[idx].panelWidth = width
+        workspaces[activeIndex].tabs[idx].panelHeight = height
+        persist()
+    }
+
+    /// Set the user-facing alias — the single write path the rail's inline rename
+    /// and the edit sheet both use. Empty clears it, so `displayName` falls back
+    /// to the page title.
+    func setAlias(_ id: WebApp.ID, to alias: String) {
+        guard let idx = workspaces[activeIndex].tabs.firstIndex(where: { $0.id == id }) else { return }
+        workspaces[activeIndex].tabs[idx].alias = alias
+        persist()
+    }
+
+    /// Set the page title. The favicon-refresh path writes the freshly-fetched
+    /// title here; the rail's inline rename writes the alias (`setAlias`) instead.
     func rename(_ id: WebApp.ID, to title: String) {
         guard let idx = workspaces[activeIndex].tabs.firstIndex(where: { $0.id == id }) else { return }
         workspaces[activeIndex].tabs[idx].title = title

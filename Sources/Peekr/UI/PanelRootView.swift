@@ -17,6 +17,9 @@ struct PanelRootView: View {
     var onResizeBegan: () -> Void
     var onResizeChanged: ([PanelResizeEdge], CGSize) -> Void
     var onResizeEnded: () -> Void
+    /// Fired after the active app changes so the panel re-animates to that app's
+    /// remembered size. Defaulted so the placeholder root needs no value.
+    var onSizeReapply: () -> Void = {}
 
     @State private var editTarget: EditTarget?
     @State private var bookmarksOpen = false
@@ -90,7 +93,7 @@ struct PanelRootView: View {
     private var rail: some View {
         AppRail(
             model: model, settings: settings, icons: icons,
-            onSelect: { id in manager.activate(id); model.select(id) },
+            onSelect: { id in manager.activate(id); model.select(id); onSizeReapply() },
             onAdd: { editTarget = EditTarget(app: nil) },
             onEdit: { editTarget = EditTarget(app: $0) },
             onWorkspaceSwitched: {
@@ -98,6 +101,7 @@ struct PanelRootView: View {
                 if let id = model.selectedID {
                     manager.activate(id)
                     model.select(id)
+                    onSizeReapply()
                 } else {
                     manager.state.currentID = nil
                 }

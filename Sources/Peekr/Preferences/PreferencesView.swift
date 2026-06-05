@@ -63,10 +63,13 @@ private struct GeneralTab: View {
             }
 
             Section(loc.panel) {
-                slider(loc.width, value: widthBinding, range: Double(PanelGeometry.minSize.width)...1400, unit: "pt")
-                slider(loc.height, value: heightBinding, range: Double(PanelGeometry.minSize.height)...1600, unit: "pt")
+                slider(loc.defaultWidth, value: widthBinding, range: Double(PanelGeometry.minSize.width)...1400, unit: "pt")
+                slider(loc.defaultHeight, value: heightBinding, range: Double(PanelGeometry.minSize.height)...1600, unit: "pt")
                 HStack {
-                    Spacer()
+                    Text(loc.panelSizeHint)
+                        .font(.caption).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 8)
                     Button(loc.defaultSize) {
                         settings.panelWidth = 0
                         settings.panelHeight = 0
@@ -220,7 +223,7 @@ private struct AppsTab: View {
                             .frame(width: 34, height: 34)
                             .scaleEffect(0.74)
                         VStack(alignment: .leading, spacing: 1) {
-                            Text(app.title).font(.system(size: 13, weight: .medium))
+                            Text(app.displayName).font(.system(size: 13, weight: .medium))
                             Text(app.urlString).font(.caption).foregroundStyle(.secondary).lineLimit(1)
                         }
                         Spacer()

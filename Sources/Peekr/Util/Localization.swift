@@ -90,6 +90,8 @@ struct Localized {
     // Edit sheet
     var editWebApp: String { t("Edit Web App", "编辑网页应用") }
     var title: String { t("Title", "名称") }
+    var alias: String { t("Alias", "别名") }
+    var aliasHint: String { t("Optional — shown instead of the title", "可选——替代标题显示") }
     var address: String { t("Address", "网址") }
     var cancel: String { t("Cancel", "取消") }
     var save: String { t("Save", "保存") }
@@ -109,6 +111,12 @@ struct Localized {
     var shortcutStartup: String { t("Shortcut & Startup", "快捷键与启动") }
     var width: String { t("Width", "宽度") }
     var height: String { t("Height", "高度") }
+    var defaultWidth: String { t("Default width", "默认宽度") }
+    var defaultHeight: String { t("Default height", "默认高度") }
+    var panelSizeHint: String {
+        t("Default size for apps you haven't resized yet. Drag a panel's edge to remember a size per app.",
+          "尚未单独调整尺寸的应用的默认大小。拖动面板边缘即可为单个应用单独记忆尺寸。")
+    }
     var hoverDelay: String { t("Hover delay", "悬停延迟") }
     var edgeSensitivity: String { t("Edge sensitivity", "边缘灵敏度") }
     var autoHide: String { t("Auto-hide when the cursor leaves", "光标离开时自动隐藏") }

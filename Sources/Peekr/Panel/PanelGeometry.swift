@@ -62,8 +62,28 @@ enum PanelGeometry {
 
     /// Default size when the user hasn't resized yet — 2/3 of the screen width.
     static func defaultSize(for screen: NSScreen) -> NSSize {
-        let vf = screen.visibleFrame
-        return NSSize(width: vf.width * (2.0 / 3.0), height: vf.height * 0.92)
+        defaultSize(forVisible: screen.visibleFrame.size)
+    }
+
+    /// Same ratio default, expressed against a bare visible-area size so it can be
+    /// unit-tested without a live `NSScreen`.
+    static func defaultSize(forVisible visible: NSSize) -> NSSize {
+        NSSize(width: visible.width * (2.0 / 3.0), height: visible.height * 0.92)
+    }
+
+    /// Resolve the panel size for the active app. Each axis prefers, in order:
+    /// the app's remembered size → the global default → the screen-ratio default,
+    /// where `0` means "not set". The result is clamped to `[minSize, visible]`
+    /// so a remembered size from a larger display still fits the current one.
+    static func resolveSize(app: NSSize, global: NSSize, visible: NSSize) -> NSSize {
+        let def = defaultSize(forVisible: visible)
+        func axis(_ appValue: CGFloat, _ globalValue: CGFloat, fallback: CGFloat, min: CGFloat, max: CGFloat) -> CGFloat {
+            let chosen = appValue > 0 ? appValue : (globalValue > 0 ? globalValue : fallback)
+            return Swift.min(Swift.max(min, chosen), max)
+        }
+        return NSSize(
+            width: axis(app.width, global.width, fallback: def.width, min: minSize.width, max: visible.width),
+            height: axis(app.height, global.height, fallback: def.height, min: minSize.height, max: visible.height))
     }
 
     /// The hover zone that peeks the panel out for a given anchor.

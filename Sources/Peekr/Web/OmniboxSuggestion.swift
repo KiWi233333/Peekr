@@ -32,10 +32,10 @@ enum OmniboxSuggestions {
             : OmniboxSuggestion(kind: .search, primary: q, secondary: searchLabel, target: q))
 
         // Matching open tabs (across workspaces).
-        for tab in tabs where matches(lower, tab.title, tab.urlString) {
+        for tab in tabs where matches(lower, tab.alias, tab.title, tab.urlString) {
             out.append(OmniboxSuggestion(
                 kind: .tab,
-                primary: tab.title.isEmpty ? (tab.host ?? tab.urlString) : tab.title,
+                primary: tab.displayName,
                 secondary: URL(string: tab.urlString)?.displayHost ?? tab.urlString,
                 target: tab.urlString))
             if out.count >= 4 { break }

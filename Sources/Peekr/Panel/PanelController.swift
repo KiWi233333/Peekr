@@ -31,6 +31,10 @@ final class PanelController {
     private var dragStartOrigin: NSPoint = .zero
     private var dragStartMouse: NSPoint = .zero
     private var resizeStartSize: NSSize = .zero
+    /// The size being dragged out right now. While set it wins over the stored
+    /// per-app size, so the panel tracks the cursor without writing to the model
+    /// on every frame; it's committed once on `resizeEnded`.
+    private var liveResize: NSSize?
 
     init(model: AppModel, settings: Settings, manager: WebViewManager, icons: IconStore, bookmarks: BookmarksModel) {
         self.model = model
@@ -65,7 +69,8 @@ final class PanelController {
             onModalChange: { [weak self] open in self?.autoHideSuspended = open },
             onResizeBegan: { [weak self] in self?.resizeBegan() },
             onResizeChanged: { [weak self] edges, t in self?.resizeChanged(edges, t) },
-            onResizeEnded: { [weak self] in self?.resizeEnded() }
+            onResizeEnded: { [weak self] in self?.resizeEnded() },
+            onSizeReapply: { [weak self] in self?.applyLayout() }
         )
     }
 
@@ -159,6 +164,7 @@ final class PanelController {
         autoHideSuspended = true
         resizeStartSize = panel.frame.size
         dragStartMouse = NSEvent.mouseLocation
+        liveResize = panel.frame.size
     }
 
     /// One edge for an edge handle, two (a width + a height edge) for a corner.
@@ -179,8 +185,9 @@ final class PanelController {
             case .bottom:   h = resizeStartSize.height - dy
             }
         }
-        settings.panelWidth = min(max(PanelGeometry.minSize.width, w), Double(vf.width))
-        settings.panelHeight = min(max(PanelGeometry.minSize.height, h), Double(vf.height))
+        liveResize = NSSize(
+            width: min(max(PanelGeometry.minSize.width, w), vf.width),
+            height: min(max(PanelGeometry.minSize.height, h), vf.height))
         // Suppress implicit layer animations during the live drag. The glass
         // backdrop (NSGlassEffectView) animates its bounds by default, which
         // makes the panel lag behind the cursor ("resistance") on every frame.
@@ -193,7 +200,19 @@ final class PanelController {
     }
 
     private func resizeEnded() {
-        settings.persist()
+        if let size = liveResize {
+            if let id = model.selectedID {
+                // Remember this size for the active app only.
+                model.setPanelSize(id, width: size.width, height: size.height)
+            } else {
+                // No active tab (empty workspace): seed the global default that
+                // not-yet-resized apps inherit, so resizing still does something.
+                settings.panelWidth = size.width
+                settings.panelHeight = size.height
+                settings.persist()
+            }
+        }
+        liveResize = nil
         autoHideSuspended = false
     }
 
@@ -246,6 +265,7 @@ final class PanelController {
             let id = model.apps[n - 1].id
             model.select(id)
             manager.activate(id)
+            applyLayout()   // restore this app's remembered size
         }
         return true
     }
@@ -256,12 +276,19 @@ final class PanelController {
         PanelGeometry.layout(anchor: settings.anchor, screen: screen, size: panelSize(on: screen))
     }
 
+    private var activeApp: WebApp? {
+        model.selectedID.flatMap { id in model.apps.first { $0.id == id } }
+    }
+
     private func panelSize(on screen: NSScreen) -> NSSize {
-        let fallback = PanelGeometry.defaultSize(for: screen)
-        let w = settings.panelWidth > 0 ? CGFloat(settings.panelWidth) : fallback.width
-        let h = settings.panelHeight > 0 ? CGFloat(settings.panelHeight) : fallback.height
-        let vf = screen.visibleFrame
-        return NSSize(width: min(w, vf.width), height: min(h, vf.height))
+        let visible = screen.visibleFrame.size
+        // A live resize already produced a clamped size; reuse the same clamp.
+        if let liveResize {
+            return PanelGeometry.resolveSize(app: liveResize, global: .zero, visible: visible)
+        }
+        let app = activeApp.map { NSSize(width: $0.panelWidth, height: $0.panelHeight) } ?? .zero
+        let global = NSSize(width: settings.panelWidth, height: settings.panelHeight)
+        return PanelGeometry.resolveSize(app: app, global: global, visible: visible)
     }
 
     private func animate(to frame: NSRect, duration: TimeInterval, curve: CAMediaTimingFunctionName) {

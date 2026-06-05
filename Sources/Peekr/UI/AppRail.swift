@@ -135,9 +135,9 @@ struct AppRail: View {
             targeted: dropTarget == app.id,
             icon: icons.image(for: app),
             isRenaming: renamingTab == app.id,
-            displayTitle: app.title.isEmpty ? (app.host ?? app.urlString) : app.title,
+            displayTitle: app.displayName,
             onSelect: { if renamingTab == nil { onSelect(app.id) } },
-            onCommitRename: { model.rename(app.id, to: $0.trimmingCharacters(in: .whitespaces)); renamingTab = nil },
+            onCommitRename: { model.setAlias(app.id, to: $0.trimmingCharacters(in: .whitespaces)); renamingTab = nil },
             onCancelRename: { renamingTab = nil }
         )
         .draggable(app.id.uuidString) {
@@ -206,7 +206,7 @@ private struct TabRow: View {
                     .focused($focused)
                     .onSubmit { onCommitRename(draft) }
                     .onExitCommand(perform: onCancelRename)
-                    .onAppear { draft = app.title; focused = true }
+                    .onAppear { draft = app.displayName; focused = true }
             } else {
                 Text(displayTitle)
                     .font(.system(size: 12.5, weight: selected ? .semibold : .regular))
@@ -284,6 +284,6 @@ struct AppTile: View {
             .animation(.spring(response: 0.28, dampingFraction: 0.72), value: selected)
             .animation(.easeOut(duration: 0.12), value: hovering)
             .onHover { hovering = $0 }
-            .help(app.title)
+            .help(app.displayName)
     }
 }

@@ -16,6 +16,7 @@ struct EditAppSheet: View {
     var onClose: () -> Void
 
     @State private var title: String
+    @State private var alias: String
     @State private var urlString: String
     @State private var pendingIconURL: URL?
     @State private var pendingLibraryImage: NSImage?
@@ -30,6 +31,7 @@ struct EditAppSheet: View {
         self.icons = icons
         self.onClose = onClose
         _title = State(initialValue: target.app?.title ?? "")
+        _alias = State(initialValue: target.app?.alias ?? "")
         _urlString = State(initialValue: target.app?.urlString ?? "")
         _previewImage = State(initialValue: target.app.flatMap { icons.image(for: $0) })
     }
@@ -49,6 +51,8 @@ struct EditAppSheet: View {
                     field(loc.address, text: $urlString, placeholder: "https://github.com")
                 }
             }
+
+            field(loc.alias, text: $alias, placeholder: loc.aliasHint)
 
             libraryRow
 
@@ -175,12 +179,14 @@ struct EditAppSheet: View {
         let resolvedTitle = title.trimmingCharacters(in: .whitespaces).isEmpty
             ? (URL(string: resolved)?.displayHost ?? resolved)
             : title
+        let resolvedAlias = alias.trimmingCharacters(in: .whitespaces)
 
         var app: WebApp
         if let existing = target.app {
             app = existing
             let urlChanged = existing.urlString != resolved
             app.title = resolvedTitle
+            app.alias = resolvedAlias
             app.urlString = resolved
             if let libImage = pendingLibraryImage {
                 app.usesCustomIcon = icons.setCustomIcon(app, image: libImage)
@@ -191,7 +197,7 @@ struct EditAppSheet: View {
             }
             model.update(app)
         } else {
-            app = model.addApp(title: resolvedTitle, urlString: resolved)
+            app = model.addApp(title: resolvedTitle, urlString: resolved, alias: resolvedAlias)
             if let libImage = pendingLibraryImage, icons.setCustomIcon(app, image: libImage) {
                 app.usesCustomIcon = true
                 model.update(app)

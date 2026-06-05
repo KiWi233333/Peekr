@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Per-app panel size memory — each web app remembers the width/height you drag
+  it to and restores it on activation; the global panel size becomes the default
+  that not-yet-resized apps inherit.
+- Per-app aliases — give a web app a custom name (in the edit sheet) so
+  near-identical sites are tellable apart; the alias replaces the page title
+  everywhere it's shown.
+
 ## [0.1.0]
 
 First public release.
