@@ -7,6 +7,9 @@ import Observation
 @Observable
 final class IconStore {
     private var images: [UUID: NSImage] = [:]
+    /// The host each app's current icon was fetched for. `syncFavicon` consults it
+    /// so live navigation only hits the network when the site actually changes.
+    private var iconHost: [UUID: String] = [:]
     private let dir: URL
 
     init() {
@@ -23,6 +26,7 @@ final class IconStore {
 
     func load(_ app: WebApp) {
         if images[app.id] != nil { return }
+        iconHost[app.id] = app.host
         if let disk = NSImage(contentsOf: fileURL(app.id)) {
             images[app.id] = disk
             return
@@ -36,11 +40,30 @@ final class IconStore {
         fetchFavicon(app)
     }
 
+    /// Live favicon sync as a tab navigates. Re-fetches the favicon for the page's
+    /// *current* host (not the app's configured URL) and stores it under the app
+    /// id, but only when the host actually changes — so within-site navigation and
+    /// the progress-tick stream never touch the network. Custom icons are left
+    /// untouched. Callers gate this to a *settled* page so a redirect chain
+    /// (A → B → app) doesn't fetch every intermediate host's icon.
+    func syncFavicon(_ app: WebApp, pageURL: URL?) {
+        guard !app.usesCustomIcon, let page = pageURL, let host = page.displayHost,
+              iconHost[app.id] != host else { return }
+        iconHost[app.id] = host
+        let id = app.id
+        Task { [weak self] in
+            let links = await Self.pageDocument(page)
+                .map { Self.iconLinks(in: $0.html, base: $0.base) } ?? []
+            await self?.writeIcon(host: host, declaredLinks: links, id: id)
+        }
+    }
+
     /// Re-fetches both the favicon and the page `<title>` from one page load.
     /// `onTitle` fires on the main actor only when a non-empty title is found;
     /// the icon is skipped for apps using a custom image.
     func refresh(_ app: WebApp, onTitle: @escaping (String) -> Void) {
         guard let host = app.host else { return }
+        iconHost[app.id] = host
         let pageURL = app.url ?? URL(string: "https://\(host)")
         let id = app.id
         let skipIcon = app.usesCustomIcon
@@ -109,6 +132,7 @@ final class IconStore {
 
     private func fetchFavicon(_ app: WebApp) {
         guard let host = app.host else { return }
+        iconHost[app.id] = host
         // Prefer the app's real URL (keeps scheme/path) so we can parse the
         // actual page; synthesize an https page URL when only a host is known.
         let pageURL = app.url ?? URL(string: "https://\(host)")

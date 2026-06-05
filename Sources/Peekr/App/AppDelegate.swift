@@ -25,7 +25,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         icons.warm(model.apps)
         badges = BadgeStore()
 
-        manager = WebViewManager(model: model, factory: WebKitEngineFactory(), badges: badges)
+        manager = WebViewManager(model: model, factory: settings.webEngine.makeFactory(), badges: badges, icons: icons)
         // Tear down a deleted tab's web engine (stops background media, frees the
         // process) and its badge — the model itself stays web-agnostic.
         model.onRemove = { [weak self] id in self?.manager.discard(id) }

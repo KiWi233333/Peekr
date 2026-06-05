@@ -21,4 +21,24 @@ enum BadgeParser {
         else { return nil }
         return count
     }
+
+    /// The title with its unread-count token removed — for display in the rail so
+    /// "(3) WhatsApp" reads as "WhatsApp" instead of duplicating the number already
+    /// shown in the red badge. Strips the same token `unreadCount` keys off, then
+    /// tidies the separator it leaves behind. Unchanged when there's no count.
+    static func strippingCount(fromTitle title: String) -> String {
+        let range = NSRange(title.startIndex..., in: title)
+        guard let match = pattern.firstMatch(in: title, range: range),
+              let token = Range(match.range, in: title) else { return title }
+        var stripped = title
+        stripped.removeSubrange(token)
+        return stripped
+            .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+            .trimmingCharacters(in: separators)
+    }
+
+    /// Leading/trailing whitespace plus the punctuation sites commonly use to fence
+    /// the count off from the name ("Inbox (12) - Gmail" → "Inbox - Gmail").
+    private static let separators = CharacterSet.whitespaces
+        .union(CharacterSet(charactersIn: "-|·•—–"))
 }

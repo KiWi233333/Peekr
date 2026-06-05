@@ -12,12 +12,17 @@ final class WebViewManager {
     private let model: AppModel
     private let factory: WebEngineFactory
     private let badges: BadgeStore
+    private let icons: IconStore
     private var engines: [UUID: WebEngine] = [:]
+    /// Last title seen per engine, so the badge/title pipeline only runs on a real
+    /// title change and not on every `estimatedProgress` KVO tick during a load.
+    private var lastTitles: [UUID: String] = [:]
 
-    init(model: AppModel, factory: WebEngineFactory, badges: BadgeStore) {
+    init(model: AppModel, factory: WebEngineFactory, badges: BadgeStore, icons: IconStore) {
         self.model = model
         self.factory = factory
         self.badges = badges
+        self.icons = icons
     }
 
     // MARK: - Lifecycle
@@ -37,6 +42,7 @@ final class WebViewManager {
     func discard(_ id: UUID) {
         engines[id]?.hostView.removeFromSuperview()
         engines[id] = nil
+        lastTitles[id] = nil
         badges.clear(id)
         if state.currentID == id { state.currentID = nil }
     }
@@ -55,12 +61,16 @@ final class WebViewManager {
     }
 
     /// Omnibox: treat input as a URL when it looks like one, else web-search it.
+    /// With an active tab, navigate it; in an empty workspace (no tab selected)
+    /// open the address in a fresh tab so the bar always works.
     func loadAddress(_ raw: String) {
-        guard let current else { return }
         let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else { return }
-        if let url = Self.url(fromOmnibox: text) {
+        guard !text.isEmpty, let url = Self.url(fromOmnibox: text) else { return }
+        if let current {
             current.load(url)
+        } else {
+            let app = model.addApp(title: url.displayHost ?? text, urlString: url.absoluteString)
+            activate(app.id)
         }
     }
 
@@ -86,23 +96,40 @@ final class WebViewManager {
         let engine = factory.makeEngine(for: app)
         let id = app.id
         // Every engine reports its nav state — foreground or not — so background
-        // tabs keep their unread badge current. Only the foreground page drives
-        // the shared `BrowserState` the nav bar binds to.
+        // tabs keep their unread badge, rail title and icon current. Only the
+        // foreground page drives the shared `BrowserState` the nav bar binds to.
         engine.onNavStateChange = { [weak self] nav in
             guard let self else { return }
-            self.badges.update(id, fromTitle: nav.title)
+            // Title-derived work (badge regex + rail title) only on a real title
+            // change — `estimatedProgress` ticks repeat the same title otherwise.
+            if self.lastTitles[id] != nav.title {
+                self.lastTitles[id] = nav.title
+                self.badges.update(id, fromTitle: nav.title)
+                self.model.applyLiveTitle(id, to: nav.title)
+            }
+            // Sync the favicon only once the page has settled, so a redirect chain
+            // doesn't fetch each hop's icon; `syncFavicon` no-ops unless the host
+            // actually changed.
+            if !nav.isLoading, let app = self.model.allTabs.first(where: { $0.id == id }) {
+                self.icons.syncFavicon(app, pageURL: nav.url)
+            }
             if id == self.state.currentID { self.mirror(nav) }
         }
         engines[id] = engine
         return engine
     }
 
+    /// Copy only the fields that actually changed. `@Observable` setters don't
+    /// diff, so an unconditional write marks every field mutated — and a loading
+    /// page floods us with `estimatedProgress` ticks. Guarding each write keeps a
+    /// progress tick from invalidating the back/forward buttons and omnibox too.
     private func mirror(_ nav: NavState) {
-        state.canGoBack = nav.canGoBack
-        state.canGoForward = nav.canGoForward
-        state.isLoading = nav.isLoading
-        state.progress = nav.progress
-        state.urlString = nav.url?.absoluteString ?? ""
-        state.title = nav.title
+        if state.canGoBack != nav.canGoBack { state.canGoBack = nav.canGoBack }
+        if state.canGoForward != nav.canGoForward { state.canGoForward = nav.canGoForward }
+        if state.isLoading != nav.isLoading { state.isLoading = nav.isLoading }
+        if state.progress != nav.progress { state.progress = nav.progress }
+        let urlString = nav.url?.absoluteString ?? ""
+        if state.urlString != urlString { state.urlString = urlString }
+        if state.title != nav.title { state.title = nav.title }
     }
 }

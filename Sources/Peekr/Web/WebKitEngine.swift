@@ -15,9 +15,15 @@ final class WebKitEngine: NSObject, WebEngine {
     /// Live OAuth / `window.open` popups, retained until they close themselves.
     private var popups: [PopupController] = []
 
+    /// The app's start page and the last committed URL — both nil-safe anchors
+    /// for reloading after the content process is jettisoned (see terminate).
+    private let homeURL: URL?
+    private var lastURL: URL?
+
     /// `configuration` carries the per-app data store the factory built; page
     /// preferences shared by every WebKit page are applied here.
     init(configuration: WKWebViewConfiguration, url: URL?) {
+        homeURL = url
         configuration.defaultWebpagePreferences.preferredContentMode = .desktop
         configuration.preferences.isElementFullscreenEnabled = true
         configuration.allowsAirPlayForMediaPlayback = true
@@ -37,6 +43,9 @@ final class WebKitEngine: NSObject, WebEngine {
         // Handle `window.open` / `target="_blank"`; without a UI delegate WebKit
         // silently drops them, making "Continue with Google"-style buttons dead.
         webView.uiDelegate = self
+        // Recover kept-alive tabs whose content process the system jettisons under
+        // memory pressure while backgrounded (see webViewWebContentProcessDidTerminate).
+        webView.navigationDelegate = self
         webView.setValue(false, forKey: "drawsBackground") // let glass show at edges
         bindObservers()
         if let url { webView.load(URLRequest(url: url)) }
@@ -94,6 +103,27 @@ final class NavigatingWebView: WKWebView {
         case 3: onBack?()
         case 4: onForward?()
         default: super.otherMouseDown(with: event)
+        }
+    }
+}
+
+// MARK: - Process keep-alive
+
+extension WebKitEngine: WKNavigationDelegate {
+    /// Remember where each tab actually is, so a reload after a process crash
+    /// lands on the page the user was on — not the start page.
+    func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
+        if let url = webView.url { lastURL = url }
+    }
+
+    /// The Web Content process was jettisoned — almost always because the system
+    /// reclaimed memory while this cached tab was backgrounded (the panel hidden
+    /// or another app active). WebKit leaves the view blank and `url` nil; without
+    /// this the next peek shows an empty page, silently breaking keep-alive. Reload
+    /// the last location so the tab restores itself transparently.
+    func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        if let target = webView.url ?? lastURL ?? homeURL {
+            webView.load(URLRequest(url: target))
         }
     }
 }

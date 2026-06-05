@@ -83,6 +83,27 @@ final class AppModel {
         persist()
     }
 
+    /// Mirror the engine's live `document.title` onto the tab as it navigates, so
+    /// the rail name tracks the current page like a real browser tab. Searches all
+    /// workspaces because engines outlive workspace switches; strips the unread
+    /// token so it never duplicates the red badge; and coalesces the disk write —
+    /// a busy page flips its title several times a second, but the rail updates
+    /// in-memory instantly while only one JSON write lands after it settles.
+    func applyLiveTitle(_ id: WebApp.ID, to rawTitle: String) {
+        let title = BadgeParser.strippingCount(fromTitle: rawTitle)
+        guard !title.isEmpty, let (w, t) = locate(id),
+              workspaces[w].tabs[t].title != title else { return }
+        workspaces[w].tabs[t].title = title
+        schedulePersist()
+    }
+
+    private func locate(_ id: WebApp.ID) -> (workspace: Int, tab: Int)? {
+        for (w, workspace) in workspaces.enumerated() {
+            if let t = workspace.tabs.firstIndex(where: { $0.id == id }) { return (w, t) }
+        }
+        return nil
+    }
+
     func removeApp(_ id: WebApp.ID) {
         workspaces[activeIndex].tabs.removeAll { $0.id == id }
         if selectedID == id { selectedID = workspaces[activeIndex].tabs.first?.id }
@@ -152,6 +173,21 @@ final class AppModel {
     }
 
     func persist() {
+        pendingPersist?.cancel()
         store.save(WorkspacesData(workspaces: workspaces, activeWorkspaceID: activeWorkspaceID))
+    }
+
+    /// Debounce for the high-frequency live-title path: collapse a burst of title
+    /// changes into a single write ~1s after the last one. Any immediate `persist()`
+    /// supersedes a pending one (it cancels the timer), so state never lags.
+    private var pendingPersist: Task<Void, Never>?
+
+    private func schedulePersist() {
+        pendingPersist?.cancel()
+        pendingPersist = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(1))
+            guard !Task.isCancelled else { return }
+            self?.persist()
+        }
     }
 }
