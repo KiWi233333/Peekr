@@ -31,6 +31,7 @@ struct SettingsData: Codable, Equatable {
     var autoHide: Bool = true
     var language: AppLanguage = .system
     var bookmarkSync: BookmarkSyncInterval = .off
+    var webEngine: WebEngineKind = .system
 
     init() {}
 
@@ -52,6 +53,7 @@ struct SettingsData: Codable, Equatable {
         autoHide = v(.autoHide, true)
         language = v(.language, .system)
         bookmarkSync = v(.bookmarkSync, .off)
+        webEngine = v(.webEngine, .system)
     }
 }
 
@@ -72,6 +74,7 @@ final class Settings {
     var autoHide: Bool
     var language: AppLanguage
     var bookmarkSync: BookmarkSyncInterval
+    var webEngine: WebEngineKind
 
     private let store: SettingsStore
 
@@ -90,6 +93,7 @@ final class Settings {
         autoHide = d.autoHide
         language = d.language
         bookmarkSync = d.bookmarkSync
+        webEngine = d.webEngine
     }
 
     var snapshot: SettingsData {
@@ -98,7 +102,7 @@ final class Settings {
         s.hoverDelay = hoverDelay; s.edgeThreshold = edgeThreshold; s.hotKey = hotKey
         s.launchAtLogin = launchAtLogin; s.followCursor = followCursor
         s.lastScreenNumber = lastScreenNumber; s.autoHide = autoHide; s.language = language
-        s.bookmarkSync = bookmarkSync
+        s.bookmarkSync = bookmarkSync; s.webEngine = webEngine
         return s
     }
 

@@ -133,6 +133,30 @@ struct Localized {
         }
     }
     var pressKeys: String { t("Press keys…", "按下按键…") }
+
+    // Web engine
+    var webEngineSection: String { t("Web Engine", "浏览器内核") }
+    var webEngineHint: String {
+        t("Choose how pages render. Chromium is optional and downloads on first use.",
+          "选择网页的渲染内核。Chromium 为可选项，首次使用时下载。")
+    }
+    var comingSoon: String { t("Coming soon", "即将支持") }
+    func engineName(_ kind: WebEngineKind) -> String {
+        switch kind {
+        case .system: return t("System · WebKit", "系统内核 · WebKit")
+        case .chromium: return t("Chromium", "Chromium 内核")
+        }
+    }
+    func engineDetail(_ kind: WebEngineKind) -> String {
+        switch kind {
+        case .system:
+            return t("Apple's built-in engine — fast, light, no download.",
+                     "Apple 内置引擎——快、轻、无需下载。")
+        case .chromium:
+            return t("Chrome's engine for maximum site compatibility. Downloads ~180 MB on first use.",
+                     "Chrome 引擎，最大化站点兼容性。首次使用需下载约 180 MB。")
+        }
+    }
     var defaultSize: String { t("Default (screen ratio)", "默认（屏幕比例）") }
     var dockingHint: String {
         t("Hover this edge/corner, or drag the panel by its grip and release near any edge/corner. Snapping changes the slide direction — not the size.",

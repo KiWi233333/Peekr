@@ -42,3 +42,24 @@ protocol WebEngine: AnyObject {
 protocol WebEngineFactory {
     func makeEngine(for app: WebApp) -> WebEngine
 }
+
+/// The rendering backend the user picks in Preferences. `system` is the built-in
+/// WebKit engine; `chromium` will download a CEF runtime on first use. Persisted
+/// in `SettingsData`, so it must stay a stable raw string.
+enum WebEngineKind: String, Codable, CaseIterable, Identifiable {
+    case system, chromium
+    var id: String { rawValue }
+
+    /// Whether a backend actually exists yet. Chromium is offered in the UI but
+    /// not selectable until the CEF engine + downloader land.
+    var isAvailable: Bool { self == .system }
+
+    /// The concrete factory for this kind. Chromium has no backend yet, so it
+    /// falls back to WebKit — the setting only records intent until CEF ships.
+    @MainActor
+    func makeFactory() -> WebEngineFactory {
+        switch self {
+        case .system, .chromium: return WebKitEngineFactory()
+        }
+    }
+}

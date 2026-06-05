@@ -81,6 +81,15 @@ private struct GeneralTab: View {
                 Toggle(loc.autoHide, isOn: $settings.autoHide)
             }
 
+            Section(loc.webEngineSection) {
+                ForEach(WebEngineKind.allCases) { kind in
+                    engineRow(kind)
+                }
+                Text(loc.webEngineHint)
+                    .font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
             Section(loc.shortcutStartup) {
                 HStack {
                     Text(loc.toggleShortcut)
@@ -101,6 +110,38 @@ private struct GeneralTab: View {
             }
         }
         .formStyle(.grouped)
+    }
+
+    /// Radio row for one engine. Unavailable kinds (Chromium, until CEF ships)
+    /// stay visible but disabled with a "coming soon" badge.
+    private func engineRow(_ kind: WebEngineKind) -> some View {
+        Button {
+            settings.webEngine = kind
+        } label: {
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: settings.webEngine == kind ? "largecircle.fill.circle" : "circle")
+                    .foregroundStyle(settings.webEngine == kind ? AnyShapeStyle(Color.primary) : AnyShapeStyle(.secondary))
+                    .font(.system(size: 15))
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 6) {
+                        Text(loc.engineName(kind)).font(.system(size: 13, weight: .medium))
+                        if !kind.isAvailable {
+                            Text(loc.comingSoon)
+                                .font(.system(size: 10, weight: .semibold))
+                                .padding(.horizontal, 6).padding(.vertical, 1)
+                                .background(.quaternary, in: Capsule())
+                        }
+                    }
+                    Text(loc.engineDetail(kind))
+                        .font(.caption).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 0)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(!kind.isAvailable)
     }
 
     private func slider(_ label: String, value: Binding<Double>, range: ClosedRange<Double>, unit: String, decimals: Int = 0) -> some View {
