@@ -32,6 +32,18 @@ make clean
 
 代码在 `WebViewManager.makeDataStore` 与 `LaunchAtLogin` 里通过 `bundleIdentifier != nil` 分支处理这两种模式。验证「会话隔离 / 自启」这类特性时**必须用 `make run`**，`swift run` 测不出来。
 
+### 热更新（Hot Reload）
+
+接了 [Inject](https://github.com/krzysztofzablocki/Inject)（唯一的第三方依赖，**release 下是 no-op**，`-interposable` 链接参数也只在 debug 生效）。SwiftUI 视图改 `body` 后无需重启即可看到效果，调样式很顺手。
+
+**用法**：视图加两行——属性 `@ObserveInjection private var inject`，`body` 末尾 `.enableInjection()`。已接入 `PanelRootView` / `NavigationBar` / `AppRail`；要在别的视图上启用照抄这两行即可。
+
+**前提**（热重载靠重新编译单个文件，编译命令只有 Xcode 会产出）：
+1. 装 [InjectionIII.app](https://github.com/johnno1962/InjectionIII)（Mac App Store 或 release 下载），打开它并 `Open Project` 选本仓库目录；
+2. 用 **Xcode 打开 `Package.swift` 跑**（⌘R），不要用 `swift run`——`make dev` 不会热重载，只是普通启动。
+
+`make build` / `make run` 不受影响，CI 与发布链路照旧（Inject 静态链入、release 无副作用）。注意：启动期代码（`AppDelegate` 组合根、窗口/热键/`SlidePanel`）改了仍需重启，热重载只换 SwiftUI 视图。
+
 **环境要求**：macOS 14+ 可运行；真正的 Liquid Glass 需要 Xcode 26 编译，低版本自动降级为 `.ultraThinMaterial`（见下文）。
 
 **用户数据**位于 `~/Library/Application Support/Peekr/`：`apps.json`、`settings.json`、`icons/<uuid>.png`。调试持久化逻辑时清掉这里即可重置。

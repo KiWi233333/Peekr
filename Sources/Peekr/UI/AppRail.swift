@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import Inject
 
 /// Left sidebar: a workspace switcher above a vertical list of the active
 /// workspace's tabs. Tabs show icon + name, reorder by drag, and rename inline
@@ -19,6 +20,7 @@ struct AppRail: View {
     @State private var renamingTab: UUID?
     @State private var renamingWorkspace: UUID?
     @State private var workspaceDraft = ""
+    @ObserveInjection private var inject
     @FocusState private var workspaceFieldFocused: Bool
 
     private var loc: Localized { settings.strings }
@@ -33,6 +35,7 @@ struct AppRail: View {
         .padding(.vertical, 10)
         .frame(width: Theme.sidebarWidth)
         .frame(maxHeight: .infinity)
+        .enableInjection()
     }
 
     // MARK: - Workspace switcher
