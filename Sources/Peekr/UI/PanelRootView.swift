@@ -1,4 +1,5 @@
 import SwiftUI
+import Inject
 
 /// The whole panel: a frosted shell holding the icon rail and an inset web
 /// "card" with a floating omnibox above it. Resize handles live on the free
@@ -25,6 +26,7 @@ struct PanelRootView: View {
     @State private var editTarget: EditTarget?
     @State private var bookmarksOpen = false
     @State private var moving = false
+    @ObserveInjection private var inject
 
     /// Initial root for the hosting view before the controller wires callbacks.
     static func placeholder(model: AppModel, settings: Settings, manager: WebViewManager, icons: IconStore, badges: BadgeStore, bookmarks: BookmarksModel) -> PanelRootView {
@@ -89,6 +91,7 @@ struct PanelRootView: View {
         .onChange(of: editTarget != nil) { _, _ in onModalChange(isModalOpen) }
         .onChange(of: bookmarksOpen) { _, _ in onModalChange(isModalOpen) }
         .animation(.smooth(duration: 0.3), value: anchor.railOnLeft)
+        .enableInjection()
     }
 
     private var rail: some View {
@@ -119,7 +122,9 @@ struct PanelRootView: View {
                         .stroke(Theme.hairline, lineWidth: 1)
                 }
                 .shadow(color: .black.opacity(0.16), radius: 10, y: 4)
-                .padding(.top, 50)
+                // Top inset clears the floating omnibox and leaves a small gap
+                // between it and the web card.
+                .padding(.top, 54)
                 .padding([.bottom, .horizontal], 10)
 
             NavigationBar(

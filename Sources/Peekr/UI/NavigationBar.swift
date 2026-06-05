@@ -1,4 +1,5 @@
 import SwiftUI
+import Inject
 
 /// Floating glass omnibox: drag grip, back/forward/reload, address field with a
 /// Chrome-style autocomplete dropdown, bookmarks and open-externally buttons.
@@ -18,7 +19,11 @@ struct NavigationBar: View {
     @State private var isDragging = false
     @State private var suggestions: [OmniboxSuggestion] = []
     @State private var selectedIndex: Int?
+    @ObserveInjection private var inject
     @State private var suggestTask: Task<Void, Never>?
+    /// Set while a chosen candidate is being written into the field, so the
+    /// resulting text change doesn't re-query suggestions and drop the selection.
+    @State private var fillingFromSuggestion = false
     @FocusState private var focused: Bool
 
     private var showSuggestions: Bool { focused && !suggestions.isEmpty }
@@ -30,12 +35,23 @@ struct NavigationBar: View {
         }
         .onAppear { syncText() }
         .onChange(of: focused) { _, isFocused in
-            text = isFocused ? state.urlString : state.displayURL
-            if isFocused { updateSuggestions() } else { clearSuggestions() }
+            // Focus shows the full URL for editing. Blur only closes the dropdown
+            // — it keeps whatever's in the field (typed text or a chosen
+            // candidate) rather than snapping back to the page address.
+            if isFocused {
+                text = state.urlString
+                updateSuggestions()
+            } else {
+                clearSuggestions()
+            }
         }
-        .onChange(of: text) { _, _ in updateSuggestions() }
+        .onChange(of: text) { _, _ in
+            if fillingFromSuggestion { fillingFromSuggestion = false; return }
+            updateSuggestions()
+        }
         .onChange(of: state.urlString) { _, _ in if !focused { syncText() } }
         .onChange(of: state.focusOmniboxToken) { _, _ in focused = true }
+        .enableInjection()
     }
 
     private var bar: some View {
@@ -50,7 +66,9 @@ struct NavigationBar: View {
         }
         .padding(.horizontal, 9)
         .padding(.vertical, 6)
-        .liquidGlass(in: Capsule(style: .continuous), interactive: true)
+        // Non-interactive glass: the interactive variant lifts the capsule with a
+        // heavier shadow than the web card's, which looked inconsistent.
+        .liquidGlass(in: Capsule(style: .continuous))
         .overlay(alignment: .bottom) { progressLine }
     }
 
@@ -214,14 +232,22 @@ struct NavigationBar: View {
         manager.loadAddress(target)
     }
 
+    /// Arrow through candidates, filling the chosen one into the field so the bar
+    /// shows where Enter will go. Filling never navigates — only Enter does.
     private func moveSelection(_ delta: Int) {
         guard !suggestions.isEmpty else { return }
         let count = suggestions.count
-        if let index = selectedIndex {
-            selectedIndex = (index + delta + count) % count
-        } else {
-            selectedIndex = delta > 0 ? 0 : count - 1
-        }
+        let next = selectedIndex.map { ($0 + delta + count) % count } ?? (delta > 0 ? 0 : count - 1)
+        selectedIndex = next
+        fill(with: suggestions[next])
+    }
+
+    /// Write a candidate's target into the field. Guarded by `fillingFromSuggestion`
+    /// so the text change doesn't re-run the suggestion query and reset the selection.
+    private func fill(with suggestion: OmniboxSuggestion) {
+        guard text != suggestion.target else { return }
+        fillingFromSuggestion = true
+        text = suggestion.target
     }
 
     private func updateSuggestions() {
