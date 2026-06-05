@@ -12,6 +12,10 @@ final class AppModel {
     var selectedID: WebApp.ID?
     var isPinned: Bool = false
 
+    /// Called when a tab is removed, so the composition root can tear down its
+    /// cached web engine (and badge). Keeps the model free of any web reference.
+    var onRemove: ((WebApp.ID) -> Void)?
+
     private let store: AppStore
 
     init(store: AppStore) {
@@ -83,6 +87,7 @@ final class AppModel {
         workspaces[activeIndex].tabs.removeAll { $0.id == id }
         if selectedID == id { selectedID = workspaces[activeIndex].tabs.first?.id }
         persist()
+        onRemove?(id)
     }
 
     /// Move the tab identified by `draggedID` to sit just before `targetID`.

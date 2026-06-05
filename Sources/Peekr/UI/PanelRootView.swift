@@ -8,6 +8,7 @@ struct PanelRootView: View {
     let settings: Settings
     let manager: WebViewManager
     let icons: IconStore
+    let badges: BadgeStore
     let bookmarks: BookmarksModel
 
     var onMoveBegan: () -> Void
@@ -26,9 +27,9 @@ struct PanelRootView: View {
     @State private var moving = false
 
     /// Initial root for the hosting view before the controller wires callbacks.
-    static func placeholder(model: AppModel, settings: Settings, manager: WebViewManager, icons: IconStore, bookmarks: BookmarksModel) -> PanelRootView {
+    static func placeholder(model: AppModel, settings: Settings, manager: WebViewManager, icons: IconStore, badges: BadgeStore, bookmarks: BookmarksModel) -> PanelRootView {
         PanelRootView(
-            model: model, settings: settings, manager: manager, icons: icons, bookmarks: bookmarks,
+            model: model, settings: settings, manager: manager, icons: icons, badges: badges, bookmarks: bookmarks,
             onMoveBegan: {}, onMoveChanged: { _ in }, onMoveEnded: {}, onModalChange: { _ in },
             onResizeBegan: {}, onResizeChanged: { _, _ in }, onResizeEnded: {}
         )
@@ -92,7 +93,7 @@ struct PanelRootView: View {
 
     private var rail: some View {
         AppRail(
-            model: model, settings: settings, icons: icons,
+            model: model, settings: settings, icons: icons, badges: badges,
             onSelect: { id in manager.activate(id); model.select(id); onSizeReapply() },
             onAdd: { editTarget = EditTarget(app: nil) },
             onEdit: { editTarget = EditTarget(app: $0) },

@@ -23,8 +23,9 @@ protocol WebEngine: AnyObject {
     var hostView: NSView { get }
     /// Current navigation state; read on activation to seed the foreground UI.
     var navState: NavState { get }
-    /// Mirror callback for the *foreground* page. `WebViewManager` sets it on the
-    /// active engine and clears it on the rest, so exactly one page drives the UI.
+    /// Nav-state callback. `WebViewManager` keeps it set on every engine — even
+    /// background ones — so each tab's unread badge stays current; it mirrors to
+    /// the shared `BrowserState` only for the engine whose id is foreground.
     var onNavStateChange: ((NavState) -> Void)? { get set }
 
     func load(_ url: URL)

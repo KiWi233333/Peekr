@@ -13,6 +13,7 @@ final class PanelController {
     let settings: Settings
     let manager: WebViewManager
     let icons: IconStore
+    let badges: BadgeStore
     let bookmarks: BookmarksModel
 
     var onVisibilityChange: ((Bool) -> Void)?
@@ -36,11 +37,12 @@ final class PanelController {
     /// on every frame; it's committed once on `resizeEnded`.
     private var liveResize: NSSize?
 
-    init(model: AppModel, settings: Settings, manager: WebViewManager, icons: IconStore, bookmarks: BookmarksModel) {
+    init(model: AppModel, settings: Settings, manager: WebViewManager, icons: IconStore, badges: BadgeStore, bookmarks: BookmarksModel) {
         self.model = model
         self.settings = settings
         self.manager = manager
         self.icons = icons
+        self.badges = badges
         self.bookmarks = bookmarks
 
         panel = SlidePanel(contentRect: NSRect(x: 0, y: 0, width: 440, height: 640))
@@ -54,7 +56,7 @@ final class PanelController {
         backdrop.autoresizingMask = [.width, .height]
         container.addSubview(backdrop)
 
-        hosting = NSHostingView(rootView: PanelRootView.placeholder(model: model, settings: settings, manager: manager, icons: icons, bookmarks: bookmarks))
+        hosting = NSHostingView(rootView: PanelRootView.placeholder(model: model, settings: settings, manager: manager, icons: icons, badges: badges, bookmarks: bookmarks))
         hosting.frame = container.bounds
         hosting.autoresizingMask = [.width, .height]
         container.addSubview(hosting)
@@ -62,7 +64,7 @@ final class PanelController {
 
         // Real callbacks once self is fully initialised.
         hosting.rootView = PanelRootView(
-            model: model, settings: settings, manager: manager, icons: icons, bookmarks: bookmarks,
+            model: model, settings: settings, manager: manager, icons: icons, badges: badges, bookmarks: bookmarks,
             onMoveBegan: { [weak self] in self?.moveBegan() },
             onMoveChanged: { [weak self] t in self?.moveChanged(t) },
             onMoveEnded: { [weak self] in self?.moveEnded() },

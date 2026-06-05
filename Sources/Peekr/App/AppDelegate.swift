@@ -6,6 +6,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var model: AppModel!
     private var bookmarks: BookmarksModel!
     private var icons: IconStore!
+    private var badges: BadgeStore!
     private var manager: WebViewManager!
     private var panel: PanelController!
     private var edge: EdgeTrigger!
@@ -22,9 +23,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         bookmarks = BookmarksModel(store: BookmarkStore())
         icons = IconStore()
         icons.warm(model.apps)
+        badges = BadgeStore()
 
-        manager = WebViewManager(model: model, factory: WebKitEngineFactory())
-        panel = PanelController(model: model, settings: settings, manager: manager, icons: icons, bookmarks: bookmarks)
+        manager = WebViewManager(model: model, factory: WebKitEngineFactory(), badges: badges)
+        // Tear down a deleted tab's web engine (stops background media, frees the
+        // process) and its badge — the model itself stays web-agnostic.
+        model.onRemove = { [weak self] id in self?.manager.discard(id) }
+        panel = PanelController(model: model, settings: settings, manager: manager, icons: icons, badges: badges, bookmarks: bookmarks)
         panel.onVisibilityChange = { [weak self] visible in self?.edge.setArmed(!visible) }
 
         // Hover the docked edge/corner to peek the panel out.

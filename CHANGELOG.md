@@ -14,6 +14,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Per-app aliases — give a web app a custom name (in the edit sheet) so
   near-identical sites are tellable apart; the alias replaces the page title
   everywhere it's shown.
+- Unread badges — tabs show the unread count parsed from the page title (e.g.
+  "(3) Inbox"), so you can see which apps need attention at a glance.
 
 ## [0.1.0]
 

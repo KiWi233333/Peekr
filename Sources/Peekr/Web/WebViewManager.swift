@@ -11,11 +11,13 @@ final class WebViewManager {
 
     private let model: AppModel
     private let factory: WebEngineFactory
+    private let badges: BadgeStore
     private var engines: [UUID: WebEngine] = [:]
 
-    init(model: AppModel, factory: WebEngineFactory) {
+    init(model: AppModel, factory: WebEngineFactory, badges: BadgeStore) {
         self.model = model
         self.factory = factory
+        self.badges = badges
     }
 
     // MARK: - Lifecycle
@@ -24,10 +26,7 @@ final class WebViewManager {
     func activate(_ id: UUID) {
         guard let app = model.apps.first(where: { $0.id == id }) else { return }
         let engine = engine(for: app)
-        // Stop the previously-foreground page from driving the UI.
-        if let prev = state.currentID, prev != id { engines[prev]?.onNavStateChange = nil }
         state.currentID = id
-        engine.onNavStateChange = { [weak self] in self?.mirror($0) }
         mirror(engine.navState)
     }
 
@@ -38,6 +37,7 @@ final class WebViewManager {
     func discard(_ id: UUID) {
         engines[id]?.hostView.removeFromSuperview()
         engines[id] = nil
+        badges.clear(id)
         if state.currentID == id { state.currentID = nil }
     }
 
@@ -84,7 +84,16 @@ final class WebViewManager {
     private func engine(for app: WebApp) -> WebEngine {
         if let existing = engines[app.id] { return existing }
         let engine = factory.makeEngine(for: app)
-        engines[app.id] = engine
+        let id = app.id
+        // Every engine reports its nav state — foreground or not — so background
+        // tabs keep their unread badge current. Only the foreground page drives
+        // the shared `BrowserState` the nav bar binds to.
+        engine.onNavStateChange = { [weak self] nav in
+            guard let self else { return }
+            self.badges.update(id, fromTitle: nav.title)
+            if id == self.state.currentID { self.mirror(nav) }
+        }
+        engines[id] = engine
         return engine
     }
 

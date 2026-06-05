@@ -9,6 +9,7 @@ struct AppRail: View {
     let model: AppModel
     let settings: Settings
     let icons: IconStore
+    let badges: BadgeStore
     var onSelect: (UUID) -> Void
     var onAdd: () -> Void
     var onEdit: (WebApp) -> Void
@@ -136,6 +137,7 @@ struct AppRail: View {
             icon: icons.image(for: app),
             isRenaming: renamingTab == app.id,
             displayTitle: app.displayName,
+            unread: badges.count(for: app.id),
             onSelect: { if renamingTab == nil { onSelect(app.id) } },
             onCommitRename: { model.setAlias(app.id, to: $0.trimmingCharacters(in: .whitespaces)); renamingTab = nil },
             onCancelRename: { renamingTab = nil }
@@ -188,6 +190,7 @@ private struct TabRow: View {
     let icon: NSImage?
     let isRenaming: Bool
     let displayTitle: String
+    let unread: Int?
     var onSelect: () -> Void
     var onCommitRename: (String) -> Void
     var onCancelRename: () -> Void
@@ -199,6 +202,11 @@ private struct TabRow: View {
     var body: some View {
         HStack(spacing: 9) {
             FaviconView(app: app, icon: icon, size: 22)
+                .overlay(alignment: .topTrailing) {
+                    if let unread {
+                        UnreadBadge(count: unread).offset(x: 6, y: -6)
+                    }
+                }
             if isRenaming {
                 TextField("", text: $draft)
                     .textFieldStyle(.plain)
@@ -229,6 +237,24 @@ private struct TabRow: View {
         .onHover { hovering = $0 }
         .onTapGesture { onSelect() }
         .animation(.easeOut(duration: 0.12), value: hovering)
+    }
+}
+
+/// Unread-count pill shown on a tab's favicon. Red is the universal unread
+/// signal (macOS dock, Ferdium/Rambox) — a deliberate exception to the otherwise
+/// monochrome palette, because the badge's whole job is to catch the eye.
+private struct UnreadBadge: View {
+    let count: Int
+
+    var body: some View {
+        Text(count > 99 ? "99+" : "\(count)")
+            .font(.system(size: 9, weight: .bold, design: .rounded))
+            .foregroundStyle(.white)
+            .padding(.horizontal, 3.5)
+            .frame(minWidth: 16, minHeight: 16)
+            .background(Capsule().fill(.red))
+            .overlay(Capsule().stroke(.black.opacity(0.12), lineWidth: 0.5))
+            .fixedSize()
     }
 }
 
