@@ -53,14 +53,80 @@ jobs:
       - name: Build (release)
         run: swift build -c release -v
 
-      # Assemble the .app bundle (ad-hoc signed on CI; no identity available).
+      # Import a Developer ID cert IF one is configured as a repo secret; otherwise
+      # the release stays ad-hoc & un-notarized — i.e. exactly today's behavior.
+      # Fully gated on the secret being present.
+      - name: Set up signing identity
+        id: signing
+        env:
+          MACOS_CERTIFICATE_P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [ -z "${MACOS_CERTIFICATE_P12:-}" ]; then
+            echo "No MACOS_CERTIFICATE_P12 secret — release stays ad-hoc & un-notarized (current behavior)."
+            echo "identity=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          KEYCHAIN="$RUNNER_TEMP/peekr-signing.keychain-db"
+          KEYCHAIN_PW="$(uuidgen)"
+          security create-keychain -p "$KEYCHAIN_PW" "$KEYCHAIN"
+          security set-keychain-settings -lut 3600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PW" "$KEYCHAIN"
+          printf '%s' "$MACOS_CERTIFICATE_P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security import "$RUNNER_TEMP/cert.p12" -k "$KEYCHAIN" -P "${MACOS_CERTIFICATE_PASSWORD:-}" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PW" "$KEYCHAIN" >/dev/null
+          # Keep the temp keychain searchable alongside the runner defaults.
+          security list-keychains -d user -s "$KEYCHAIN" $(security list-keychains -d user | tr -d '"')
+          rm -f "$RUNNER_TEMP/cert.p12"
+          # `|| true`: grep exits 1 when the cert isn't a Developer ID Application
+          # one (e.g. an Apple Development cert); under `pipefail` that would abort
+          # the whole step instead of falling through to the ad-hoc path.
+          IDENTITY="$(security find-identity -v -p codesigning "$KEYCHAIN" \
+            | grep -oE '"Developer ID Application[^"]*"' | head -1 | tr -d '"' || true)"
+          echo "Signing identity: ${IDENTITY:-<none found in cert>}"
+          echo "identity=$IDENTITY" >> "$GITHUB_OUTPUT"
+
+      # Assemble the .app bundle. PEEKR_HARDENED takes effect only when an identity
+      # was imported above; with none, bundle.sh falls back to ad-hoc (PEEKR_HARDENED
+      # is ignored), so the no-secret path is unchanged.
       - name: Bundle .app
+        env:
+          PEEKR_SIGN_IDENTITY: ${{ steps.signing.outputs.identity }}
+          PEEKR_HARDENED: "1"
         run: ./scripts/bundle.sh release
+
+      # Notarize + staple the .app BEFORE it is frozen into the DMG/zip, so EVERY
+      # distributed copy (drag-installed from the DMG and unzipped) carries an
+      # embedded ticket and validates under OFFLINE Gatekeeper. (Stapling only the
+      # standalone build/Peekr.app after the DMG is built leaves the DMG's inner
+      # copy un-stapled.) Gated on BOTH notary creds AND a signing identity: a bare
+      # ad-hoc app can't be notarized, so without an identity this stays a clean
+      # no-op (ad-hoc/un-notarized — current behavior) instead of failing the
+      # submission.
+      - name: Notarize & staple .app
+        env:
+          AC_API_KEY_ID: ${{ secrets.AC_API_KEY_ID }}
+          AC_API_ISSUER_ID: ${{ secrets.AC_API_ISSUER_ID }}
+          AC_API_KEY_BASE64: ${{ secrets.AC_API_KEY_BASE64 }}
+          SIGN_IDENTITY: ${{ steps.signing.outputs.identity }}
+        run: |
+          set -euo pipefail
+          if [ -z "${AC_API_KEY_BASE64:-}" ] || [ -z "${SIGN_IDENTITY:-}" ]; then
+            echo "No notary credentials or no signing identity — app stays ad-hoc & un-notarized (current behavior)."
+            exit 0
+          fi
+          printf '%s' "$AC_API_KEY_BASE64" | base64 --decode > "$RUNNER_TEMP/ac_api_key.p8"
+          trap 'rm -f "$RUNNER_TEMP/ac_api_key.p8"' EXIT
+          export AC_API_KEY_PATH="$RUNNER_TEMP/ac_api_key.p8"
+          ./scripts/notarize.sh build/Peekr.app
 
       - name: Create DMG
         run: |
           set -euo pipefail
           mkdir -p dist/stage
+          # build/Peekr.app is already stapled above (when credentials are present),
+          # so both the DMG's inner copy and the standalone zip inherit the ticket.
           cp -R build/Peekr.app dist/stage/
           ln -s /Applications dist/stage/Applications
           hdiutil create -volname "Peekr" \
@@ -70,6 +136,26 @@ jobs:
           # also ship a plain zip of the .app
           ditto -c -k --keepParent build/Peekr.app "dist/Peekr-${{ steps.meta.outputs.version }}.app.zip"
           ls -la dist
+
+      # Notarize + staple the DMG container itself, so the .dmg also passes offline
+      # Gatekeeper on mount. The .app inside it was already stapled above. Same
+      # gating; a clean no-op without credentials/identity.
+      - name: Notarize & staple DMG
+        env:
+          AC_API_KEY_ID: ${{ secrets.AC_API_KEY_ID }}
+          AC_API_ISSUER_ID: ${{ secrets.AC_API_ISSUER_ID }}
+          AC_API_KEY_BASE64: ${{ secrets.AC_API_KEY_BASE64 }}
+          SIGN_IDENTITY: ${{ steps.signing.outputs.identity }}
+        run: |
+          set -euo pipefail
+          if [ -z "${AC_API_KEY_BASE64:-}" ] || [ -z "${SIGN_IDENTITY:-}" ]; then
+            echo "No notary credentials or no signing identity — DMG stays ad-hoc & un-notarized (current behavior)."
+            exit 0
+          fi
+          printf '%s' "$AC_API_KEY_BASE64" | base64 --decode > "$RUNNER_TEMP/ac_api_key.p8"
+          trap 'rm -f "$RUNNER_TEMP/ac_api_key.p8"' EXIT
+          export AC_API_KEY_PATH="$RUNNER_TEMP/ac_api_key.p8"
+          ./scripts/notarize.sh "dist/${{ steps.meta.outputs.dmg }}"
 
       # Upload only the real outputs. `dist/stage/` holds an `Applications`
       # symlink to /Applications (for the DMG drag-install affordance), and
