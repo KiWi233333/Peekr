@@ -50,16 +50,40 @@ enum WebEngineKind: String, Codable, CaseIterable, Identifiable {
     case system, chromium
     var id: String { rawValue }
 
-    /// Whether a backend actually exists yet. Chromium is offered in the UI but
-    /// not selectable until the CEF engine + downloader land.
-    var isAvailable: Bool { self == .system }
+    /// Whether this engine can be offered/selected. Chromium requires the bundled
+    /// native shim (a pure filesystem check, so it stays false under `swift run`,
+    /// in tests, and in builds without Chromium support). The heavy framework may
+    /// still need a first-use download even when this is true.
+    var isAvailable: Bool {
+        switch self {
+        case .system: return true
+        // Offerable iff the native shim is bundled. The shim path comes from
+        // `CEFRuntime` (the single source) instead of a second copy of the
+        // privateFrameworks lookup.
+        case .chromium:
+            guard let dylib = CEFRuntime.shimDylibURL?.path else { return false }
+            return FileManager.default.fileExists(atPath: dylib)
+        }
+    }
 
-    /// The concrete factory for this kind. Chromium has no backend yet, so it
-    /// falls back to WebKit — the setting only records intent until CEF ships.
+    /// The concrete factory. Chromium resolves to the real CEF engine only when the
+    /// shim is bundled, the runtime is downloaded, AND `CefInitialize` succeeds —
+    /// otherwise it falls back to WebKit, so selecting Chromium can never break the
+    /// app (worst case it renders with WebKit until the runtime is ready).
     @MainActor
     func makeFactory() -> WebEngineFactory {
         switch self {
-        case .system, .chromium: return WebKitEngineFactory()
+        case .system:
+            return WebKitEngineFactory()
+        case .chromium:
+            let rt = CEFRuntime.shared
+            guard let lib = rt.lib, rt.isInstalled,
+                  rt.ensureInitialized(frameworkDir: CEFRuntime.frameworkDir.path)
+            else { return WebKitEngineFactory() }
+            return CEFEngineFactory(makeBridge: { app in
+                LibCEFBridge(lib: lib, url: app.url,
+                             cacheDir: CEFRuntime.profileDir(for: app.id).path)
+            })
         }
     }
 }
