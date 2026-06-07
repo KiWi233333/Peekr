@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!--
+      CEF helper 进程 entitlements——「框架进包」版(PEEKR_CEF_BUNDLE=1)。
+
+      与 helper.entitlements 的区别:这里 *不含* disable-library-validation。
+      框架随包、且和主程序用同一个 Developer ID 签名后,library validation 本就放行
+      (同 team),无需该豁免;更重要的是——保持进程「纯同 team」,内核才能派生出代码签名
+      validation category,Chromium 144 才会放行 renderer 子进程(否则 -67030,renderer
+      永远起不来)。disable-library-validation 会让进程不再「纯净」,可能正是它把 category
+      降级为 none 的元凶,故在进包路径上去掉。
+
+      V8 的 JIT 要写可执行内存,hardened runtime 下必须保留这两项。
+    -->
+    <key>com.apple.security.cs.allow-jit</key>
+    <true/>
+    <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+    <true/>
+</dict>
+</plist>

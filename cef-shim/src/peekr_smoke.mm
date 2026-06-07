@@ -22,14 +22,15 @@ int main(int argc, char** argv) {
   @autoreleasepool {
     const char* framework = argc > 1 ? argv[1] : "";
     const char* helper    = argc > 2 ? argv[2] : "";
-    const char* cache     = argc > 3 ? argv[3] : "/tmp/peekr-cef-cache";
+    // cacheRoot 是缓存根;每浏览器 profile 必须是它的直接子目录(Chrome runtime 约束)。
+    const char* cacheRoot = argc > 3 ? argv[3] : "/tmp/peekr-smoke-root";
     const char* url       = argc > 4 ? argv[4] : "https://example.com";
     if (argc > 5) { FILE* f = fopen(argv[5], "w"); if (f) g_log = f; }
 
     [NSApplication sharedApplication];
     [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
 
-    if (!peekr_cef_global_init(framework, helper)) {
+    if (!peekr_cef_global_init(framework, helper, cacheRoot)) {
       fprintf(g_log, "RESULT init=FAILED\n"); fflush(g_log);
       return 1;
     }
@@ -42,7 +43,9 @@ int main(int argc, char** argv) {
     [win center];
     [win makeKeyAndOrderFront:nil];
 
-    PeekrCEFBrowser* browser = peekr_cef_create((__bridge void*)win.contentView, cache, on_nav, nullptr);
+    char profile[1024];
+    snprintf(profile, sizeof(profile), "%s/profile", cacheRoot);
+    PeekrCEFBrowser* browser = peekr_cef_create((__bridge void*)win.contentView, profile, on_nav, nullptr);
     fprintf(g_log, "RESULT create=%s\n", browser ? "OK" : "NULL"); fflush(g_log);
     if (browser) peekr_cef_load(browser, url);
 

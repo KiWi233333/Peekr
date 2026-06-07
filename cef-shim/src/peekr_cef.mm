@@ -84,10 +84,29 @@ class PeekrClient : public CefClient,
     else pending_url_ = url;
   }
 
+  // 宿主 NSView(非持有——由 Swift 在浏览器存活期内持有)。当还没有显式 Resize 到来时,
+  // OnAfterCreated 用它读取真实 bounds。
+  void SetParentView(void* view) { parent_view_ = view; }
+
+  // 把新尺寸推给 windowed 浏览器。若(异步的)浏览器尚未就绪则暂存,OnAfterCreated 再套用。
+  // 幂等,对相同尺寸开销极小。
+  void Resize(int w, int h) {
+    if (w > 0 && h > 0) { pending_w_ = w; pending_h_ = h; }
+    ApplySize();
+  }
+
   // CefLifeSpanHandler
   void OnAfterCreated(CefRefPtr<CefBrowser> browser) override {
     CEF_REQUIRE_UI_THREAD();
-    if (!browser_) browser_ = browser;  // keep the top-level browser
+    if (!browser_) browser_ = browser;  // 保留顶层浏览器
+    // 若宿主在浏览器创建完成前就已完成布局,则没有任何 Resize() 生效过——
+    // 用父视图当前 bounds 兜底,保证第一帧不是空白。
+    if ((pending_w_ <= 0 || pending_h_ <= 0) && parent_view_) {
+      NSView* parent = (__bridge NSView*)parent_view_;
+      pending_w_ = (int)parent.bounds.size.width;
+      pending_h_ = (int)parent.bounds.size.height;
+    }
+    ApplySize();
     if (!pending_url_.empty()) {
       browser_->GetMainFrame()->LoadURL(pending_url_);
       pending_url_.clear();
@@ -126,11 +145,25 @@ class PeekrClient : public CefClient,
         url.c_str(), title_.c_str());
   }
 
+  // 把 CEF 宿主 NSView 调到暂存尺寸并通知 Chromium。真正让合成器采用新视口的是
+  // WasResized()——仅靠 autoresizing 只会移动 frame,Chromium 仍按旧的(0×0)尺寸渲染。
+  void ApplySize() {
+    if (!browser_ || pending_w_ <= 0 || pending_h_ <= 0) return;
+    NSView* view = (__bridge NSView*)browser_->GetHost()->GetWindowHandle();
+    if (!view) return;
+    view.frame = NSMakeRect(0, 0, pending_w_, pending_h_);
+    view.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
+    browser_->GetHost()->WasResized();
+  }
+
   PeekrCEFNavStateCallback cb_;
   void* userdata_;
   CefRefPtr<CefBrowser> browser_;
   std::string title_;
   std::string pending_url_;
+  void* parent_view_ = nullptr;
+  int pending_w_ = 0;
+  int pending_h_ = 0;
   IMPLEMENT_REFCOUNTING(PeekrClient);
 };
 
@@ -142,11 +175,11 @@ struct PeekrCEFBrowser {
   CefRefPtr<CefRequestContext> request_context;
 };
 
-bool peekr_cef_global_init(const char* framework_dir, const char* helper_path) {
+bool peekr_cef_global_init(const char* framework_dir, const char* helper_path,
+                           const char* cache_root) {
   @autoreleasepool {
-    // `framework_dir` is the directory CONTAINING the framework (it lives under
-    // Application Support, not the app bundle). dlopen the framework binary;
-    // cef_load_library binds the wrapper's symbols against it.
+    // `framework_dir` is the directory CONTAINING the framework. dlopen the
+    // framework binary; cef_load_library binds the wrapper's symbols against it.
     const std::string fw = std::string(framework_dir) + "/Chromium Embedded Framework.framework";
     if (!cef_load_library((fw + "/Chromium Embedded Framework").c_str())) return false;
 
@@ -154,9 +187,15 @@ bool peekr_cef_global_init(const char* framework_dir, const char* helper_path) {
     CefSettings settings;
     settings.external_message_pump = true;  // cooperate with NSApp's run loop
     settings.no_sandbox = true;             // TODO(Stage 3): enable sandbox once helpers are bundled+signed
-    // A per-app root cache avoids the shared-default-dir process singleton (CEF
-    // hands a 2nd launch off to the 1st and exits). Real app: Application Support/Peekr/cef.
-    CefString(&settings.root_cache_path).FromString("/tmp/peekr-cef-root");
+    // Under the Chrome runtime each per-app request context becomes a Chrome
+    // Profile, which must live DIRECTLY under root_cache_path. Swift hands us a
+    // WRITABLE root (Application Support/.../profiles) whose immediate children are
+    // the per-app <uuid> profile dirs. It MUST be passed explicitly: the framework
+    // now ships inside the (read-only, sealed) app bundle, so root_cache_path can no
+    // longer be derived from framework_dir's parent.
+    if (cache_root && cache_root[0]) {
+      CefString(&settings.root_cache_path).FromString(cache_root);
+    }
     // Point CEF at the framework + its bundled resources (icudtl.dat, *.pak,
     // locales) explicitly — without a host .app bundle CEF can't auto-locate them.
     CefString(&settings.framework_dir_path).FromString(fw);
@@ -179,6 +218,7 @@ PeekrCEFBrowser* peekr_cef_create(void* parent_nsview,
   @autoreleasepool {
     auto* handle = new PeekrCEFBrowser();
     handle->client = new PeekrClient(cb, userdata);
+    handle->client->SetParentView(parent_nsview);  // for the OnAfterCreated size seed
 
     // Per-app isolation: a request context with its own on-disk cache, the CEF
     // analog of WKWebsiteDataStore(forIdentifier:).
@@ -220,6 +260,9 @@ static CefRefPtr<CefBrowser> live(PeekrCEFBrowser* b) {
 
 void peekr_cef_load(PeekrCEFBrowser* browser, const char* url) {
   if (browser && browser->client && url) browser->client->LoadURL(url);
+}
+void peekr_cef_resize(PeekrCEFBrowser* browser, int w, int h) {
+  if (browser && browser->client) browser->client->Resize(w, h);
 }
 void peekr_cef_go_back(PeekrCEFBrowser* browser) {
   if (auto b = live(browser)) b->GoBack();

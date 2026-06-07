@@ -47,7 +47,11 @@ typedef void (*PeekrCEFNavStateCallback)(void *userdata,
 /* `helper_path` is the bundled "<App> Helper.app/Contents/MacOS/<exe>" the GPU/
  * renderer subprocesses launch from; pass NULL/"" to let CEF default to the main
  * executable (only valid if it handles CefExecuteProcess). */
-PEEKR_CEF_API bool peekr_cef_global_init(const char *framework_dir, const char *helper_path);
+/* `cache_root`:可写的缓存根目录,必须是每个 per-app request-context cache_path 的
+ * 祖先(否则 CEF 拒绝该 cache_path)。务必放在 app 包之外(框架进包后包是只读/被密封
+ * 的)——如 Application Support/Peekr/engines/chromium/profiles。传 NULL/"" 用 CEF 默认。 */
+PEEKR_CEF_API bool peekr_cef_global_init(const char *framework_dir, const char *helper_path,
+                                         const char *cache_root);
 
 /* Per-app session isolation: a CEF request context with a private cache path —
  * the CEF analog of Peekr's per-app WKWebsiteDataStore(forIdentifier:). Pass the
@@ -63,6 +67,12 @@ PEEKR_CEF_API void peekr_cef_go_back(PeekrCEFBrowser *browser);
 PEEKR_CEF_API void peekr_cef_go_forward(PeekrCEFBrowser *browser);
 PEEKR_CEF_API void peekr_cef_reload(PeekrCEFBrowser *browser);
 PEEKR_CEF_API void peekr_cef_stop(PeekrCEFBrowser *browser);
+
+/* 把 windowed 浏览器尺寸调整到填满宿主 NSView。windowed CEF 在 CreateBrowser 时刻按
+ * 父视图 bounds 创建——而宿主是 SwiftUI 刚创建、尚未布局的 NSView 时那是 0×0——且之后
+ * 不会自己重新取尺寸,不调用本函数页面就一片空白。Swift 宿主在每次布局时把 bounds 推进来;
+ * 若尺寸早于(异步的)浏览器创建到达,会被暂存并在 OnAfterCreated 套用。`w`/`h` 单位是点。 */
+PEEKR_CEF_API void peekr_cef_resize(PeekrCEFBrowser *browser, int w, int h);
 
 /* Drive one slice of CEF's message loop. Under external_message_pump the host
  * normally calls this from OnScheduleMessagePumpWork, but a host can also pump it
