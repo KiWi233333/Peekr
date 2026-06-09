@@ -48,7 +48,7 @@ final class ChromiumRuntimeDownloader {
                 self?.status = .downloading(
                     progress: ChromiumRuntimeInstaller.progress(bytesWritten: written, totalBytes: total))
             }
-            guard ChromiumChecksum.verify(data, expected: manifest.sha256) else {
+            guard ChromiumChecksum.verify(data, expected: manifest.sha1) else {
                 status = .failed(reason: "checksum mismatch")
                 return
             }
@@ -57,5 +57,30 @@ final class ChromiumRuntimeDownloader {
         } catch {
             status = .failed(reason: error.localizedDescription)
         }
+    }
+
+    /// Production driver wired to the real `URLSession` download + `tar` unpack and
+    /// `CEFRuntime`'s on-disk layout. The fakes used in tests stay injected via the
+    /// designated initializer.
+    static func live() -> ChromiumRuntimeDownloader {
+        let layout = CEFRuntime.layout
+        return ChromiumRuntimeDownloader(
+            installer: CEFRuntime.installer,
+            fetch: ChromiumRuntimeInstall.fetch,
+            install: { try ChromiumRuntimeInstall.install($0, version: CEFRuntime.requiredVersion, layout: layout) })
+    }
+
+    /// Resolve the matching upstream CEF build from the open-source index, then
+    /// download + install it. The single entry point the Preferences UI calls when
+    /// the user opts into Chromium and the runtime isn't present yet.
+    func downloadFromUpstream() async {
+        guard let manifest = await ChromiumRuntimeSource.resolveManifest(
+            requiredVersion: CEFRuntime.requiredVersion,
+            fetch: { try await ChromiumRuntimeInstall.fetch($0, progress: { _, _ in }) }
+        ) else {
+            status = .failed(reason: "no matching CEF build for \(CEFRuntime.requiredVersion)")
+            return
+        }
+        await ensureInstalled(manifest)
     }
 }

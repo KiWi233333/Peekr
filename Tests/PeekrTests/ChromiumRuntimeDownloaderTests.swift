@@ -7,8 +7,8 @@ import XCTest
 /// checksum are NEVER handed to `install`.
 @MainActor
 final class ChromiumRuntimeDownloaderTests: XCTestCase {
-    /// SHA-256 of empty input — so a `fetch` returning `Data()` passes verification.
-    private static let emptyHash = ChromiumTestVectors.emptySHA256
+    /// SHA-1 of empty input — so a `fetch` returning `Data()` passes verification.
+    private static let emptyHash = ChromiumTestVectors.emptySHA1
     private let url = URL(string: "https://dl.example.com/chromium-120.1.zip")!
 
     private func installer(installed: Bool) -> ChromiumRuntimeInstaller {
@@ -19,8 +19,8 @@ final class ChromiumRuntimeDownloaderTests: XCTestCase {
         )
     }
 
-    private func manifest(sha256: String) -> ChromiumRuntimeManifest {
-        ChromiumRuntimeManifest(version: "120.1", url: url, sha256: sha256, sizeBytes: 0)
+    private func manifest(sha1: String) -> ChromiumRuntimeManifest {
+        ChromiumRuntimeManifest(version: "120.1", url: url, sha1: sha1, sizeBytes: 0)
     }
 
     func testSkipsDownloadWhenAlreadyInstalled() async {
@@ -30,7 +30,7 @@ final class ChromiumRuntimeDownloaderTests: XCTestCase {
             fetch: { _, _ in fetched = true; return Data() },
             install: { _ in }
         )
-        await d.ensureInstalled(manifest(sha256: Self.emptyHash))
+        await d.ensureInstalled(manifest(sha1: Self.emptyHash))
         XCTAssertFalse(fetched)
         XCTAssertEqual(d.status, .installed(version: "120.1"))
     }
@@ -42,7 +42,7 @@ final class ChromiumRuntimeDownloaderTests: XCTestCase {
             fetch: { _, _ in Data() },
             install: { _ in installed = true }
         )
-        await d.ensureInstalled(manifest(sha256: Self.emptyHash))
+        await d.ensureInstalled(manifest(sha1: Self.emptyHash))
         XCTAssertTrue(installed)
         XCTAssertEqual(d.status, .installed(version: "120.1"))
     }
@@ -56,7 +56,7 @@ final class ChromiumRuntimeDownloaderTests: XCTestCase {
             fetch: { _, _ in Data([0x01]) },
             install: { _ in installed = true }
         )
-        await d.ensureInstalled(manifest(sha256: Self.emptyHash))
+        await d.ensureInstalled(manifest(sha1: Self.emptyHash))
         XCTAssertFalse(installed)
         guard case .failed = d.status else { return XCTFail("expected .failed, got \(d.status)") }
     }
@@ -70,7 +70,7 @@ final class ChromiumRuntimeDownloaderTests: XCTestCase {
             fetch: { _, _ in Data() },
             install: { _ in throw InstallError() }
         )
-        await d.ensureInstalled(manifest(sha256: Self.emptyHash))
+        await d.ensureInstalled(manifest(sha1: Self.emptyHash))
         guard case .failed = d.status else { return XCTFail("install failure must surface as .failed, got \(d.status)") }
     }
 
@@ -81,7 +81,7 @@ final class ChromiumRuntimeDownloaderTests: XCTestCase {
             fetch: { _, _ in throw DownloadError() },
             install: { _ in }
         )
-        await d.ensureInstalled(manifest(sha256: Self.emptyHash))
+        await d.ensureInstalled(manifest(sha1: Self.emptyHash))
         guard case .failed = d.status else { return XCTFail("expected .failed, got \(d.status)") }
     }
 
@@ -100,7 +100,7 @@ final class ChromiumRuntimeDownloaderTests: XCTestCase {
             fetch: { _, _ in fetched = true; return Data() },
             install: { _ in }
         )
-        await d.ensureInstalled(manifest(sha256: Self.emptyHash)) // manifest version 120.1
+        await d.ensureInstalled(manifest(sha1: Self.emptyHash)) // manifest version 120.1
         XCTAssertTrue(fetched, "a newer manifest version must download, not skip on an old install")
         XCTAssertEqual(d.status, .installed(version: "120.1"))
     }
@@ -117,7 +117,7 @@ final class ChromiumRuntimeDownloaderTests: XCTestCase {
             },
             install: { _ in }
         )
-        await downloader.ensureInstalled(manifest(sha256: Self.emptyHash))
+        await downloader.ensureInstalled(manifest(sha1: Self.emptyHash))
         XCTAssertEqual(observed, 0.5)
     }
 }

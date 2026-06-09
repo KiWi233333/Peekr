@@ -66,9 +66,10 @@ struct ChromiumRuntimeInstaller {
 struct ChromiumRuntimeManifest: Codable, Equatable {
     let version: String
     let url: URL
-    /// Lowercase hex SHA-256 of the archive — verified before the bytes are ever
-    /// unpacked or executed.
-    let sha256: String
+    /// Lowercase hex SHA-1 of the archive — verified before the bytes are ever
+    /// unpacked or executed. SHA-1 because that's the digest the upstream CEF
+    /// builds index publishes per file; integrity only (the transport is HTTPS).
+    let sha1: String
     let sizeBytes: Int64
 }
 
@@ -77,7 +78,7 @@ struct ChromiumRuntimeManifest: Codable, Equatable {
 /// supply-chain hole, so the download driver calls `verify` before unpacking.
 enum ChromiumChecksum {
     static func verify(_ data: Data, expected: String) -> Bool {
-        let hex = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+        let hex = Insecure.SHA1.hash(data: data).map { String(format: "%02x", $0) }.joined()
         return hex == expected.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
     }
 }

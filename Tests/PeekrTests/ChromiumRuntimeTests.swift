@@ -66,7 +66,7 @@ final class ChromiumRuntimeTests: XCTestCase {
     // MARK: - Manifest
 
     func testManifestDecodesFromJSON() throws {
-        let json = Data(#"{"version":"120.1","url":"https://dl.example.com/chromium-120.1.zip","sha256":"abc123","sizeBytes":188743680}"#.utf8)
+        let json = Data(#"{"version":"120.1","url":"https://dl.example.com/chromium-120.1.zip","sha1":"abc123","sizeBytes":188743680}"#.utf8)
         let m = try JSONDecoder().decode(ChromiumRuntimeManifest.self, from: json)
         XCTAssertEqual(m.version, "120.1")
         XCTAssertEqual(m.sizeBytes, 188_743_680)
@@ -77,24 +77,24 @@ final class ChromiumRuntimeTests: XCTestCase {
     /// not decode to defaults — unlike the tolerant local-file decode. Pins that
     /// deliberate strict-decode choice.
     func testManifestDecodeFailsOnMissingField() {
-        let json = Data(#"{"version":"120.1"}"#.utf8) // missing url / sha256 / sizeBytes
+        let json = Data(#"{"version":"120.1"}"#.utf8) // missing url / sha1 / sizeBytes
         XCTAssertThrowsError(try JSONDecoder().decode(ChromiumRuntimeManifest.self, from: json))
     }
 
-    // MARK: - Checksum (SHA-256 of empty input is a well-known constant)
+    // MARK: - Checksum (SHA-1 of empty input is a well-known constant)
 
-    private let emptySHA256 = ChromiumTestVectors.emptySHA256
+    private let emptySHA1 = ChromiumTestVectors.emptySHA1
 
-    func testVerifyAcceptsMatchingSHA256() {
-        XCTAssertTrue(ChromiumChecksum.verify(Data(), expected: emptySHA256))
+    func testVerifyAcceptsMatchingSHA1() {
+        XCTAssertTrue(ChromiumChecksum.verify(Data(), expected: emptySHA1))
     }
 
     func testVerifyIsCaseAndWhitespaceInsensitive() {
-        XCTAssertTrue(ChromiumChecksum.verify(Data(), expected: "  \(emptySHA256.uppercased())\n"))
+        XCTAssertTrue(ChromiumChecksum.verify(Data(), expected: "  \(emptySHA1.uppercased())\n"))
     }
 
     func testVerifyRejectsMismatch() {
-        XCTAssertFalse(ChromiumChecksum.verify(Data([0x01]), expected: emptySHA256))
+        XCTAssertFalse(ChromiumChecksum.verify(Data([0x01]), expected: emptySHA1))
     }
 
     // MARK: - Atomic file install (real temp dir; marker written last)

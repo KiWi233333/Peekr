@@ -56,6 +56,20 @@ class PeekrApp : public CefApp {
     return browser_process_handler_;
   }
 
+  // Chromium 144 derives a "validation category" by checking each process's own
+  // code signature (base/mac/process_requirement.cc). A non-notarized dev build
+  // fails that with -67030 (errSecCSInfoPlistFailed), which blocks the renderer
+  // from launching → blank page. Turn the Mach-rendezvous peer validation OFF so
+  // the renderer spawns without notarization.
+  // ⚠️ DEV-ONLY: distribution builds must SHIP NOTARIZED and drop this switch —
+  // it trivially bypasses sibling-process signature checks.
+  void OnBeforeCommandLineProcessing(
+      const CefString& process_type,
+      CefRefPtr<CefCommandLine> command_line) override {
+    command_line->AppendSwitchWithValue(
+        "disable-features", "MachPortRendezvousValidatePeerRequirements");
+  }
+
  private:
   CefRefPtr<CefBrowserProcessHandler> browser_process_handler_ =
       new PeekrBrowserProcessHandler();
@@ -178,6 +192,10 @@ struct PeekrCEFBrowser {
 bool peekr_cef_global_init(const char* framework_dir, const char* helper_path,
                            const char* cache_root) {
   @autoreleasepool {
+    // Belt-and-suspenders for the peer-validation bypass above: the policy is
+    // read from this env var BEFORE the feature list inits and is inherited by
+    // child processes. 0 = kNoValidation. (DEV-ONLY — see PeekrApp.)
+    setenv("MACH_PORT_RENDEZVOUS_PEER_VALIDATION", "0", 1);
     // `framework_dir` is the directory CONTAINING the framework. dlopen the
     // framework binary; cef_load_library binds the wrapper's symbols against it.
     const std::string fw = std::string(framework_dir) + "/Chromium Embedded Framework.framework";
@@ -187,6 +205,15 @@ bool peekr_cef_global_init(const char* framework_dir, const char* helper_path,
     CefSettings settings;
     settings.external_message_pump = true;  // cooperate with NSApp's run loop
     settings.no_sandbox = true;             // TODO(Stage 3): enable sandbox once helpers are bundled+signed
+    // Persistent diagnostics: without a log_file CEF writes debug.log to the cwd
+    // ("/" under a Finder launch → nothing). Pin it next to the writable cache
+    // root and keep INFO severity so renderer-launch failures (e.g. the code-sign
+    // self-validation -67030) land in a file we can actually read.
+    settings.log_severity = LOGSEVERITY_INFO;
+    if (cache_root && cache_root[0]) {
+      const std::string log_path = std::string(cache_root) + "/cef_debug.log";
+      CefString(&settings.log_file).FromString(log_path);
+    }
     // Under the Chrome runtime each per-app request context becomes a Chrome
     // Profile, which must live DIRECTLY under root_cache_path. Swift hands us a
     // WRITABLE root (Application Support/.../profiles) whose immediate children are

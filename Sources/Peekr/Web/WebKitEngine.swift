@@ -59,6 +59,14 @@ final class WebKitEngine: NSObject, WebEngine {
     func reload() { webView.reload() }
     func stopLoading() { webView.stopLoading() }
 
+    func iconLinkURLs() async -> [URL] {
+        // `*='icon' i` catches `icon`, `shortcut icon`, and `apple-touch-icon`
+        // (the high-res one). `link.href` is already absolute — no base resolution.
+        let js = "Array.from(document.querySelectorAll(\"link[rel*='icon' i]\")).map(l => l.href)"
+        let result = try? await webView.evaluateJavaScript(js)
+        return (result as? [String])?.compactMap(URL.init(string:)) ?? []
+    }
+
     // MARK: - State mirroring
 
     private func bindObservers() {

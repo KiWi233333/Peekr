@@ -7,9 +7,13 @@ import Observation
 @Observable
 final class IconStore {
     private var images: [UUID: NSImage] = [:]
-    /// The host each app's current icon was fetched for. `syncFavicon` consults it
-    /// so live navigation only hits the network when the site actually changes.
+    /// The host each app's add-time/disk icon was fetched for, so `load`/`fetch`
+    /// don't redo work for an unchanged site.
     private var iconHost: [UUID: String] = [:]
+    /// The host each app last got a *live-DOM* favicon for. Tracked apart from
+    /// `iconHost` so the first real page settle always refreshes the icon — the
+    /// add-time fetch only sees server HTML and misses JS-injected icons.
+    private var liveIconHost: [UUID: String] = [:]
     private let dir: URL
 
     init() {
@@ -40,21 +44,19 @@ final class IconStore {
         fetchFavicon(app)
     }
 
-    /// Live favicon sync as a tab navigates. Re-fetches the favicon for the page's
-    /// *current* host (not the app's configured URL) and stores it under the app
-    /// id, but only when the host actually changes — so within-site navigation and
-    /// the progress-tick stream never touch the network. Custom icons are left
-    /// untouched. Callers gate this to a *settled* page so a redirect chain
-    /// (A → B → app) doesn't fetch every intermediate host's icon.
-    func syncFavicon(_ app: WebApp, pageURL: URL?) {
-        guard !app.usesCustomIcon, let page = pageURL, let host = page.displayHost,
-              iconHost[app.id] != host else { return }
-        iconHost[app.id] = host
+    /// Live favicon sync once a tab settles, driven by the icon `<link>`s the
+    /// engine read from the rendered DOM (so JS-injected icons are caught). Stores
+    /// the result under the app id for the page's *current* host. Runs once per
+    /// host per tab — within-site navigation and the progress-tick stream never
+    /// refetch — but always fires the first real settle, so the add-time
+    /// placeholder icon gets replaced. Custom icons are left untouched.
+    func syncFavicon(_ app: WebApp, pageURL: URL?, domLinks: [URL]) {
+        guard !app.usesCustomIcon, let host = pageURL?.displayHost ?? app.host,
+              liveIconHost[app.id] != host else { return }
+        liveIconHost[app.id] = host
         let id = app.id
         Task { [weak self] in
-            let links = await Self.pageDocument(page)
-                .map { Self.iconLinks(in: $0.html, base: $0.base) } ?? []
-            await self?.writeIcon(host: host, declaredLinks: links, id: id)
+            await self?.writeIcon(host: host, declaredLinks: domLinks, id: id)
         }
     }
 

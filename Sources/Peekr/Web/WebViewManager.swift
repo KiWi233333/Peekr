@@ -3,8 +3,8 @@ import AppKit
 /// Owns one `WebEngine` per dock app and keeps them alive across show/hide so
 /// sessions, scroll position and playback are never lost. Backend-agnostic: it
 /// builds engines through a `WebEngineFactory` and only ever speaks the
-/// `WebEngine` protocol, so swapping in a Chromium/CEF backend never reaches the
-/// panel or UI layer. Mirrors the active engine's nav state into `state`.
+/// `WebEngine` protocol, so the backend never reaches the panel or UI layer.
+/// Mirrors the active engine's nav state into `state`.
 @MainActor
 final class WebViewManager {
     let state = BrowserState()
@@ -107,11 +107,17 @@ final class WebViewManager {
                 self.badges.update(id, fromTitle: nav.title)
                 self.model.applyLiveTitle(id, to: nav.title)
             }
-            // Sync the favicon only once the page has settled, so a redirect chain
-            // doesn't fetch each hop's icon; `syncFavicon` no-ops unless the host
+            // Once the page settles, read its favicon links from the live DOM and
+            // refresh the icon. Gated to a settled page so a redirect chain doesn't
+            // fetch each hop's icon; `syncFavicon` then no-ops unless the host
             // actually changed.
             if !nav.isLoading, let app = self.model.allTabs.first(where: { $0.id == id }) {
-                self.icons.syncFavicon(app, pageURL: nav.url)
+                let pageURL = nav.url
+                Task { [weak self] in
+                    guard let self, let engine = self.engines[id] else { return }
+                    let links = await engine.iconLinkURLs()
+                    self.icons.syncFavicon(app, pageURL: pageURL, domLinks: links)
+                }
             }
             if id == self.state.currentID { self.mirror(nav) }
         }

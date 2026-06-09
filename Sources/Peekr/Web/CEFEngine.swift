@@ -51,6 +51,10 @@ final class CEFEngine: WebEngine {
     func goForward() { bridge.goForward() }
     func reload() { bridge.reload() }
     func stopLoading() { bridge.stopLoading() }
+
+    /// The CEF bridge exposes no JS evaluation, so live-DOM favicon links aren't
+    /// available here; `IconStore` falls back to the standard favicon endpoints.
+    func iconLinkURLs() async -> [URL] { [] }
 }
 
 /// Builds `CEFEngine`s. The libcef-backed bridge is injected via `makeBridge`, so
