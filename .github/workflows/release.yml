@@ -124,15 +124,11 @@ jobs:
       - name: Create DMG
         run: |
           set -euo pipefail
-          mkdir -p dist/stage
           # build/Peekr.app is already stapled above (when credentials are present),
-          # so both the DMG's inner copy and the standalone zip inherit the ticket.
-          cp -R build/Peekr.app dist/stage/
-          ln -s /Applications dist/stage/Applications
-          hdiutil create -volname "Peekr" \
-            -srcfolder dist/stage \
-            -ov -format UDZO \
-            "dist/${{ steps.meta.outputs.dmg }}"
+          # so the DMG's inner copy and the standalone zip inherit the ticket.
+          # make-dmg.sh styles the install window (brand background, centered app
+          # icon + Applications drop target). Background TIFF ships in the repo.
+          ./scripts/make-dmg.sh build/Peekr.app "dist/${{ steps.meta.outputs.dmg }}" "Peekr"
           # also ship a plain zip of the .app
           ditto -c -k --keepParent build/Peekr.app "dist/Peekr-${{ steps.meta.outputs.version }}.app.zip"
           ls -la dist

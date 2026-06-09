@@ -1,4 +1,4 @@
-.PHONY: build dev app run clean
+.PHONY: build dev app run dmg clean
 
 # Quick compile check.
 build:
@@ -15,6 +15,10 @@ app:
 # Build the bundle and launch it.
 run: app
 	open build/Peekr.app
+
+# Assemble the styled install DMG (brand background, centered app + Applications).
+dmg: app
+	./scripts/make-dmg.sh build/Peekr.app dist/Peekr.dmg Peekr
 
 clean:
 	rm -rf .build build
