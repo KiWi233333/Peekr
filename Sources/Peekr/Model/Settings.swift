@@ -1,6 +1,16 @@
 import Foundation
 import Observation
 
+/// What makes the open panel auto-hide (when not pinned).
+enum AutoHideMode: String, Codable, CaseIterable, Identifiable {
+    /// Hide once the panel loses keyboard focus — i.e. you click another app or
+    /// window. The default: lets you read the panel freely until you move on.
+    case focusLoss
+    /// Hide as soon as the cursor leaves the panel's frame.
+    case mouseLeave
+    var id: String { rawValue }
+}
+
 /// How often to re-import bookmarks from the browsers already imported.
 enum BookmarkSyncInterval: String, Codable, CaseIterable, Identifiable {
     case off, hourly, daily
@@ -29,6 +39,7 @@ struct SettingsData: Codable, Equatable {
     var followCursor: Bool = true
     var lastScreenNumber: Int? = nil
     var autoHide: Bool = true
+    var autoHideMode: AutoHideMode = .focusLoss
     var language: AppLanguage = .system
     var bookmarkSync: BookmarkSyncInterval = .off
     var webEngine: WebEngineKind = .system
@@ -51,6 +62,7 @@ struct SettingsData: Codable, Equatable {
         followCursor = v(.followCursor, true)
         lastScreenNumber = (try? c.decodeIfPresent(Int.self, forKey: .lastScreenNumber)) ?? nil
         autoHide = v(.autoHide, true)
+        autoHideMode = v(.autoHideMode, .focusLoss)
         language = v(.language, .system)
         bookmarkSync = v(.bookmarkSync, .off)
         webEngine = v(.webEngine, .system)
@@ -72,6 +84,7 @@ final class Settings {
     var followCursor: Bool
     var lastScreenNumber: Int?
     var autoHide: Bool
+    var autoHideMode: AutoHideMode
     var language: AppLanguage
     var bookmarkSync: BookmarkSyncInterval
     var webEngine: WebEngineKind
@@ -91,6 +104,7 @@ final class Settings {
         followCursor = d.followCursor
         lastScreenNumber = d.lastScreenNumber
         autoHide = d.autoHide
+        autoHideMode = d.autoHideMode
         language = d.language
         bookmarkSync = d.bookmarkSync
         webEngine = d.webEngine
@@ -101,7 +115,8 @@ final class Settings {
         s.anchor = anchor; s.panelWidth = panelWidth; s.panelHeight = panelHeight
         s.hoverDelay = hoverDelay; s.edgeThreshold = edgeThreshold; s.hotKey = hotKey
         s.launchAtLogin = launchAtLogin; s.followCursor = followCursor
-        s.lastScreenNumber = lastScreenNumber; s.autoHide = autoHide; s.language = language
+        s.lastScreenNumber = lastScreenNumber; s.autoHide = autoHide
+        s.autoHideMode = autoHideMode; s.language = language
         s.bookmarkSync = bookmarkSync; s.webEngine = webEngine
         return s
     }

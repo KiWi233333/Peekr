@@ -34,6 +34,10 @@ private struct GeneralTab: View {
     @Bindable var settings: Settings
     var onApply: () -> Void
 
+    /// Drives the lazy Chromium runtime download; its `status` powers the progress
+    /// shown in the engine row. One per Preferences window.
+    @State private var chromium = ChromiumRuntimeDownloader.live()
+
     private var loc: Localized { settings.strings }
     private var defaultSize: NSSize { PanelGeometry.defaultSize(for: NSScreen.main ?? NSScreen.screens[0]) }
 
@@ -79,6 +83,12 @@ private struct GeneralTab: View {
                 slider(loc.hoverDelay, value: $settings.hoverDelay, range: 0...0.6, unit: "s", decimals: 2)
                 slider(loc.edgeSensitivity, value: $settings.edgeThreshold, range: 1...14, unit: "px")
                 Toggle(loc.autoHide, isOn: $settings.autoHide)
+                Picker(loc.autoHideMethod, selection: $settings.autoHideMode) {
+                    ForEach(AutoHideMode.allCases) { mode in
+                        Text(loc.autoHideModeName(mode)).tag(mode)
+                    }
+                }
+                .disabled(!settings.autoHide)
             }
 
             Section(loc.webEngineSection) {
@@ -112,11 +122,13 @@ private struct GeneralTab: View {
         .formStyle(.grouped)
     }
 
-    /// Radio row for one engine. Unavailable kinds (Chromium, until CEF ships)
-    /// stay visible but disabled with a "coming soon" badge.
+    /// Radio row for one engine. Unavailable kinds (Chromium, until the native
+    /// shim is bundled) stay visible but disabled with a "coming soon" badge.
+    /// Selecting Chromium kicks off the lazy runtime download when it isn't present.
     private func engineRow(_ kind: WebEngineKind) -> some View {
         Button {
             settings.webEngine = kind
+            if kind == .chromium { startChromiumDownloadIfNeeded() }
         } label: {
             HStack(alignment: .top, spacing: 10) {
                 Image(systemName: settings.webEngine == kind ? "largecircle.fill.circle" : "circle")
@@ -135,6 +147,7 @@ private struct GeneralTab: View {
                     Text(loc.engineDetail(kind))
                         .font(.caption).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
+                    if kind == .chromium { chromiumStatus }
                 }
                 Spacer(minLength: 0)
             }
@@ -142,6 +155,33 @@ private struct GeneralTab: View {
         }
         .buttonStyle(.plain)
         .disabled(!kind.isAvailable)
+    }
+
+    /// Live download state for the Chromium row: progress bar while fetching, a
+    /// "downloaded" line when ready, or the failure reason.
+    @ViewBuilder
+    private var chromiumStatus: some View {
+        switch chromium.status {
+        case .downloading(let progress):
+            ProgressView(value: progress) { Text(loc.engineDownloading) }
+                .font(.caption).controlSize(.small).padding(.top, 2)
+        case .installed:
+            Label(loc.engineDownloaded, systemImage: "checkmark.circle.fill")
+                .font(.caption).foregroundStyle(.green)
+        case .failed(let reason):
+            Label(reason, systemImage: "exclamationmark.triangle.fill")
+                .font(.caption).foregroundStyle(.orange)
+        case .notInstalled:
+            EmptyView()
+        }
+    }
+
+    /// Start the download only when the framework isn't already present (bundled or
+    /// previously downloaded) and one isn't already running.
+    private func startChromiumDownloadIfNeeded() {
+        guard CEFRuntime.shared.isSupported, !CEFRuntime.shared.isInstalled else { return }
+        if case .downloading = chromium.status { return }
+        Task { await chromium.downloadFromUpstream() }
     }
 
     private func slider(_ label: String, value: Binding<Double>, range: ClosedRange<Double>, unit: String, decimals: Int = 0) -> some View {

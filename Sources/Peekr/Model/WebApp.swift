@@ -11,26 +11,21 @@ struct WebApp: Identifiable, Codable, Hashable {
     /// When true, the icon at icons/<id>.png is user-supplied and favicon
     /// auto-fetch is skipped.
     var usesCustomIcon: Bool
-    /// Remembered panel size for this app, in points. `0` means "inherit" — the
-    /// panel falls back to the global default, then the screen-ratio default.
-    /// See `PanelGeometry.resolveSize`.
-    var panelWidth: Double
-    var panelHeight: Double
 
     init(id: UUID = UUID(), title: String, urlString: String, alias: String = "",
-         usesCustomIcon: Bool = false, panelWidth: Double = 0, panelHeight: Double = 0) {
+         usesCustomIcon: Bool = false) {
         self.id = id
         self.title = title
         self.urlString = urlString
         self.alias = alias
         self.usesCustomIcon = usesCustomIcon
-        self.panelWidth = panelWidth
-        self.panelHeight = panelHeight
     }
 
-    // Tolerate older app lists that predate `alias` / `usesCustomIcon` / per-app size.
+    // Tolerate older app lists that predate `alias` / `usesCustomIcon`.
+    // (Legacy per-app `panelWidth`/`panelHeight` keys, if present, are ignored —
+    // panel size is now a single global value in Settings.)
     private enum CodingKeys: String, CodingKey {
-        case id, title, urlString, alias, usesCustomIcon, panelWidth, panelHeight
+        case id, title, urlString, alias, usesCustomIcon
     }
 
     init(from decoder: Decoder) throws {
@@ -40,8 +35,6 @@ struct WebApp: Identifiable, Codable, Hashable {
         urlString = try c.decode(String.self, forKey: .urlString)
         alias = try c.decodeIfPresent(String.self, forKey: .alias) ?? ""
         usesCustomIcon = try c.decodeIfPresent(Bool.self, forKey: .usesCustomIcon) ?? false
-        panelWidth = try c.decodeIfPresent(Double.self, forKey: .panelWidth) ?? 0
-        panelHeight = try c.decodeIfPresent(Double.self, forKey: .panelHeight) ?? 0
     }
 
     var url: URL? { URL(string: urlString) }

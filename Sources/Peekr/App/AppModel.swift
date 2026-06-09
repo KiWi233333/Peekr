@@ -57,15 +57,6 @@ final class AppModel {
         persist()
     }
 
-    /// Remember the panel size the user dragged this tab to, so activating it
-    /// later restores that size. `0` for an axis means "inherit the default".
-    func setPanelSize(_ id: WebApp.ID, width: Double, height: Double) {
-        guard let idx = workspaces[activeIndex].tabs.firstIndex(where: { $0.id == id }) else { return }
-        workspaces[activeIndex].tabs[idx].panelWidth = width
-        workspaces[activeIndex].tabs[idx].panelHeight = height
-        persist()
-    }
-
     /// Set the user-facing alias — the single write path the rail's inline rename
     /// and the edit sheet both use. Empty clears it, so `displayName` falls back
     /// to the page title.

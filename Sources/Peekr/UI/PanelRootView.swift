@@ -17,11 +17,8 @@ struct PanelRootView: View {
     var onMoveEnded: () -> Void
     var onModalChange: (Bool) -> Void
     var onResizeBegan: () -> Void
-    var onResizeChanged: ([PanelResizeEdge], CGSize) -> Void
+    var onResizeChanged: ([PanelResizeEdge]) -> Void
     var onResizeEnded: () -> Void
-    /// Fired after the active app changes so the panel re-animates to that app's
-    /// remembered size. Defaulted so the placeholder root needs no value.
-    var onSizeReapply: () -> Void = {}
 
     @State private var editTarget: EditTarget?
     @State private var bookmarksOpen = false
@@ -33,7 +30,7 @@ struct PanelRootView: View {
         PanelRootView(
             model: model, settings: settings, manager: manager, icons: icons, badges: badges, bookmarks: bookmarks,
             onMoveBegan: {}, onMoveChanged: { _ in }, onMoveEnded: {}, onModalChange: { _ in },
-            onResizeBegan: {}, onResizeChanged: { _, _ in }, onResizeEnded: {}
+            onResizeBegan: {}, onResizeChanged: { _ in }, onResizeEnded: {}
         )
     }
 
@@ -97,7 +94,7 @@ struct PanelRootView: View {
     private var rail: some View {
         AppRail(
             model: model, settings: settings, icons: icons, badges: badges,
-            onSelect: { id in manager.activate(id); model.select(id); onSizeReapply() },
+            onSelect: { id in manager.activate(id); model.select(id) },
             onAdd: { editTarget = EditTarget(app: nil) },
             onEdit: { editTarget = EditTarget(app: $0) },
             onWorkspaceSwitched: {
@@ -105,7 +102,6 @@ struct PanelRootView: View {
                 if let id = model.selectedID {
                     manager.activate(id)
                     model.select(id)
-                    onSizeReapply()
                 } else {
                     manager.state.currentID = nil
                 }
@@ -154,13 +150,13 @@ struct PanelBackground: View {
 
 /// Native-style resize border: near-invisible hit-zones along the panel's free
 /// edges + corner. A real macOS window shows no visible grab — just the resize
-/// cursor — so these stay transparent at rest and light up only faintly on
-/// hover/drag. Docked edges have no zone (they stay flush to the screen).
+/// cursor — so these stay transparent at rest. Docked edges have no zone (they
+/// stay flush to the screen).
 private struct ResizeBorder: View {
     let zones: [PanelResizeZone]
     let hint: String
     var onBegan: () -> Void
-    var onChanged: ([PanelResizeEdge], CGSize) -> Void
+    var onChanged: ([PanelResizeEdge]) -> Void
     var onEnded: () -> Void
 
     var body: some View {
@@ -176,40 +172,30 @@ private struct ResizeBorder: View {
 }
 
 /// One resize zone — a thin edge band or a corner square — positioned on the
-/// panel's perimeter and carrying the matching native resize cursor.
+/// panel's perimeter and carrying the matching native resize cursor. The
+/// interactive layer is an AppKit view running the native mouse-tracking loop
+/// (see `ResizeHandleView`), so the drag stays glued to the cursor instead of
+/// lagging behind SwiftUI's `DragGesture` event delivery.
 private struct ResizeZoneHandle: View {
     let zone: PanelResizeZone
     let hint: String
     var onBegan: () -> Void
-    var onChanged: ([PanelResizeEdge], CGSize) -> Void
+    var onChanged: ([PanelResizeEdge]) -> Void
     var onEnded: () -> Void
-
-    @State private var active = false
-    @State private var hovering = false
 
     private static let edgeThickness: CGFloat = 8
     private static let cornerSize: CGFloat = 18
 
     var body: some View {
         // Size + hit-test the zone first, THEN position it. The fill axis (nil
-        // dimension) stretches to the panel edge; contentShape/gestures bind to
-        // this sized band — never the full-panel positioning frame below, or the
-        // zone would swallow hits across the whole panel.
-        Color.primary.opacity(active || hovering ? 0.06 : 0.001)
+        // dimension) stretches to the panel edge; the handle binds to this sized
+        // band — never the full-panel positioning frame below, or the zone would
+        // swallow hits across the whole panel.
+        ResizeHandleView(cursor: cursor,
+                         onBegan: onBegan,
+                         onChanged: { onChanged(edges) },
+                         onEnded: onEnded)
             .frame(width: fixedWidth, height: fixedHeight)
-            .contentShape(Rectangle())
-            .onHover { inside in
-                hovering = inside
-                if inside { cursor.set() } else { NSCursor.arrow.set() }
-            }
-            .gesture(
-                DragGesture(minimumDistance: 1)
-                    .onChanged { value in
-                        if !active { active = true; onBegan() }
-                        onChanged(edges, value.translation)
-                    }
-                    .onEnded { _ in active = false; onEnded() }
-            )
             .help(hint)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: alignment)
     }
@@ -266,5 +252,63 @@ private struct ResizeZoneHandle: View {
         guard let img = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)?
             .withSymbolConfiguration(cfg) else { return .crosshair }
         return NSCursor(image: img, hotSpot: NSPoint(x: img.size.width / 2, y: img.size.height / 2))
+    }
+}
+
+/// Bridges one resize zone to AppKit. The interactive surface is transparent —
+/// the only hover affordance is the resize cursor, like a native window edge.
+private struct ResizeHandleView: NSViewRepresentable {
+    let cursor: NSCursor
+    var onBegan: () -> Void
+    var onChanged: () -> Void
+    var onEnded: () -> Void
+
+    func makeNSView(context: Context) -> ResizeHandleNSView { ResizeHandleNSView() }
+
+    func updateNSView(_ view: ResizeHandleNSView, context: Context) {
+        view.cursor = cursor
+        view.onBegan = onBegan
+        view.onChanged = onChanged
+        view.onEnded = onEnded
+    }
+}
+
+/// Transparent edge/corner grip that drives the resize from AppKit's own
+/// mouse-tracking loop. Draining `.leftMouseDragged` events ourselves keeps the
+/// frame glued to the cursor 1:1 — SwiftUI's `DragGesture` delivers updates a
+/// frame or two late, which reads as drag "lag". `acceptsFirstMouse` lets a grab
+/// resize immediately, without first clicking to focus the panel.
+final class ResizeHandleNSView: NSView {
+    var cursor: NSCursor = .arrow
+    var onBegan: () -> Void = {}
+    var onChanged: () -> Void = {}
+    var onEnded: () -> Void = {}
+
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        trackingAreas.forEach(removeTrackingArea)
+        addTrackingArea(NSTrackingArea(
+            rect: bounds,
+            options: [.activeInActiveApp, .inVisibleRect, .cursorUpdate],
+            owner: self))
+    }
+
+    override func cursorUpdate(with event: NSEvent) { cursor.set() }
+
+    override func mouseDown(with event: NSEvent) {
+        cursor.set()
+        onBegan()
+        onChanged()
+        // Native resize loop: process only drag/up events until the mouse lifts,
+        // updating on every event so the panel tracks the cursor without latency.
+        while let next = NSApp.nextEvent(matching: [.leftMouseDragged, .leftMouseUp],
+                                         until: .distantFuture,
+                                         inMode: .eventTracking, dequeue: true) {
+            if next.type == .leftMouseUp { break }
+            onChanged()
+        }
+        onEnded()
     }
 }

@@ -114,12 +114,19 @@ struct Localized {
     var defaultWidth: String { t("Default width", "默认宽度") }
     var defaultHeight: String { t("Default height", "默认高度") }
     var panelSizeHint: String {
-        t("Default size for apps you haven't resized yet. Drag a panel's edge to remember a size per app.",
-          "尚未单独调整尺寸的应用的默认大小。拖动面板边缘即可为单个应用单独记忆尺寸。")
+        t("The panel size, shared across every app. Drag a bottom corner of the panel to change it.",
+          "面板尺寸，所有应用共用一个。拖动面板的底部边角即可调整。")
     }
     var hoverDelay: String { t("Hover delay", "悬停延迟") }
     var edgeSensitivity: String { t("Edge sensitivity", "边缘灵敏度") }
-    var autoHide: String { t("Auto-hide when the cursor leaves", "光标离开时自动隐藏") }
+    var autoHide: String { t("Auto-hide the panel", "自动隐藏面板") }
+    var autoHideMethod: String { t("Hide when", "隐藏时机") }
+    func autoHideModeName(_ mode: AutoHideMode) -> String {
+        switch mode {
+        case .focusLoss: return t("Focus is lost", "失去焦点时")
+        case .mouseLeave: return t("Cursor leaves the panel", "光标离开面板时")
+        }
+    }
     var followCursor: String { t("Follow cursor across displays", "跨显示器跟随光标") }
     var toggleShortcut: String { t("Toggle shortcut", "切换快捷键") }
     var launchAtLogin: String { t("Launch Peekr at login", "开机时启动 Peekr") }
@@ -138,9 +145,11 @@ struct Localized {
     var webEngineSection: String { t("Web Engine", "浏览器内核") }
     var webEngineHint: String {
         t("Choose how pages render. Chromium is optional and downloads on first use.",
-          "选择网页的渲染内核。Chromium 为可选项，首次使用时下载。")
+          "选择网页的渲染内核。Chromium 为可选项，首次选择时下载。")
     }
     var comingSoon: String { t("Coming soon", "即将支持") }
+    var engineDownloading: String { t("Downloading runtime…", "正在下载运行时…") }
+    var engineDownloaded: String { t("Runtime downloaded", "运行时已下载") }
     func engineName(_ kind: WebEngineKind) -> String {
         switch kind {
         case .system: return t("System · WebKit", "系统内核 · WebKit")
@@ -157,6 +166,7 @@ struct Localized {
                      "Chrome 引擎，最大化站点兼容性。首次使用需下载约 180 MB。")
         }
     }
+
     var defaultSize: String { t("Default (screen ratio)", "默认（屏幕比例）") }
     var dockingHint: String {
         t("Hover this edge/corner, or drag the panel by its grip and release near any edge/corner. Snapping changes the slide direction — not the size.",

@@ -21,21 +21,12 @@ enum PanelAnchor: String, Codable, CaseIterable, Identifiable {
     /// Rail hugs the docked side so icons sit nearest the screen edge.
     var railOnLeft: Bool { !isRightSide }
 
-    // Resize geometry. The docked side(s) sit flush to the screen, so the panel
-    // grows from the opposite, *free* edge. Centralized here so views never
-    // re-derive orientation.
-    var widthResizeEdge: PanelResizeEdge { isRightSide ? .leading : .trailing }
-    var heightResizeEdge: PanelResizeEdge { isTopSide ? .bottom : .top }
-
-    /// Native-style resize border: the free perimeter regions a drag can grab —
-    /// the one free width edge, the one free height edge, and (corner docks only)
-    /// the free inner corner that resizes both. Docked edges stay flush, so the
-    /// docked corner has no handle. Order matters: the corner comes last so it
-    /// renders above the edge zones and wins the pixels they share.
+    /// Resize border: two diagonal handles at the bottom-left and bottom-right
+    /// corners, each resizing width + height together. Whichever side is docked
+    /// stays pinned flush to the screen, so dragging that corner only reshapes
+    /// the panel inward (the layout in `PanelGeometry.layout` re-pins it).
     var resizeZones: [PanelResizeZone] {
-        var zones: [PanelResizeZone] = [.edge(widthResizeEdge), .edge(heightResizeEdge)]
-        if isCorner { zones.append(.corner(widthResizeEdge, heightResizeEdge)) }
-        return zones
+        [.corner(.leading, .bottom), .corner(.trailing, .bottom)]
     }
 
     var label: String {

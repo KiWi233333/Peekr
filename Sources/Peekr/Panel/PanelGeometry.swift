@@ -71,19 +71,19 @@ enum PanelGeometry {
         NSSize(width: visible.width * (2.0 / 3.0), height: visible.height * 0.92)
     }
 
-    /// Resolve the panel size for the active app. Each axis prefers, in order:
-    /// the app's remembered size → the global default → the screen-ratio default,
-    /// where `0` means "not set". The result is clamped to `[minSize, visible]`
-    /// so a remembered size from a larger display still fits the current one.
-    static func resolveSize(app: NSSize, global: NSSize, visible: NSSize) -> NSSize {
+    /// Resolve the panel size from the single global size. Each axis prefers the
+    /// global value, falling back to the screen-ratio default where `0` means
+    /// "not set". The result is clamped to `[minSize, visible]` so a size saved
+    /// on a larger display still fits the current one.
+    static func resolveSize(global: NSSize, visible: NSSize) -> NSSize {
         let def = defaultSize(forVisible: visible)
-        func axis(_ appValue: CGFloat, _ globalValue: CGFloat, fallback: CGFloat, min: CGFloat, max: CGFloat) -> CGFloat {
-            let chosen = appValue > 0 ? appValue : (globalValue > 0 ? globalValue : fallback)
+        func axis(_ value: CGFloat, fallback: CGFloat, min: CGFloat, max: CGFloat) -> CGFloat {
+            let chosen = value > 0 ? value : fallback
             return Swift.min(Swift.max(min, chosen), max)
         }
         return NSSize(
-            width: axis(app.width, global.width, fallback: def.width, min: minSize.width, max: visible.width),
-            height: axis(app.height, global.height, fallback: def.height, min: minSize.height, max: visible.height))
+            width: axis(global.width, fallback: def.width, min: minSize.width, max: visible.width),
+            height: axis(global.height, fallback: def.height, min: minSize.height, max: visible.height))
     }
 
     /// The hover zone that peeks the panel out for a given anchor.

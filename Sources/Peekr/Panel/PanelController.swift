@@ -29,6 +29,7 @@ final class PanelController {
     private var moveMonitorGlobal: Any?
     private var moveMonitorLocal: Any?
     private var keyMonitor: Any?
+    private var resignKeyObserver: Any?
     private var dragStartOrigin: NSPoint = .zero
     private var dragStartMouse: NSPoint = .zero
     private var resizeStartSize: NSSize = .zero
@@ -70,9 +71,8 @@ final class PanelController {
             onMoveEnded: { [weak self] in self?.moveEnded() },
             onModalChange: { [weak self] open in self?.autoHideSuspended = open },
             onResizeBegan: { [weak self] in self?.resizeBegan() },
-            onResizeChanged: { [weak self] edges, t in self?.resizeChanged(edges, t) },
-            onResizeEnded: { [weak self] in self?.resizeEnded() },
-            onSizeReapply: { [weak self] in self?.applyLayout() }
+            onResizeChanged: { [weak self] edges in self?.resizeChanged(edges) },
+            onResizeEnded: { [weak self] in self?.resizeEnded() }
         )
     }
 
@@ -170,7 +170,7 @@ final class PanelController {
     }
 
     /// One edge for an edge handle, two (a width + a height edge) for a corner.
-    private func resizeChanged(_ edges: [PanelResizeEdge], _ translation: CGSize) {
+    private func resizeChanged(_ edges: [PanelResizeEdge]) {
         guard let screen = activeScreen else { return }
         let vf = screen.visibleFrame
         // Absolute screen-coordinate deltas (y is up), same anti-jitter reason
@@ -203,16 +203,10 @@ final class PanelController {
 
     private func resizeEnded() {
         if let size = liveResize {
-            if let id = model.selectedID {
-                // Remember this size for the active app only.
-                model.setPanelSize(id, width: size.width, height: size.height)
-            } else {
-                // No active tab (empty workspace): seed the global default that
-                // not-yet-resized apps inherit, so resizing still does something.
-                settings.panelWidth = size.width
-                settings.panelHeight = size.height
-                settings.persist()
-            }
+            // One global panel size, shared across every tab.
+            settings.panelWidth = size.width
+            settings.panelHeight = size.height
+            settings.persist()
         }
         liveResize = nil
         autoHideSuspended = false
@@ -234,6 +228,13 @@ final class PanelController {
             if event.modifierFlags.contains(.command), self.handleCommand(event) { return nil }
             return event
         }
+        // Focus-loss auto-hide: the panel resigns key when another app/window is
+        // clicked. (Mouse-leave mode relies on the move monitors above instead.)
+        resignKeyObserver = NotificationCenter.default.addObserver(
+            forName: NSWindow.didResignKeyNotification, object: panel, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.checkFocusLoss() }
+        }
     }
 
     private func removeMonitors() {
@@ -241,16 +242,28 @@ final class PanelController {
             NSEvent.removeMonitor(monitor)
         }
         moveMonitorGlobal = nil; moveMonitorLocal = nil; keyMonitor = nil
+        if let resignKeyObserver { NotificationCenter.default.removeObserver(resignKeyObserver) }
+        resignKeyObserver = nil
+    }
+
+    /// Shared auto-hide guards: visible, enabled, not pinned, no drag/sheet/modal
+    /// in progress.
+    private var canAutoHide: Bool {
+        isVisible && settings.autoHide && !model.isPinned && !autoHideSuspended
+            && NSApp.modalWindow == nil && panel.attachedSheet == nil
     }
 
     private func checkLeave() {
-        guard isVisible, settings.autoHide, !model.isPinned, !autoHideSuspended,
-              NSApp.modalWindow == nil
-        else { return }
+        guard canAutoHide, settings.autoHideMode == .mouseLeave else { return }
         let loc = NSEvent.mouseLocation
         if !panel.frame.insetBy(dx: -12, dy: -12).contains(loc) {
             hide()
         }
+    }
+
+    private func checkFocusLoss() {
+        guard canAutoHide, settings.autoHideMode == .focusLoss else { return }
+        hide()
     }
 
     /// Browser-style shortcuts while the panel is key. Returns true if consumed.
@@ -267,7 +280,6 @@ final class PanelController {
             let id = model.apps[n - 1].id
             model.select(id)
             manager.activate(id)
-            applyLayout()   // restore this app's remembered size
         }
         return true
     }
@@ -278,19 +290,14 @@ final class PanelController {
         PanelGeometry.layout(anchor: settings.anchor, screen: screen, size: panelSize(on: screen))
     }
 
-    private var activeApp: WebApp? {
-        model.selectedID.flatMap { id in model.apps.first { $0.id == id } }
-    }
-
     private func panelSize(on screen: NSScreen) -> NSSize {
         let visible = screen.visibleFrame.size
         // A live resize already produced a clamped size; reuse the same clamp.
         if let liveResize {
-            return PanelGeometry.resolveSize(app: liveResize, global: .zero, visible: visible)
+            return PanelGeometry.resolveSize(global: liveResize, visible: visible)
         }
-        let app = activeApp.map { NSSize(width: $0.panelWidth, height: $0.panelHeight) } ?? .zero
         let global = NSSize(width: settings.panelWidth, height: settings.panelHeight)
-        return PanelGeometry.resolveSize(app: app, global: global, visible: visible)
+        return PanelGeometry.resolveSize(global: global, visible: visible)
     }
 
     private func animate(to frame: NSRect, duration: TimeInterval, curve: CAMediaTimingFunctionName) {
