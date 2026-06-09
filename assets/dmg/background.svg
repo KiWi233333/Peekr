@@ -1,0 +1,18 @@
+<svg width="600" height="400" viewBox="0 0 600 400" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <!-- one quiet blue-tinted wash, near white -->
+    <linearGradient id="field" x1="0" y1="0" x2="0" y2="400" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#EEF5FF"/>
+      <stop offset="1" stop-color="#FFFFFF"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="600" height="400" fill="url(#field)"/>
+
+  <!-- hand-drawn wavy drag arrow, one continuous stroke (Finder drops the icons
+       either side at y≈212) -->
+  <g stroke="#2563EB" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" fill="none">
+    <path d="M250 212 q 11 -11 22 0 t 22 0 t 22 0 H 338"/>
+    <path d="M324 200 L 342 212 L 324 224"/>
+  </g>
+</svg>
