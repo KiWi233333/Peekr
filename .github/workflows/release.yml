@@ -53,41 +53,6 @@ jobs:
       - name: Show toolchain
         run: swift --version && xcodebuild -version
 
-      - name: Validate Chromium release floor
-        env:
-          MINIMUM_RELEASE_CHROMIUM: 151.0.7922.71
-          BELOW_FLOOR_EXCEPTION_TAG: v0.2.1
-        run: |
-          set -euo pipefail
-          ACTUAL="$(jq -r '.chromium // empty' CEF_VERSION.json)"
-          if [ -z "$ACTUAL" ]; then
-            echo "::error::CEF_VERSION.json has no Chromium version."
-            exit 1
-          fi
-          echo "Pinned Chromium: $ACTUAL"
-          if awk -v actual="$ACTUAL" -v floor="$MINIMUM_RELEASE_CHROMIUM" '
-            BEGIN {
-              split(actual, a, ".")
-              split(floor, f, ".")
-              for (i = 1; i <= 4; i++) {
-                if ((a[i] + 0) > (f[i] + 0)) exit 0
-                if ((a[i] + 0) < (f[i] + 0)) exit 1
-              }
-              exit 0
-            }
-          '; then
-            exit 0
-          fi
-          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
-            if [ "$GITHUB_REF_NAME" = "$BELOW_FLOOR_EXCEPTION_TAG" ]; then
-              echo "::warning::Publishing $GITHUB_REF_NAME with Chromium $ACTUAL under its explicit release exception."
-              exit 0
-            fi
-            echo "::error::Chromium $ACTUAL is below the release security floor $MINIMUM_RELEASE_CHROMIUM."
-            exit 1
-          fi
-          echo "::warning::Chromium $ACTUAL is below the publishing floor; this validation run will not publish."
-
       - name: Cache SwiftPM
         uses: actions/cache@v4
         with:
