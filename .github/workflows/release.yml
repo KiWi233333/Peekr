@@ -56,7 +56,7 @@ jobs:
       - name: Validate Chromium release floor
         env:
           MINIMUM_RELEASE_CHROMIUM: 151.0.7922.71
-          BELOW_FLOOR_EXCEPTION_TAG: v0.2.0
+          BELOW_FLOOR_EXCEPTION_TAG: v0.2.1
         run: |
           set -euo pipefail
           ACTUAL="$(jq -r '.chromium // empty' CEF_VERSION.json)"
