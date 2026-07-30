@@ -44,6 +44,24 @@ if [ -n "$CEF_LICENSE" ]; then
   cp "$CEF_LICENSE" "$APP/Contents/Resources/CEF-LICENSE.txt"
 fi
 
+# Peekr exposes only English and Chinese UI. CEF's redistribution README allows
+# shipping only configured locales; prune the other locale packs before the
+# framework receives its final signature.
+CEF_RESOURCES="$FRAMEWORK/Versions/A/Resources"
+test -d "$CEF_RESOURCES" || { echo "CEF resources missing from $FRAMEWORK" >&2; exit 1; }
+for required_locale in en.lproj zh_CN.lproj zh_TW.lproj; do
+  test -f "$CEF_RESOURCES/$required_locale/locale.pak" \
+    || { echo "Required CEF locale missing: $required_locale" >&2; exit 1; }
+done
+for locale_dir in "$CEF_RESOURCES"/*.lproj; do
+  [ -d "$locale_dir" ] || continue
+  case "$(basename "$locale_dir")" in
+    en.lproj|zh_CN.lproj|zh_TW.lproj) ;;
+    *) rm -R "$locale_dir" ;;
+  esac
+done
+echo "[cef] Kept locales: en, zh_CN, zh_TW"
+
 # When the variable is present, its value is authoritative: an empty value or
 # "-" explicitly forces ad-hoc signing (CI uses this for the no-secret path).
 # When it is absent, prefer Apple Development for local TCC stability, then

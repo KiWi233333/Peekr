@@ -5,6 +5,32 @@ enum AppLanguage: String, Codable, CaseIterable, Identifiable {
     case system, english, chinese
     var id: String { rawValue }
 
+    /// CEF locale shipped by Peekr. Keep this mapping in sync with the locale
+    /// allowlist in `scripts/bundle.sh`.
+    var cefLocaleIdentifier: String {
+        cefLocaleIdentifier(preferredLanguages: Locale.preferredLanguages)
+    }
+
+    func cefLocaleIdentifier(preferredLanguages: [String]) -> String {
+        let preferred = preferredLanguages.first?.lowercased() ?? "en"
+        switch self {
+        case .english:
+            return "en"
+        case .chinese:
+            return Self.usesTraditionalChinese(preferred) ? "zh-TW" : "zh-CN"
+        case .system:
+            guard preferred.hasPrefix("zh") else { return "en" }
+            return Self.usesTraditionalChinese(preferred) ? "zh-TW" : "zh-CN"
+        }
+    }
+
+    private static func usesTraditionalChinese(_ identifier: String) -> Bool {
+        identifier.hasPrefix("zh-hant")
+            || identifier.hasPrefix("zh-tw")
+            || identifier.hasPrefix("zh-hk")
+            || identifier.hasPrefix("zh-mo")
+    }
+
     /// Resolve `.system` to a concrete language using the OS preference.
     var resolved: AppLanguage {
         guard self == .system else { return self }

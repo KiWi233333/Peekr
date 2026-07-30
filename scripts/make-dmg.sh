@@ -64,7 +64,8 @@ APPLESCRIPT
 sync
 hdiutil detach "$DEVICE" >/dev/null 2>&1 || hdiutil detach "$MOUNT_DIR" >/dev/null 2>&1 || true
 
-# Compress to the final read-only DMG.
+# Compress to the final read-only DMG. Peekr requires macOS 14, so the
+# macOS 10.15+ LZMA-backed UDIF format is safe and materially smaller than UDZO.
 rm -f "$OUT"
-hdiutil convert "$RW" -format UDZO -imagekey zlib-level=9 -o "$OUT" >/dev/null
+hdiutil convert "$RW" -format ULMO -o "$OUT" >/dev/null
 echo "Built $OUT"

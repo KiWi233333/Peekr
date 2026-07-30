@@ -33,6 +33,7 @@ struct PeekrApp: CefSwiftApp {
         configuration.logFile = root.appendingPathComponent("debug.log")
         configuration.persistSessionCookies = true
         configuration.defaultRuntimeStyle = .alloy
+        configuration.locale = SettingsStore().load().language.cefLocaleIdentifier
         let version =
             Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
             ?? "0.1.0"
