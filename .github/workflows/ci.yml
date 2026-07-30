@@ -38,8 +38,11 @@ jobs:
         uses: actions/cache@v4
         with:
           path: .build
-          key: ${{ matrix.os }}-spm-${{ hashFiles('Package.swift') }}
+          key: ${{ matrix.os }}-spm-${{ hashFiles('Package.swift', 'Package.resolved') }}
           restore-keys: ${{ matrix.os }}-spm-
 
       - name: Build
         run: swift build -v
+
+      - name: Test
+        run: swift test -v
