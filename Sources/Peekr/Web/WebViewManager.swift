@@ -10,7 +10,7 @@ final class WebViewManager {
     let state = BrowserState()
 
     private let model: AppModel
-    private let factory: WebEngineFactory
+    private var factory: WebEngineFactory
     private let badges: BadgeStore
     private let icons: IconStore
     private var engines: [UUID: WebEngine] = [:]
@@ -40,11 +40,46 @@ final class WebViewManager {
     func reload(_ id: UUID) { engines[id]?.reload() }
 
     func discard(_ id: UUID) {
+        engines[id]?.close()
         engines[id]?.hostView.removeFromSuperview()
         engines[id] = nil
         lastTitles[id] = nil
         badges.clear(id)
         if state.currentID == id { state.currentID = nil }
+    }
+
+    /// Replace the rendering backend and recreate cached pages. The selected
+    /// tab is detached for one run-loop turn so `WebContainer` removes the old
+    /// native view before mounting the replacement.
+    func replaceFactory(_ newFactory: WebEngineFactory) {
+        factory = newFactory
+        let activeID = state.currentID
+        for engine in engines.values {
+            engine.close()
+            engine.hostView.removeFromSuperview()
+        }
+        engines.removeAll()
+        lastTitles.removeAll()
+        state.currentID = nil
+
+        guard let activeID else { return }
+        Task { @MainActor [weak self] in
+            guard let self, self.state.currentID == nil else { return }
+            self.activate(activeID)
+        }
+    }
+
+    /// Force-close every cached page before CefSwift begins process-wide
+    /// termination. This prevents a page's `beforeunload` handler from keeping
+    /// the menu-bar app alive indefinitely after the user already confirmed quit.
+    func closeAll() {
+        for engine in engines.values {
+            engine.close()
+            engine.hostView.removeFromSuperview()
+        }
+        engines.removeAll()
+        lastTitles.removeAll()
+        state.currentID = nil
     }
 
     // MARK: - Navigation actions (operate on the active engine)

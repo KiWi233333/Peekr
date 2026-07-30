@@ -32,11 +32,19 @@ protocol WebEngine: AnyObject {
     func goForward()
     func reload()
     func stopLoading()
+    /// Release backend resources immediately when a tab is discarded or the
+    /// selected engine changes. WebKit needs no special shutdown; CEF must
+    /// explicitly close its browser before the runtime can terminate.
+    func close()
 
     /// The page's declared favicon `<link>` URLs read from the *live* DOM (already
     /// resolved to absolute). Reading the rendered DOM — not a second HTML fetch —
     /// captures icons that SPAs inject via JS. Empty when none are declared.
     func iconLinkURLs() async -> [URL]
+}
+
+extension WebEngine {
+    func close() {}
 }
 
 /// Builds a `WebEngine` per dock app. The concrete factory owns the backend's
@@ -48,46 +56,26 @@ protocol WebEngineFactory {
 }
 
 /// The rendering backend the user picks in Preferences. `system` is the built-in
-/// WebKit engine; `chromium` downloads a CEF runtime on first selection (lazy).
+/// WebKit engine; `chromium` is the CEF runtime bundled by CefSwift.
 /// Persisted in `SettingsData`, so it must stay a stable raw string.
 enum WebEngineKind: String, Codable, CaseIterable, Identifiable {
     case system, chromium
     var id: String { rawValue }
 
-    /// Whether this engine can be offered/selected. Chromium requires the bundled
-    /// native shim (a pure filesystem check, so it stays false under `swift run`,
-    /// in tests, and in builds without Chromium support). The heavy framework may
-    /// still need a first-use download even when this is true.
-    var isAvailable: Bool {
-        switch self {
-        case .system: return true
-        // Offerable iff the native shim is bundled. The shim path comes from
-        // `CEFRuntime` (the single source) instead of a second copy of the
-        // privateFrameworks lookup.
-        case .chromium:
-            guard let dylib = CEFRuntime.shimDylibURL?.path else { return false }
-            return FileManager.default.fileExists(atPath: dylib)
-        }
-    }
+    /// Both backends ship in every supported Peekr bundle. CefSwift's bootstrap
+    /// fails loudly at launch if its framework/helpers are missing, so Chromium
+    /// never appears selectable while silently falling back to WebKit.
+    var isAvailable: Bool { true }
 
-    /// The concrete factory. Chromium resolves to the real CEF engine only when the
-    /// shim is bundled, the runtime is downloaded, AND `CefInitialize` succeeds —
-    /// otherwise it falls back to WebKit, so selecting Chromium can never break the
-    /// app (worst case it renders with WebKit until the runtime is ready).
+    /// The concrete factory. Chromium is a direct CefSwift implementation: no
+    /// runtime download, dlopen shim, or WebKit fallback.
     @MainActor
     func makeFactory() -> WebEngineFactory {
         switch self {
         case .system:
             return WebKitEngineFactory()
         case .chromium:
-            let rt = CEFRuntime.shared
-            guard let lib = rt.lib, rt.isInstalled,
-                  rt.ensureInitialized(frameworkDir: CEFRuntime.frameworkDir.path)
-            else { return WebKitEngineFactory() }
-            return CEFEngineFactory(makeBridge: { app in
-                LibCEFBridge(lib: lib, url: app.url,
-                             cacheDir: CEFRuntime.profileDir(for: app.id).path)
-            })
+            return CefSwiftEngineFactory()
         }
     }
 }

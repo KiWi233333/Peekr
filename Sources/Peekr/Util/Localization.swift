@@ -49,8 +49,10 @@ struct Localized {
 
     // Rail / tiles
     var addWebApp: String { t("Add Web App", "添加网页应用") }
-    var importOpenTabs: String { t("Import Open Tabs…", "导入打开的标签…") }
-    var importTitle: String { t("Import Open Tabs", "导入打开的标签") }
+    var importOpenTabs: String { t("Import Browser Data…", "导入浏览器数据…") }
+    var importTitle: String { t("Import Browser Data", "导入浏览器数据") }
+    var importTabsMode: String { t("Open Tabs", "标签页") }
+    var importCookiesMode: String { t("Chrome Cookies", "Chrome Cookie") }
     var importEmpty: String {
         t("No open tabs found. Make sure Safari, Chrome, or Edge is running, and allow automation access when prompted.",
           "未发现打开的标签。请确认 Safari、Chrome 或 Edge 正在运行，并在提示时允许自动化访问。")
@@ -64,6 +66,38 @@ struct Localized {
     var importRescan: String { t("Rescan", "重新扫描") }
     var importScanning: String { t("Scanning browsers…", "正在扫描浏览器…") }
     var openAutomationSettings: String { t("Open Automation Settings", "打开自动化设置") }
+    var chromeProfile: String { t("Chrome Profile", "Chrome Profile") }
+    var chromeProfilesEmpty: String {
+        t("No Chrome profiles were found. Open Chrome once to create a profile, then try again.",
+          "未发现 Chrome Profile。请先打开一次 Chrome 创建 Profile，然后重试。")
+    }
+    var reloadChromeProfiles: String { t("Reload Profiles", "重新读取 Profile") }
+    var chromeCookieDatabaseMissing: String {
+        t("This profile does not have a cookie database.", "这个 Profile 没有 Cookie 数据库。")
+    }
+    var chromeCookieDatabaseReady: String {
+        t("The cookie database is ready to import.", "Cookie 数据库可以导入。")
+    }
+    var cookiePrivacyHint: String {
+        t("Peekr reads an access-restricted local snapshot and asks macOS for Chrome Safe Storage access. Decrypted values stay in memory and are written only to Peekr's local Chromium profile; the snapshot is deleted and partitioned cookies are skipped.",
+          "Peekr 会读取仅当前用户可访问的本地快照，并向 macOS 请求 Chrome Safe Storage 访问。解密后的值只保留在内存中，并仅写入 Peekr 本机 Chromium Profile；快照随后删除，分区 Cookie 会跳过。")
+    }
+    var importChromeCookies: String { t("Import Cookies", "导入 Cookie") }
+    var importingChromeCookies: String { t("Importing Chrome cookies…", "正在导入 Chrome Cookie…") }
+    var cookieConfirmTitle: String { t("Import Chrome cookies?", "导入 Chrome Cookie？") }
+    func cookieConfirmMessage(_ profile: String) -> String {
+        t("Cookies from “\(profile)” will be copied into Peekr's persistent Chromium profile. macOS may ask for keychain access.",
+          "将把“\(profile)”中的 Cookie 复制到 Peekr 的持久 Chromium Profile。macOS 可能会请求钥匙串访问。")
+    }
+    func cookieImportResult(imported: Int, skipped: Int) -> String {
+        if isChinese {
+            return "已提交 \(imported) 个 Cookie，跳过 \(skipped) 个。刷新已打开的网页后生效。"
+        }
+        return "\(imported) cookies submitted; \(skipped) skipped. Reload open pages to use them."
+    }
+    func cookieImportFailed(_ message: String) -> String {
+        t("Import failed: \(message)", "导入失败：\(message)")
+    }
     var open: String { t("Open", "打开") }
     var edit: String { t("Edit…", "编辑…") }
     var refreshIconAndTitle: String { t("Refresh Icon & Title", "刷新图标和标题") }
@@ -144,12 +178,9 @@ struct Localized {
     // Web engine
     var webEngineSection: String { t("Web Engine", "浏览器内核") }
     var webEngineHint: String {
-        t("Choose how pages render. Chromium is optional and downloads on first use.",
-          "选择网页的渲染内核。Chromium 为可选项，首次选择时下载。")
+        t("Both engines are bundled. Switching recreates open pages. WebKit isolates site data per app; Chromium uses one persistent profile.",
+          "两种内核均已内置。切换时会重建已打开页面。WebKit 按应用隔离站点数据；Chromium 使用一个持久 Profile。")
     }
-    var comingSoon: String { t("Coming soon", "即将支持") }
-    var engineDownloading: String { t("Downloading runtime…", "正在下载运行时…") }
-    var engineDownloaded: String { t("Runtime downloaded", "运行时已下载") }
     func engineName(_ kind: WebEngineKind) -> String {
         switch kind {
         case .system: return t("System · WebKit", "系统内核 · WebKit")
@@ -162,8 +193,8 @@ struct Localized {
             return t("Apple's built-in engine — fast, light, no download.",
                      "Apple 内置引擎——快、轻、无需下载。")
         case .chromium:
-            return t("Chrome's engine for maximum site compatibility. Downloads ~180 MB on first use.",
-                     "Chrome 引擎，最大化站点兼容性。首次使用需下载约 180 MB。")
+            return t("Bundled Chromium via CefSwift/CEF for maximum site compatibility.",
+                     "通过 CefSwift/CEF 内置 Chromium，提供更完整的网站兼容性。")
         }
     }
 

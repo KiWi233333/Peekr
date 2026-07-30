@@ -13,19 +13,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusBar: StatusBarController!
     private var prefs: PreferencesWindowController!
     private var bookmarkSyncTimer: Timer?
+    private var activeWebEngine: WebEngineKind!
+    private var isQuitPending = false
+
+    func applicationWillFinishLaunching(_ notification: Notification) {
+        NSApp.setActivationPolicy(.accessory)
+    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         settings = Settings(store: SettingsStore())
         // The main menu carries the standard editing key equivalents (⌘X/C/V/A/Z)
         // so text fields in the panel and Preferences are actually editable.
-        installMainMenu(strings: settings.strings)
+        installMainMenu(
+            strings: settings.strings,
+            quitTarget: self,
+            quitAction: #selector(requestQuit)
+        )
         model = AppModel(store: AppStore())
         bookmarks = BookmarksModel(store: BookmarkStore())
         icons = IconStore()
         icons.warm(model.apps)
         badges = BadgeStore()
 
-        manager = WebViewManager(model: model, factory: settings.webEngine.makeFactory(), badges: badges, icons: icons)
+        activeWebEngine = settings.webEngine
+        manager = WebViewManager(
+            model: model,
+            factory: activeWebEngine.makeFactory(),
+            badges: badges,
+            icons: icons
+        )
         // Tear down a deleted tab's web engine (stops background media, frees the
         // process) and its badge — the model itself stays web-agnostic.
         model.onRemove = { [weak self] id in self?.manager.discard(id) }
@@ -49,7 +65,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             settings: settings,
             onToggle: { [weak self] in self?.panel.toggle() },
             onTogglePin: { [weak self] in self?.model.isPinned.toggle() },
-            onPreferences: { [weak self] in self?.prefs.show() }
+            onPreferences: { [weak self] in self?.prefs.show() },
+            onQuit: { [weak self] in self?.requestQuit() }
         )
 
         // Keep the login item in sync with the saved preference.
@@ -58,12 +75,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Refresh imported bookmarks once now, then on the chosen interval.
         if settings.bookmarkSync != .off { bookmarks.syncFromBrowsers() }
         applyBookmarkSync()
+
+        #if DEBUG
+        // Deterministic real-CEF smoke hook for local/CI bundles. It is compiled
+        // out of release builds and never changes persisted settings or tabs.
+        if ProcessInfo.processInfo.environment["PEEKR_SMOKE_SHOW_PANEL"] == "1" {
+            if let rawURL = ProcessInfo.processInfo.environment["PEEKR_SMOKE_URL"],
+               var app = model.apps.first {
+                app.urlString = rawURL
+                model.update(app)
+            }
+            panel.show()
+        }
+        if let rawDelay = ProcessInfo.processInfo.environment["PEEKR_SMOKE_QUIT_AFTER"],
+           let delay = Double(rawDelay) {
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(for: .seconds(delay))
+                self?.performConfirmedQuit()
+            }
+        }
+        #endif
     }
 
-    /// Confirm before quitting — ⌘Q is easy to fat-finger while browsing in the
-    /// panel. Every quit path (the ⌘Q menu item, the status-bar item, logout)
-    /// funnels through `terminate(_:)`, so this one hook guards them all.
-    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+    /// Confirm user-driven quit before calling `terminate(_:)`. CefSwift then
+    /// closes every CEF browser and shuts the runtime down before AppKit exits.
+    /// Intercepting here (rather than `applicationShouldTerminate`) is important:
+    /// CefSwift's NSApplication subclass performs CEF teardown before AppKit asks
+    /// its delegate, which would leave a canceled quit with a dead runtime.
+    @objc private func requestQuit() {
         let loc = settings.strings
         let alert = NSAlert()
         alert.alertStyle = .warning
@@ -74,7 +113,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // An .accessory agent isn't frontmost; without activating, the alert
         // opens behind the active app where the user can't see it.
         NSApp.activate(ignoringOtherApps: true)
-        return alert.runModal() == .alertFirstButtonReturn ? .terminateNow : .terminateCancel
+        if alert.runModal() == .alertFirstButtonReturn {
+            performConfirmedQuit()
+        }
+    }
+
+    private func performConfirmedQuit() {
+        guard !isQuitPending else { return }
+        isQuitPending = true
+        manager.closeAll()
+        // CefBrowser's before-close callback releases the browser before its
+        // renderer hosts finish detaching from the BrowserContext. Calling
+        // cef_shutdown synchronously from that callback trips Chromium's
+        // observer/reference assertions. Let CefSwift's external message pump
+        // drain the close notifications before its terminate handler shuts
+        // down the process-wide runtime.
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(500))
+            NSApp.terminate(nil)
+        }
     }
 
     /// (Re)arm the periodic bookmark re-import based on the current setting.
@@ -97,5 +154,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         applyHotKey()
         panel.applyLayout()
         applyBookmarkSync()
+        if activeWebEngine != settings.webEngine {
+            activeWebEngine = settings.webEngine
+            manager.replaceFactory(activeWebEngine.makeFactory())
+        }
     }
 }

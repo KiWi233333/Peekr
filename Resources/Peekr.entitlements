@@ -5,15 +5,10 @@
     <!--
       Entitlements for the main app under the hardened runtime (which
       notarization requires). Sending Apple Events to browsers — the open-tab
-      import feature — needs this entitlement once the hardened runtime is on;
-      without it that feature silently fails. A pure WKWebView app needs nothing
-      else: WebKit's JIT lives inside Apple's own signed framework, so the host
-      carries no allow-jit / allow-unsigned-executable-memory.
-
-      NOTE for the future CEF backend: those JIT relaxations
-      (com.apple.security.cs.allow-jit / allow-unsigned-executable-memory /
-      disable-library-validation) belong on the CEF *Helper* bundles' own
-      entitlements, NOT here — see scripts/bundle.sh's signing block.
+      import feature — needs this entitlement once the hardened runtime is on.
+      Chromium's JIT relaxations are scoped to each CefSwift Helper bundle; the
+      main process does not execute V8 JIT code. The CEF framework is bundled
+      and re-signed with the same identity, so library validation stays enabled.
     -->
     <key>com.apple.security.automation.apple-events</key>
     <true/>

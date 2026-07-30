@@ -4,11 +4,12 @@
 build:
 	swift build
 
-# Run the bare executable (shared web session, fast iteration).
+# CEF requires a real app bundle and helper processes; build a debug bundle.
 dev:
-	swift run
+	./scripts/bundle.sh debug
+	open build/Peekr.app
 
-# Assemble the signed .app bundle (per-app isolated sessions).
+# Assemble the signed release .app with bundled Chromium.
 app:
 	./scripts/bundle.sh release
 

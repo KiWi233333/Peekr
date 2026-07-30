@@ -34,10 +34,6 @@ private struct GeneralTab: View {
     @Bindable var settings: Settings
     var onApply: () -> Void
 
-    /// Drives the lazy Chromium runtime download; its `status` powers the progress
-    /// shown in the engine row. One per Preferences window.
-    @State private var chromium = ChromiumRuntimeDownloader.live()
-
     private var loc: Localized { settings.strings }
     private var defaultSize: NSSize { PanelGeometry.defaultSize(for: NSScreen.main ?? NSScreen.screens[0]) }
 
@@ -122,13 +118,11 @@ private struct GeneralTab: View {
         .formStyle(.grouped)
     }
 
-    /// Radio row for one engine. Unavailable kinds (Chromium, until the native
-    /// shim is bundled) stay visible but disabled with a "coming soon" badge.
-    /// Selecting Chromium kicks off the lazy runtime download when it isn't present.
+    /// Radio row for one bundled engine. Switching is live: the manager closes
+    /// cached pages and recreates them through the new backend factory.
     private func engineRow(_ kind: WebEngineKind) -> some View {
         Button {
             settings.webEngine = kind
-            if kind == .chromium { startChromiumDownloadIfNeeded() }
         } label: {
             HStack(alignment: .top, spacing: 10) {
                 Image(systemName: settings.webEngine == kind ? "largecircle.fill.circle" : "circle")
@@ -137,51 +131,16 @@ private struct GeneralTab: View {
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 6) {
                         Text(loc.engineName(kind)).font(.system(size: 13, weight: .medium))
-                        if !kind.isAvailable {
-                            Text(loc.comingSoon)
-                                .font(.system(size: 10, weight: .semibold))
-                                .padding(.horizontal, 6).padding(.vertical, 1)
-                                .background(.quaternary, in: Capsule())
-                        }
                     }
                     Text(loc.engineDetail(kind))
                         .font(.caption).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
-                    if kind == .chromium { chromiumStatus }
                 }
                 Spacer(minLength: 0)
             }
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .disabled(!kind.isAvailable)
-    }
-
-    /// Live download state for the Chromium row: progress bar while fetching, a
-    /// "downloaded" line when ready, or the failure reason.
-    @ViewBuilder
-    private var chromiumStatus: some View {
-        switch chromium.status {
-        case .downloading(let progress):
-            ProgressView(value: progress) { Text(loc.engineDownloading) }
-                .font(.caption).controlSize(.small).padding(.top, 2)
-        case .installed:
-            Label(loc.engineDownloaded, systemImage: "checkmark.circle.fill")
-                .font(.caption).foregroundStyle(.green)
-        case .failed(let reason):
-            Label(reason, systemImage: "exclamationmark.triangle.fill")
-                .font(.caption).foregroundStyle(.orange)
-        case .notInstalled:
-            EmptyView()
-        }
-    }
-
-    /// Start the download only when the framework isn't already present (bundled or
-    /// previously downloaded) and one isn't already running.
-    private func startChromiumDownloadIfNeeded() {
-        guard CEFRuntime.shared.isSupported, !CEFRuntime.shared.isInstalled else { return }
-        if case .downloading = chromium.status { return }
-        Task { await chromium.downloadFromUpstream() }
     }
 
     private func slider(_ label: String, value: Binding<Double>, range: ClosedRange<Double>, unit: String, decimals: Int = 0) -> some View {
@@ -348,9 +307,8 @@ private struct AppsTab: View {
 private struct AboutTab: View {
     let settings: Settings
 
-    /// The real colored app icon (AppIcon.icns) in `.app` mode; falls back to the
-    /// drawn brand glyph when running the bare executable (`swift run`), which has
-    /// no bundle icon.
+    /// The real colored app icon (AppIcon.icns) in `.app` mode; the fallback
+    /// keeps previews and tests usable when no bundle icon is available.
     private var appIcon: NSImage {
         let icon = NSApplication.shared.applicationIconImage
         if let icon, icon.isValid, icon.size.width > 0 { return icon }

@@ -14,7 +14,7 @@ import AppKit
 /// The items target the first responder (`nil`), so the same menu serves the
 /// panel, the Preferences window, and any future window uniformly.
 @MainActor
-func installMainMenu(strings: Localized) {
+func installMainMenu(strings: Localized, quitTarget: AnyObject, quitAction: Selector) {
     let mainMenu = NSMenu()
 
     // The first submenu is treated as the application menu by convention.
@@ -22,11 +22,12 @@ func installMainMenu(strings: Localized) {
     mainMenu.addItem(appItem)
     let appMenu = NSMenu()
     appItem.submenu = appMenu
-    appMenu.addItem(
+    let quitItem = appMenu.addItem(
         withTitle: strings.quit,
-        action: #selector(NSApplication.terminate(_:)),
+        action: quitAction,
         keyEquivalent: "q"
     )
+    quitItem.target = quitTarget
 
     // Edit menu — the reason this menu exists.
     let editItem = NSMenuItem()

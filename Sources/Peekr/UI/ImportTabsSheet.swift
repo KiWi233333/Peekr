@@ -1,19 +1,30 @@
 import SwiftUI
 
-/// Lists the tabs currently open in the user's running browsers and lets the
-/// user pick which to add as Peekr web apps. Scanning is an explicit button
-/// press (not on-appear) so the system Automation consent prompt fires in a
-/// clean user-gesture context.
+/// Imports open tabs or Chrome cookies through one explicit, user-driven entry.
+/// Browser access never happens on appearance: Apple Events and keychain access
+/// are only requested after the corresponding import button is pressed.
 struct ImportTabsSheet: View {
+    private enum ImportMode: Hashable {
+        case tabs
+        case cookies
+    }
+
     let model: AppModel
     let settings: Settings
     let icons: IconStore
     var onClose: () -> Void
 
+    @State private var mode: ImportMode = .tabs
     @State private var tabs: [ImportedTab] = []
     @State private var selected: Set<ImportedTab.ID> = []
     @State private var scanned = false
     @State private var scanning = false
+    @State private var profiles: [ChromeProfile] = []
+    @State private var selectedProfileID = ""
+    @State private var cookieImporting = false
+    @State private var cookieMessage: String?
+    @State private var cookieImportSucceeded = false
+    @State private var showCookieConfirmation = false
 
     private var loc: Localized { settings.strings }
 
@@ -22,21 +33,34 @@ struct ImportTabsSheet: View {
             Text(loc.importTitle)
                 .font(.system(size: 17, weight: .bold, design: .rounded))
 
-            if scanning {
-                scanningState
-            } else if !scanned {
-                scanPrompt
-            } else if tabs.isEmpty {
-                emptyState
-            } else {
-                tabList
+            Picker("", selection: $mode) {
+                Text(loc.importTabsMode).tag(ImportMode.tabs)
+                Text(loc.importCookiesMode).tag(ImportMode.cookies)
+            }
+            .pickerStyle(.segmented)
+
+            Group {
+                switch mode {
+                case .tabs:
+                    if scanning {
+                        scanningState
+                    } else if !scanned {
+                        scanPrompt
+                    } else if tabs.isEmpty {
+                        emptyState
+                    } else {
+                        tabList
+                    }
+                case .cookies:
+                    cookieImportPane
+                }
             }
 
             HStack {
                 Button(loc.cancel, role: .cancel) { onClose() }
                     .keyboardShortcut(.cancelAction)
                 Spacer()
-                if scanned && !tabs.isEmpty {
+                if mode == .tabs, scanned, !tabs.isEmpty {
                     Button(loc.selectAll) { toggleAll() }
                         .controlSize(.small)
                     Button(loc.importAdd(selected.count)) { addSelected() }
@@ -44,11 +68,29 @@ struct ImportTabsSheet: View {
                         .buttonStyle(.borderedProminent)
                         .tint(.primary)
                         .disabled(selected.isEmpty)
+                } else if mode == .cookies {
+                    Button(loc.importChromeCookies) {
+                        showCookieConfirmation = true
+                    }
+                    .keyboardShortcut(.defaultAction)
+                    .buttonStyle(.borderedProminent)
+                    .tint(.primary)
+                    .disabled(
+                        cookieImporting
+                        || selectedProfile?.cookieDatabaseURL == nil
+                    )
                 }
             }
         }
         .padding(22)
-        .frame(width: 460, height: 460)
+        .frame(width: 480, height: 500)
+        .onAppear { reloadProfiles() }
+        .alert(loc.cookieConfirmTitle, isPresented: $showCookieConfirmation) {
+            Button(loc.cancel, role: .cancel) {}
+            Button(loc.importChromeCookies) { importCookies() }
+        } message: {
+            Text(loc.cookieConfirmMessage(selectedProfile?.name ?? "Chrome"))
+        }
     }
 
     private var scanPrompt: some View {
@@ -104,6 +146,75 @@ struct ImportTabsSheet: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
+    private var cookieImportPane: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            if profiles.isEmpty {
+                VStack(spacing: 10) {
+                    Image(systemName: "person.crop.circle.badge.exclamationmark")
+                        .font(.system(size: 30, weight: .light))
+                        .foregroundStyle(.tertiary)
+                    Text(loc.chromeProfilesEmpty)
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                    Button(loc.reloadChromeProfiles) { reloadProfiles() }
+                        .controlSize(.small)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                GroupBox {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Picker(loc.chromeProfile, selection: $selectedProfileID) {
+                            ForEach(profiles) { profile in
+                                Text("\(profile.name) — \(profile.id)")
+                                    .tag(profile.id)
+                            }
+                        }
+
+                        if selectedProfile?.cookieDatabaseURL == nil {
+                            Label(loc.chromeCookieDatabaseMissing, systemImage: "exclamationmark.triangle")
+                                .foregroundStyle(.orange)
+                        } else {
+                            Label(loc.chromeCookieDatabaseReady, systemImage: "checkmark.circle")
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .font(.callout)
+                    .padding(4)
+                } label: {
+                    Label(loc.chromeProfile, systemImage: "person.crop.circle")
+                }
+
+                Label(loc.cookiePrivacyHint, systemImage: "lock.shield")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                if cookieImporting {
+                    HStack(spacing: 10) {
+                        ProgressView().controlSize(.small)
+                        Text(loc.importingChromeCookies)
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                    }
+                } else if let cookieMessage {
+                    Label(
+                        cookieMessage,
+                        systemImage: cookieImportSucceeded
+                            ? "checkmark.circle.fill"
+                            : "exclamationmark.triangle.fill"
+                    )
+                    .font(.callout)
+                    .foregroundStyle(cookieImportSucceeded ? .green : .red)
+                    .fixedSize(horizontal: false, vertical: true)
+                }
+
+                Spacer()
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
     private func row(_ tab: ImportedTab) -> some View {
         Button { toggle(tab.id) } label: {
             HStack(spacing: 10) {
@@ -129,6 +240,10 @@ struct ImportTabsSheet: View {
         return seen
     }
 
+    private var selectedProfile: ChromeProfile? {
+        profiles.first { $0.id == selectedProfileID }
+    }
+
     private func scan() {
         scanning = true
         Task {
@@ -145,6 +260,38 @@ struct ImportTabsSheet: View {
     private func openAutomationSettings() {
         guard let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Automation") else { return }
         NSWorkspace.shared.open(url)
+    }
+
+    private func reloadProfiles() {
+        profiles = ChromeCookieImporter.discoverProfiles()
+        if !profiles.contains(where: { $0.id == selectedProfileID }) {
+            selectedProfileID = profiles.first?.id ?? ""
+        }
+        cookieMessage = nil
+    }
+
+    private func importCookies() {
+        guard let profile = selectedProfile else { return }
+        cookieImporting = true
+        cookieMessage = nil
+        cookieImportSucceeded = false
+
+        Task {
+            do {
+                let source = try await Task.detached(priority: .userInitiated) {
+                    try ChromeCookieImporter.readCookies(from: profile)
+                }.value
+                let result = try CEFCookieWriter.write(source)
+                cookieMessage = loc.cookieImportResult(
+                    imported: result.imported,
+                    skipped: result.skipped
+                )
+                cookieImportSucceeded = true
+            } catch {
+                cookieMessage = loc.cookieImportFailed(error.localizedDescription)
+            }
+            cookieImporting = false
+        }
     }
 
     private func toggle(_ id: ImportedTab.ID) {

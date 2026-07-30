@@ -46,8 +46,8 @@ Most "slide-over browser" tools are Electron wrappers that eat hundreds of MB an
 | **Browser shortcuts** | `⌘L` focus omnibox, `⌘R` reload, `⌘[` / `⌘]` back/forward, `⌘W` close, `⌘1`–`⌘9` switch apps, `Esc` hide. |
 | **Per-app navigation bar** | Glass omnibox with back / forward / reload-stop, a load-or-search address field, progress, and open-in-Safari. |
 | **Icon dock** | Real favicons (auto-fetched + cached) with monogram fallback; drag to reorder; right-click to Edit / Reload / Delete; set a **custom icon**. |
-| **Bookmarks & tab import** | Import bookmarks straight from Chrome / Edge / Brave / Safari, or pull your currently-open browser tabs in as Peekr apps. |
-| **Isolated, persistent sessions** | Each app gets its own `WKWebsiteDataStore`; web views stay alive across show/hide. |
+| **Browser data import** | In Preferences → Apps → **Import Browser Data…**, pull open tabs in as Peekr apps or copy a selected Chrome Profile's cookies into Peekr's Chromium profile. The temporary database snapshot is access-restricted and deleted after import; decrypted values stay local and in memory, and unsupported partitioned cookies are skipped. |
+| **Persistent sessions** | WebKit keeps a separate `WKWebsiteDataStore` per app; Chromium uses one persistent shared profile so imported Chrome sessions work across Peekr apps. |
 | **Multi-display** | Follows the cursor's screen and remembers the last one. |
 | **Pin & auto-hide** | Keep it open, or let it slide away when you leave. |
 | **Bilingual** | English / 简体中文, auto-following the system language. |
@@ -69,15 +69,19 @@ Requires **Xcode 26** for real Liquid Glass (builds and runs below it with the m
 git clone https://github.com/KiWi233333/Peekr.git
 cd Peekr
 
-make run     # build the .app bundle and launch it (isolated sessions)
-make dev     # swift run — fast iteration, shared session
+make run     # build the release .app (WebKit + bundled Chromium) and launch it
+make dev     # build and launch a debug .app
 make app     # just build build/Peekr.app
 make build   # swift build — quick compile check
 make clean
 ```
 
 > [!NOTE]
-> **`make run` vs `make dev`** — only the `.app` bundle (`make run`) gives **per-app isolated, persistent** web sessions and a working "launch at login". `swift run` uses a single shared session. Always verify session-isolation features with `make run`.
+> Chromium requires CefSwift's framework and five helper bundles, so Peekr no
+> longer runs as a bare `swift run` executable. Both commands create a real
+> `.app`; the first run downloads the build-time CEF artifact into `.cef/`, then
+> every produced app contains the pinned runtime. WebKit keeps per-app data
+> stores; Chromium currently uses CefSwift's single persistent global profile.
 
 ### Usage
 
@@ -91,11 +95,12 @@ Peekr has no DI framework — everything is wired by hand in `AppDelegate.applic
 
 ```
 Sources/Peekr/
-  App/          main, AppDelegate, AppModel, BookmarksModel, MainMenu
+  App/          PeekrApp (CefSwift bootstrap), AppDelegate, AppModel,
+                BookmarksModel, MainMenu
   Model/        WebApp, Workspace, BookmarkNode, Settings, PanelAnchor, HotKeyConfig
   Store/        AppStore, SettingsStore, BookmarkStore (JSON persistence)
-  Web/          WebViewManager (cached/isolated WebViews + KVO), BrowserState,
-                BookmarkImporter, OpenTabsImporter, OmniboxSuggestion
+  Web/          WebEngine, WebKitEngine, CefSwiftEngine, WebViewManager,
+                BrowserState, BookmarkImporter, OpenTabsImporter
   Panel/        SlidePanel, PanelController, PanelGeometry, EdgeTrigger
   UI/           PanelRootView, AppRail, NavigationBar, EditAppSheet,
                 BookmarkSheet, ImportTabsSheet

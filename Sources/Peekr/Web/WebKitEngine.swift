@@ -246,7 +246,7 @@ struct WebKitEngineFactory: WebEngineFactory {
     }
 
     /// Per-app persistent isolation needs a bundle identifier; fall back to the
-    /// shared store when running the bare executable via `swift run`.
+    /// shared store for previews and tests that do not run from the app bundle.
     private static func makeDataStore(for id: UUID) -> WKWebsiteDataStore {
         Bundle.main.bundleIdentifier != nil
             ? WKWebsiteDataStore(forIdentifier: id)

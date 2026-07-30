@@ -9,6 +9,7 @@ final class StatusBarController: NSObject {
     private let onToggle: () -> Void
     private let onTogglePin: () -> Void
     private let onPreferences: () -> Void
+    private let onQuit: () -> Void
 
     private var toggleItem: NSMenuItem!
     private var pinItem: NSMenuItem!
@@ -20,13 +21,15 @@ final class StatusBarController: NSObject {
         settings: Settings,
         onToggle: @escaping () -> Void,
         onTogglePin: @escaping () -> Void,
-        onPreferences: @escaping () -> Void
+        onPreferences: @escaping () -> Void,
+        onQuit: @escaping () -> Void
     ) {
         self.model = model
         self.settings = settings
         self.onToggle = onToggle
         self.onTogglePin = onTogglePin
         self.onPreferences = onPreferences
+        self.onQuit = onQuit
         item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         super.init()
 
@@ -56,7 +59,7 @@ final class StatusBarController: NSObject {
     @objc private func toggleAction() { onToggle() }
     @objc private func pinAction() { onTogglePin() }
     @objc private func prefsAction() { onPreferences() }
-    @objc private func quitAction() { NSApp.terminate(nil) }
+    @objc private func quitAction() { onQuit() }
 }
 
 extension StatusBarController: NSMenuDelegate {

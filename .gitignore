@@ -1,4 +1,5 @@
 .build/
+.cef/
 build/
 dist/
 .swiftpm/

@@ -46,8 +46,8 @@
 | **浏览器快捷键** | `⌘L` 聚焦地址栏、`⌘R` 刷新、`⌘[` / `⌘]` 前进后退、`⌘W` 关闭、`⌘1`–`⌘9` 切换应用、`Esc` 隐藏。 |
 | **每应用导航栏** | 玻璃地址栏：前进 / 后退 / 刷新-停止、可加载或搜索的地址输入框、进度条、在 Safari 中打开。 |
 | **图标 dock** | 真实 favicon（自动抓取并缓存），无则回退为字母图标；拖拽排序；右键 编辑 / 重载 / 删除；可设置**自定义图标**。 |
-| **书签与标签导入** | 直接从 Chrome / Edge / Brave / Safari 导入书签，或把当前打开的浏览器标签导入为 Peekr 应用。 |
-| **隔离且持久的会话** | 每个应用拥有独立 `WKWebsiteDataStore`；WebView 跨显隐保活。 |
+| **浏览器数据导入** | 在「偏好设置 → 应用 → 导入浏览器数据…」中，把当前标签页导入为 Peekr 应用，或把指定 Chrome Profile 的 Cookie 复制到 Peekr Chromium Profile。临时数据库快照仅当前用户可访问并在导入后删除；解密值只在本机内存中处理，不支持的分区 Cookie 会跳过。 |
+| **持久会话** | WebKit 为每个应用保留独立 `WKWebsiteDataStore`；Chromium 使用一个持久共享 Profile，让导入的 Chrome 登录态可供 Peekr 应用使用。 |
 | **多显示器** | 跟随光标所在屏幕，并记住最后一块屏。 |
 | **固定与自动隐藏** | 可固定常开，也可在离开时自动滑走。 |
 | **双语** | 中英文，跟随系统语言自动切换。 |
@@ -69,15 +69,19 @@
 git clone https://github.com/KiWi233333/Peekr.git
 cd Peekr
 
-make run     # 构建 .app 并启动（会话隔离）
-make dev     # swift run —— 快速迭代，共享会话
-make app     # 仅构建 build/Peekr.app
+make run     # 构建并启动 Release .app（WebKit + 内置 Chromium）
+make dev     # 构建并启动 Debug .app
+make app     # 仅构建 Release build/Peekr.app
 make build   # swift build —— 快速编译检查
 make clean
 ```
 
 > [!NOTE]
-> **`make run` 与 `make dev` 的区别** —— 只有 `.app` 模式（`make run`）才提供**每应用隔离、持久**的网页会话以及可用的「开机自启」。`swift run` 用的是单一共享会话。验证会话隔离类特性时请务必用 `make run`。
+> Chromium 依赖 CefSwift Framework 和五个 Helper Bundle，因此 Peekr
+> 不再支持用裸 `swift run` 启动。`make dev` 和 `make run` 都会生成完整
+> `.app`；首次构建会把固定版本的 CEF 构建依赖下载到 `.cef/`，产物自身
+> 则完整内置运行时。WebKit 按应用隔离数据；Chromium 当前使用 CefSwift
+> 提供的单一持久全局 Profile。
 
 ### 使用
 
@@ -91,11 +95,12 @@ Peekr 没有依赖注入框架——所有对象都在 `AppDelegate.applicationD
 
 ```
 Sources/Peekr/
-  App/          main、AppDelegate、AppModel、BookmarksModel、MainMenu
+  App/          PeekrApp（CefSwift 启动入口）、AppDelegate、AppModel、
+                BookmarksModel、MainMenu
   Model/        WebApp、Workspace、BookmarkNode、Settings、PanelAnchor、HotKeyConfig
   Store/        AppStore、SettingsStore、BookmarkStore（JSON 持久化）
-  Web/          WebViewManager（缓存/隔离的 WebView + KVO）、BrowserState、
-                BookmarkImporter、OpenTabsImporter、OmniboxSuggestion
+  Web/          WebEngine、WebKitEngine、CefSwiftEngine、WebViewManager、
+                BrowserState、BookmarkImporter、OpenTabsImporter
   Panel/        SlidePanel、PanelController、PanelGeometry、EdgeTrigger
   UI/           PanelRootView、AppRail、NavigationBar、EditAppSheet、
                 BookmarkSheet、ImportTabsSheet
