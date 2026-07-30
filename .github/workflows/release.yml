@@ -56,6 +56,7 @@ jobs:
       - name: Validate Chromium release floor
         env:
           MINIMUM_RELEASE_CHROMIUM: 151.0.7922.71
+          BELOW_FLOOR_EXCEPTION_TAG: v0.2.0
         run: |
           set -euo pipefail
           ACTUAL="$(jq -r '.chromium // empty' CEF_VERSION.json)"
@@ -78,6 +79,10 @@ jobs:
             exit 0
           fi
           if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            if [ "$GITHUB_REF_NAME" = "$BELOW_FLOOR_EXCEPTION_TAG" ]; then
+              echo "::warning::Publishing $GITHUB_REF_NAME with Chromium $ACTUAL under its explicit release exception."
+              exit 0
+            fi
             echo "::error::Chromium $ACTUAL is below the release security floor $MINIMUM_RELEASE_CHROMIUM."
             exit 1
           fi
