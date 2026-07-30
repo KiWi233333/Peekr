@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Native menu-bar controls for showing or hiding Peekr, keeping the panel open,
+  choosing its auto-hide policy, and opening Chrome cookie or bookmark import.
+- Chrome bookmark import can select any discovered Chrome profile and refreshes
+  that profile's existing imported folder instead of creating duplicates.
+
+### Changed
+- Preferences are reorganized into General, Browser, Apps, and About tabs, with
+  confirmation before switching browser engines and targeted setting updates.
+- Chromium packaging now keeps only the English, Simplified Chinese, and
+  Traditional Chinese locale resources, and selects the matching runtime locale.
+- DMG compression has been tuned to reduce the download size.
+
+### Fixed
+- The About tab now reads the packaged app version instead of showing a
+  hard-coded future version.
+
 ## [0.2.0]
 
 ### Added
