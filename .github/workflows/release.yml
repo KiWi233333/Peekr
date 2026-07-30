@@ -1,9 +1,16 @@
 name: Release
 
-# Triggered by pushing a semver tag, e.g.:
+# A manual run builds and uploads artifacts without creating a GitHub Release.
+# Pushing a semver tag publishes, e.g.:
 #   git tag v0.3.0 && git push origin v0.3.0
 # Tag the commit on `main` you want to ship.
 on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Artifact version for this non-publishing validation run
+        required: true
+        default: 0.0.0-ci
   push:
     tags:
       - "v*"
@@ -35,18 +42,54 @@ jobs:
       - name: Resolve version
         id: meta
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+          else
+            VERSION="${{ inputs.version }}"
+          fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "dmg=Peekr-$VERSION.dmg" >> "$GITHUB_OUTPUT"
 
       - name: Show toolchain
         run: swift --version && xcodebuild -version
 
+      - name: Validate Chromium release floor
+        env:
+          MINIMUM_RELEASE_CHROMIUM: 151.0.7922.71
+        run: |
+          set -euo pipefail
+          ACTUAL="$(jq -r '.chromium // empty' CEF_VERSION.json)"
+          if [ -z "$ACTUAL" ]; then
+            echo "::error::CEF_VERSION.json has no Chromium version."
+            exit 1
+          fi
+          echo "Pinned Chromium: $ACTUAL"
+          if awk -v actual="$ACTUAL" -v floor="$MINIMUM_RELEASE_CHROMIUM" '
+            BEGIN {
+              split(actual, a, ".")
+              split(floor, f, ".")
+              for (i = 1; i <= 4; i++) {
+                if ((a[i] + 0) > (f[i] + 0)) exit 0
+                if ((a[i] + 0) < (f[i] + 0)) exit 1
+              }
+              exit 0
+            }
+          '; then
+            exit 0
+          fi
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            echo "::error::Chromium $ACTUAL is below the release security floor $MINIMUM_RELEASE_CHROMIUM."
+            exit 1
+          fi
+          echo "::warning::Chromium $ACTUAL is below the publishing floor; this validation run will not publish."
+
       - name: Cache SwiftPM
         uses: actions/cache@v4
         with:
-          path: .build
-          key: ${{ runner.os }}-spm-${{ hashFiles('Package.swift') }}
+          path: |
+            .build
+            .cef
+          key: ${{ runner.os }}-spm-cef-${{ hashFiles('Package.swift', 'Package.resolved') }}
           restore-keys: ${{ runner.os }}-spm-
 
       # Basic CI gate — fail the release if it doesn't compile.
@@ -61,10 +104,11 @@ jobs:
         env:
           MACOS_CERTIFICATE_P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
           MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          MACOS_SIGN_IDENTITY: ${{ vars.MACOS_SIGN_IDENTITY }}
         run: |
           set -euo pipefail
           if [ -z "${MACOS_CERTIFICATE_P12:-}" ]; then
-            echo "No MACOS_CERTIFICATE_P12 secret — release stays ad-hoc & un-notarized (current behavior)."
+            echo "No MACOS_CERTIFICATE_P12 secret — forcing an ad-hoc, un-notarized release."
             echo "identity=" >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -79,32 +123,35 @@ jobs:
           # Keep the temp keychain searchable alongside the runner defaults.
           security list-keychains -d user -s "$KEYCHAIN" $(security list-keychains -d user | tr -d '"')
           rm -f "$RUNNER_TEMP/cert.p12"
-          # `|| true`: grep exits 1 when the cert isn't a Developer ID Application
-          # one (e.g. an Apple Development cert); under `pipefail` that would abort
-          # the whole step instead of falling through to the ad-hoc path.
-          IDENTITY="$(security find-identity -v -p codesigning "$KEYCHAIN" \
-            | grep -oE '"Developer ID Application[^"]*"' | head -1 | tr -d '"' || true)"
-          echo "Signing identity: ${IDENTITY:-<none found in cert>}"
+          AVAILABLE="$(security find-identity -v -p codesigning "$KEYCHAIN")"
+          if [ -n "${MACOS_SIGN_IDENTITY:-}" ]; then
+            if ! printf '%s\n' "$AVAILABLE" | grep -Fq "\"$MACOS_SIGN_IDENTITY\""; then
+              echo "::error::MACOS_SIGN_IDENTITY is not present in MACOS_CERTIFICATE_P12."
+              exit 1
+            fi
+            IDENTITY="$MACOS_SIGN_IDENTITY"
+          else
+            IDENTITY="$(printf '%s\n' "$AVAILABLE" \
+              | grep -oE '"Developer ID Application[^"]*"' | head -1 | tr -d '"' || true)"
+          fi
+          if [ -z "$IDENTITY" ]; then
+            echo "::error::MACOS_CERTIFICATE_P12 is configured but contains no Developer ID Application identity."
+            exit 1
+          fi
+          echo "Signing identity: $IDENTITY"
           echo "identity=$IDENTITY" >> "$GITHUB_OUTPUT"
 
-      # Assemble the .app bundle. PEEKR_HARDENED takes effect only when an identity
-      # was imported above; with none, bundle.sh falls back to ad-hoc (PEEKR_HARDENED
-      # is ignored), so the no-secret path is unchanged.
+      # CefSwift downloads the pinned CEF distribution, builds its helper, and
+      # assembles the full Chromium bundle. Peekr then re-signs every nested code
+      # object with the hardened runtime when an identity is available.
       - name: Bundle .app
         env:
           PEEKR_SIGN_IDENTITY: ${{ steps.signing.outputs.identity }}
           PEEKR_HARDENED: "1"
         run: ./scripts/bundle.sh release
 
-      # Notarize + staple the .app BEFORE it is frozen into the DMG/zip, so EVERY
-      # distributed copy (drag-installed from the DMG and unzipped) carries an
-      # embedded ticket and validates under OFFLINE Gatekeeper. (Stapling only the
-      # standalone build/Peekr.app after the DMG is built leaves the DMG's inner
-      # copy un-stapled.) Gated on BOTH notary creds AND a signing identity: a bare
-      # ad-hoc app can't be notarized, so without an identity this stays a clean
-      # no-op (ad-hoc/un-notarized — current behavior) instead of failing the
-      # submission.
-      - name: Notarize & staple .app
+      - name: Set up notarization credentials
+        id: notary
         env:
           AC_API_KEY_ID: ${{ secrets.AC_API_KEY_ID }}
           AC_API_ISSUER_ID: ${{ secrets.AC_API_ISSUER_ID }}
@@ -112,13 +159,42 @@ jobs:
           SIGN_IDENTITY: ${{ steps.signing.outputs.identity }}
         run: |
           set -euo pipefail
-          if [ -z "${AC_API_KEY_BASE64:-}" ] || [ -z "${SIGN_IDENTITY:-}" ]; then
-            echo "No notary credentials or no signing identity — app stays ad-hoc & un-notarized (current behavior)."
+          if [ -z "${AC_API_KEY_ID:-}" ] \
+             && [ -z "${AC_API_ISSUER_ID:-}" ] \
+             && [ -z "${AC_API_KEY_BASE64:-}" ]; then
+            echo "No notary credentials — skipping notarization."
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          printf '%s' "$AC_API_KEY_BASE64" | base64 --decode > "$RUNNER_TEMP/ac_api_key.p8"
-          trap 'rm -f "$RUNNER_TEMP/ac_api_key.p8"' EXIT
-          export AC_API_KEY_PATH="$RUNNER_TEMP/ac_api_key.p8"
+          if [ -z "${AC_API_KEY_ID:-}" ] \
+             || [ -z "${AC_API_ISSUER_ID:-}" ] \
+             || [ -z "${AC_API_KEY_BASE64:-}" ]; then
+            echo "::error::Notarization is partially configured. Set AC_API_KEY_ID, AC_API_ISSUER_ID and AC_API_KEY_BASE64 together."
+            exit 1
+          fi
+          if [ -z "${SIGN_IDENTITY:-}" ]; then
+            echo "::error::Notarization credentials require a Developer ID signing certificate."
+            exit 1
+          fi
+          KEY_PATH="$RUNNER_TEMP/ac_api_key.p8"
+          printf '%s' "$AC_API_KEY_BASE64" | base64 --decode > "$KEY_PATH"
+          chmod 600 "$KEY_PATH"
+          echo "enabled=true" >> "$GITHUB_OUTPUT"
+          echo "key_path=$KEY_PATH" >> "$GITHUB_OUTPUT"
+
+      # Notarize + staple the .app BEFORE it is frozen into the DMG/zip, so EVERY
+      # distributed copy (drag-installed from the DMG and unzipped) carries an
+      # embedded ticket and validates under OFFLINE Gatekeeper. (Stapling only the
+      # standalone build/Peekr.app after the DMG is built leaves the DMG's inner
+      # copy un-stapled.)
+      - name: Notarize & staple .app
+        if: steps.notary.outputs.enabled == 'true'
+        env:
+          AC_API_KEY_ID: ${{ secrets.AC_API_KEY_ID }}
+          AC_API_ISSUER_ID: ${{ secrets.AC_API_ISSUER_ID }}
+          AC_API_KEY_PATH: ${{ steps.notary.outputs.key_path }}
+        run: |
+          set -euo pipefail
           ./scripts/notarize.sh build/Peekr.app
 
       - name: Create DMG
@@ -133,24 +209,27 @@ jobs:
           ditto -c -k --keepParent build/Peekr.app "dist/Peekr-${{ steps.meta.outputs.version }}.app.zip"
           ls -la dist
 
-      # Notarize + staple the DMG container itself, so the .dmg also passes offline
-      # Gatekeeper on mount. The .app inside it was already stapled above. Same
-      # gating; a clean no-op without credentials/identity.
-      - name: Notarize & staple DMG
+      - name: Sign DMG
+        if: steps.signing.outputs.identity != ''
         env:
-          AC_API_KEY_ID: ${{ secrets.AC_API_KEY_ID }}
-          AC_API_ISSUER_ID: ${{ secrets.AC_API_ISSUER_ID }}
-          AC_API_KEY_BASE64: ${{ secrets.AC_API_KEY_BASE64 }}
           SIGN_IDENTITY: ${{ steps.signing.outputs.identity }}
         run: |
           set -euo pipefail
-          if [ -z "${AC_API_KEY_BASE64:-}" ] || [ -z "${SIGN_IDENTITY:-}" ]; then
-            echo "No notary credentials or no signing identity — DMG stays ad-hoc & un-notarized (current behavior)."
-            exit 0
-          fi
-          printf '%s' "$AC_API_KEY_BASE64" | base64 --decode > "$RUNNER_TEMP/ac_api_key.p8"
-          trap 'rm -f "$RUNNER_TEMP/ac_api_key.p8"' EXIT
-          export AC_API_KEY_PATH="$RUNNER_TEMP/ac_api_key.p8"
+          codesign --force --sign "$SIGN_IDENTITY" --timestamp \
+            "dist/${{ steps.meta.outputs.dmg }}"
+          codesign --verify --strict --verbose=2 \
+            "dist/${{ steps.meta.outputs.dmg }}"
+
+      # Notarize + staple the DMG container itself, so the .dmg also passes offline
+      # Gatekeeper on mount. The .app inside it was already stapled above.
+      - name: Notarize & staple DMG
+        if: steps.notary.outputs.enabled == 'true'
+        env:
+          AC_API_KEY_ID: ${{ secrets.AC_API_KEY_ID }}
+          AC_API_ISSUER_ID: ${{ secrets.AC_API_ISSUER_ID }}
+          AC_API_KEY_PATH: ${{ steps.notary.outputs.key_path }}
+        run: |
+          set -euo pipefail
           ./scripts/notarize.sh "dist/${{ steps.meta.outputs.dmg }}"
 
       # Upload only the real outputs. `dist/stage/` holds an `Applications`
@@ -166,6 +245,7 @@ jobs:
             dist/*.app.zip
 
       - name: Create GitHub Release
+        if: github.ref_type == 'tag'
         uses: softprops/action-gh-release@v2
         with:
           name: Peekr ${{ steps.meta.outputs.version }}
@@ -177,6 +257,10 @@ jobs:
             dist/${{ steps.meta.outputs.dmg }}
             dist/Peekr-${{ steps.meta.outputs.version }}.app.zip
 
+      - name: Remove temporary signing material
+        if: always()
+        run: rm -f "$RUNNER_TEMP/cert.p12" "$RUNNER_TEMP/ac_api_key.p8"
+
   # Optional Lark / Feishu notification.
   # Configure repo secrets to enable (the job is a no-op when LARK_WEBHOOK_URL is unset):
   #   LARK_WEBHOOK_URL     — required. Your custom-bot webhook URL.
@@ -184,7 +268,7 @@ jobs:
   notify:
     name: Notify Lark
     needs: build
-    if: always()
+    if: always() && github.ref_type == 'tag'
     runs-on: ubuntu-latest
     steps:
       - name: Send Lark card
