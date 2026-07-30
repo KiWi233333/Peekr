@@ -1,17 +1,36 @@
 import SwiftUI
 
+enum PreferenceEffect {
+    case layout
+    case hotKey
+    case launchAtLogin
+    case language
+    case bookmarkSync
+    case webEngine
+}
+
 struct PreferencesView: View {
     let model: AppModel
     @Bindable var settings: Settings
     let icons: IconStore
-    var onApply: () -> Void
+    var onApply: (PreferenceEffect) -> Void
+    var onImportCookies: () -> Void
+    var onImportBookmarks: () -> Void
+
+    @State private var persistTask: Task<Void, Never>?
 
     private var loc: Localized { settings.strings }
 
     var body: some View {
         TabView {
-            GeneralTab(settings: settings, onApply: onApply)
+            GeneralTab(settings: settings)
                 .tabItem { Label(loc.general, systemImage: "gearshape") }
+            BrowserTab(
+                settings: settings,
+                onImportCookies: onImportCookies,
+                onImportBookmarks: onImportBookmarks
+            )
+            .tabItem { Label(loc.browser, systemImage: "globe") }
             AppsTab(model: model, settings: settings, icons: icons)
                 .tabItem { Label(loc.apps, systemImage: "square.grid.2x2") }
             AboutTab(settings: settings)
@@ -19,11 +38,30 @@ struct PreferencesView: View {
         }
         .frame(width: 500, height: 560)
         .onChange(of: settings.snapshot) { _, _ in
-            settings.persist()
-            onApply()
+            schedulePersist()
         }
-        .onChange(of: settings.launchAtLogin) { _, enabled in
-            LaunchAtLogin.set(enabled)
+        .onChange(of: settings.anchor) { _, _ in onApply(.layout) }
+        .onChange(of: settings.panelWidth) { _, _ in onApply(.layout) }
+        .onChange(of: settings.panelHeight) { _, _ in onApply(.layout) }
+        .onChange(of: settings.hotKey) { _, _ in onApply(.hotKey) }
+        .onChange(of: settings.launchAtLogin) { _, _ in
+            onApply(.launchAtLogin)
+        }
+        .onChange(of: settings.language) { _, _ in onApply(.language) }
+        .onChange(of: settings.bookmarkSync) { _, _ in onApply(.bookmarkSync) }
+        .onChange(of: settings.webEngine) { _, _ in onApply(.webEngine) }
+        .onDisappear {
+            persistTask?.cancel()
+            settings.persist()
+        }
+    }
+
+    private func schedulePersist() {
+        persistTask?.cancel()
+        persistTask = Task {
+            try? await Task.sleep(for: .milliseconds(150))
+            guard !Task.isCancelled else { return }
+            settings.persist()
         }
     }
 }
@@ -32,7 +70,6 @@ struct PreferencesView: View {
 
 private struct GeneralTab: View {
     @Bindable var settings: Settings
-    var onApply: () -> Void
 
     private var loc: Localized { settings.strings }
     private var defaultSize: NSSize { PanelGeometry.defaultSize(for: NSScreen.main ?? NSScreen.screens[0]) }
@@ -45,6 +82,12 @@ private struct GeneralTab: View {
         Binding(get: { settings.panelHeight > 0 ? settings.panelHeight : Double(defaultSize.height) },
                 set: { settings.panelHeight = $0 })
     }
+    private var autoHideBinding: Binding<AutoHidePolicy> {
+        Binding(
+            get: { settings.autoHidePolicy },
+            set: { settings.autoHidePolicy = $0 }
+        )
+    }
 
     var body: some View {
         Form {
@@ -52,8 +95,8 @@ private struct GeneralTab: View {
                 HStack(alignment: .top, spacing: 20) {
                     AnchorGrid(selection: $settings.anchor)
                     VStack(alignment: .leading, spacing: 4) {
-                        Text(settings.anchor.label)
-                            .font(.system(size: 13, weight: .semibold, design: .rounded))
+                        Text(loc.anchorName(settings.anchor))
+                            .font(.system(size: 13, weight: .semibold))
                         Text(loc.dockingHint)
                             .font(.caption).foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
@@ -77,30 +120,22 @@ private struct GeneralTab: View {
                     .controlSize(.small)
                 }
                 slider(loc.hoverDelay, value: $settings.hoverDelay, range: 0...0.6, unit: "s", decimals: 2)
-                slider(loc.edgeSensitivity, value: $settings.edgeThreshold, range: 1...14, unit: "px")
-                Toggle(loc.autoHide, isOn: $settings.autoHide)
-                Picker(loc.autoHideMethod, selection: $settings.autoHideMode) {
-                    ForEach(AutoHideMode.allCases) { mode in
-                        Text(loc.autoHideModeName(mode)).tag(mode)
-                    }
-                }
-                .disabled(!settings.autoHide)
+                slider(loc.edgeSensitivity, value: $settings.edgeThreshold, range: 1...14, unit: "pt")
             }
 
-            Section(loc.webEngineSection) {
-                ForEach(WebEngineKind.allCases) { kind in
-                    engineRow(kind)
+            Section(loc.panelBehavior) {
+                Picker(loc.autoHide, selection: autoHideBinding) {
+                    ForEach(AutoHidePolicy.allCases) { policy in
+                        Text(loc.autoHidePolicyName(policy)).tag(policy)
+                    }
                 }
-                Text(loc.webEngineHint)
-                    .font(.caption).foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
             }
 
             Section(loc.shortcutStartup) {
                 HStack {
                     Text(loc.toggleShortcut)
                     Spacer()
-                    HotKeyRecorder(settings: settings, onApply: onApply)
+                    HotKeyRecorder(settings: settings)
                 }
                 Toggle(loc.launchAtLogin, isOn: $settings.launchAtLogin)
                 Picker(loc.language, selection: $settings.language) {
@@ -108,39 +143,9 @@ private struct GeneralTab: View {
                         Text(lang.nativeName).tag(lang)
                     }
                 }
-                Picker(loc.bookmarkSync, selection: $settings.bookmarkSync) {
-                    ForEach(BookmarkSyncInterval.allCases) { interval in
-                        Text(loc.syncIntervalName(interval)).tag(interval)
-                    }
-                }
             }
         }
         .formStyle(.grouped)
-    }
-
-    /// Radio row for one bundled engine. Switching is live: the manager closes
-    /// cached pages and recreates them through the new backend factory.
-    private func engineRow(_ kind: WebEngineKind) -> some View {
-        Button {
-            settings.webEngine = kind
-        } label: {
-            HStack(alignment: .top, spacing: 10) {
-                Image(systemName: settings.webEngine == kind ? "largecircle.fill.circle" : "circle")
-                    .foregroundStyle(settings.webEngine == kind ? AnyShapeStyle(Color.primary) : AnyShapeStyle(.secondary))
-                    .font(.system(size: 15))
-                VStack(alignment: .leading, spacing: 2) {
-                    HStack(spacing: 6) {
-                        Text(loc.engineName(kind)).font(.system(size: 13, weight: .medium))
-                    }
-                    Text(loc.engineDetail(kind))
-                        .font(.caption).foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                Spacer(minLength: 0)
-            }
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
     }
 
     private func slider(_ label: String, value: Binding<Double>, range: ClosedRange<Double>, unit: String, decimals: Int = 0) -> some View {
@@ -183,7 +188,7 @@ private struct AnchorGrid: View {
     private func cell(_ anchor: PanelAnchor?) -> some View {
         if let anchor {
             Button {
-                withAnimation(.snappy) { selection = anchor }
+                selection = anchor
             } label: {
                 Image(systemName: anchor.symbol)
                     .font(.system(size: 14, weight: .medium))
@@ -204,7 +209,6 @@ private struct AnchorGrid: View {
 /// Captures the next key-press as the global shortcut.
 private struct HotKeyRecorder: View {
     @Bindable var settings: Settings
-    var onApply: () -> Void
 
     @State private var recording = false
     @State private var monitor: Any?
@@ -229,8 +233,6 @@ private struct HotKeyRecorder: View {
             let mods = carbonModifiers(from: event.modifierFlags)
             guard mods != 0 else { return event }
             settings.hotKey = HotKeyConfig(keyCode: UInt32(event.keyCode), modifiers: mods)
-            settings.persist()
-            onApply()
             stop()
             return nil
         }
@@ -240,6 +242,98 @@ private struct HotKeyRecorder: View {
         recording = false
         if let monitor { NSEvent.removeMonitor(monitor) }
         monitor = nil
+    }
+}
+
+// MARK: - Browser
+
+private struct BrowserTab: View {
+    @Bindable var settings: Settings
+    var onImportCookies: () -> Void
+    var onImportBookmarks: () -> Void
+
+    @State private var pendingEngine: WebEngineKind?
+
+    private var loc: Localized { settings.strings }
+    private var engineSelection: Binding<WebEngineKind> {
+        Binding(
+            get: { settings.webEngine },
+            set: { newValue in
+                guard newValue != settings.webEngine else { return }
+                pendingEngine = newValue
+            }
+        )
+    }
+    private var showsEngineConfirmation: Binding<Bool> {
+        Binding(
+            get: { pendingEngine != nil },
+            set: { if !$0 { pendingEngine = nil } }
+        )
+    }
+
+    var body: some View {
+        Form {
+            Section(loc.webEngineSection) {
+                Picker("", selection: engineSelection) {
+                    ForEach(WebEngineKind.allCases) { kind in
+                        Text(loc.engineName(kind)).tag(kind)
+                    }
+                }
+                .labelsHidden()
+                .pickerStyle(.radioGroup)
+
+                Text(loc.engineDetail(settings.webEngine))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text(loc.webEngineHint)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Section(loc.chromeDataSection) {
+                Text(loc.chromeDataHint)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                HStack {
+                    Label(loc.importChromeCookies, systemImage: "person.badge.key")
+                    Spacer()
+                    Button(loc.importAction, action: onImportCookies)
+                }
+                HStack {
+                    Label(loc.importChromeBookmarks, systemImage: "book.closed")
+                    Spacer()
+                    Button(loc.importAction, action: onImportBookmarks)
+                }
+            }
+
+            Section(loc.bookmarks) {
+                Picker(loc.bookmarkSync, selection: $settings.bookmarkSync) {
+                    ForEach(BookmarkSyncInterval.allCases) { interval in
+                        Text(loc.syncIntervalName(interval)).tag(interval)
+                    }
+                }
+            }
+        }
+        .formStyle(.grouped)
+        .alert(
+            loc.switchEngineTitle,
+            isPresented: showsEngineConfirmation,
+            presenting: pendingEngine
+        ) { engine in
+            Button(loc.cancel, role: .cancel) {
+                pendingEngine = nil
+            }
+            Button(loc.switchEngine) {
+                settings.webEngine = engine
+                pendingEngine = nil
+            }
+        } message: { engine in
+            Text(loc.switchEngineMessage(loc.engineName(engine)))
+        }
     }
 }
 
@@ -307,6 +401,11 @@ private struct AppsTab: View {
 private struct AboutTab: View {
     let settings: Settings
 
+    private var appVersion: String {
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
+            ?? "0.0.0"
+    }
+
     /// The real colored app icon (AppIcon.icns) in `.app` mode; the fallback
     /// keeps previews and tests usable when no bundle icon is available.
     private var appIcon: NSImage {
@@ -325,7 +424,7 @@ private struct AboutTab: View {
             Text(settings.strings.tagline)
                 .font(.callout).foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
-            Text("Version 0.3.0")
+            Text("Version \(appVersion)")
                 .font(.caption).foregroundStyle(.tertiary)
             Spacer()
         }

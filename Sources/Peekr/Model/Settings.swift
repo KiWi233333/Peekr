@@ -11,6 +11,36 @@ enum AutoHideMode: String, Codable, CaseIterable, Identifiable {
     var id: String { rawValue }
 }
 
+/// User-facing auto-hide policy. This intentionally adapts the existing
+/// `autoHide` + `autoHideMode` persistence fields so upgrades keep their saved
+/// behavior without a settings-file migration.
+enum AutoHidePolicy: String, CaseIterable, Identifiable {
+    case off
+    case focusLoss
+    case mouseLeave
+
+    var id: String { rawValue }
+
+    init(autoHide: Bool, mode: AutoHideMode) {
+        guard autoHide else {
+            self = .off
+            return
+        }
+        self = mode == .focusLoss ? .focusLoss : .mouseLeave
+    }
+
+    var storedValues: (autoHide: Bool, mode: AutoHideMode) {
+        switch self {
+        case .off:
+            return (false, .focusLoss)
+        case .focusLoss:
+            return (true, .focusLoss)
+        case .mouseLeave:
+            return (true, .mouseLeave)
+        }
+    }
+}
+
 /// How often to re-import bookmarks from the browsers already imported.
 enum BookmarkSyncInterval: String, Codable, CaseIterable, Identifiable {
     case off, hourly, daily
@@ -123,6 +153,15 @@ final class Settings {
 
     /// Two-language string table reflecting the current language preference.
     var strings: Localized { Localized(isChinese: language.resolved == .chinese) }
+
+    var autoHidePolicy: AutoHidePolicy {
+        get { AutoHidePolicy(autoHide: autoHide, mode: autoHideMode) }
+        set {
+            let stored = newValue.storedValues
+            autoHide = stored.autoHide
+            autoHideMode = stored.mode
+        }
+    }
 
     func persist() {
         store.save(snapshot)

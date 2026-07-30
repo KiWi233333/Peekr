@@ -24,6 +24,18 @@ final class BookmarksModel {
         persist()
     }
 
+    /// Import a browser source idempotently. A repeated import refreshes the
+    /// existing top-level browser folder instead of appending duplicates.
+    func importOrRefreshNodes(_ nodes: [BookmarkNode], as folderName: String) {
+        guard !nodes.isEmpty else { return }
+        roots = Self.replacingImportedFolder(
+            in: roots,
+            folderName: folderName,
+            with: nodes
+        )
+        persist()
+    }
+
     func remove(_ id: UUID) {
         roots = Self.removing(id, from: roots)
         persist()
@@ -45,6 +57,26 @@ final class BookmarksModel {
     }
 
     func persist() { store.save(roots) }
+
+    static func replacingImportedFolder(
+        in roots: [BookmarkNode],
+        folderName: String,
+        with nodes: [BookmarkNode]
+    ) -> [BookmarkNode] {
+        guard let index = roots.firstIndex(where: {
+            $0.title == folderName && $0.isFolder
+        }) else {
+            return roots + [BookmarkNode(title: folderName, children: nodes)]
+        }
+
+        var result = roots
+        result[index] = BookmarkNode(
+            id: result[index].id,
+            title: folderName,
+            children: nodes
+        )
+        return result
+    }
 
     private static func removing(_ id: UUID, from nodes: [BookmarkNode]) -> [BookmarkNode] {
         nodes.compactMap { node in

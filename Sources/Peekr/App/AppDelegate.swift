@@ -12,6 +12,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var edge: EdgeTrigger!
     private var statusBar: StatusBarController!
     private var prefs: PreferencesWindowController!
+    private var browserImports: BrowserImportWindowController!
     private var bookmarkSyncTimer: Timer?
     private var activeWebEngine: WebEngineKind!
     private var isQuitPending = false
@@ -55,16 +56,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         applyHotKey()
 
+        browserImports = BrowserImportWindowController(
+            model: model,
+            settings: settings,
+            icons: icons
+        )
+
         prefs = PreferencesWindowController(
-            model: model, settings: settings, icons: icons,
-            onApply: { [weak self] in self?.applyPreferences() }
+            model: model,
+            settings: settings,
+            icons: icons,
+            onApply: { [weak self] effect in self?.applyPreference(effect) },
+            onImportCookies: { [weak self] in self?.browserImports.showCookies() },
+            onImportBookmarks: { [weak self] in self?.importChromeBookmarks() }
         )
 
         statusBar = StatusBarController(
             model: model,
             settings: settings,
+            isPanelVisible: { [weak self] in self?.panel.isVisible ?? false },
             onToggle: { [weak self] in self?.panel.toggle() },
             onTogglePin: { [weak self] in self?.model.isPinned.toggle() },
+            onImportCookies: { [weak self] in self?.browserImports.showCookies() },
+            onImportBookmarks: { [weak self] in self?.importChromeBookmarks() },
             onPreferences: { [weak self] in self?.prefs.show() },
             onQuit: { [weak self] in self?.requestQuit() }
         )
@@ -150,13 +164,107 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    private func applyPreferences() {
-        applyHotKey()
-        panel.applyLayout()
-        applyBookmarkSync()
-        if activeWebEngine != settings.webEngine {
+    private func applyPreference(_ effect: PreferenceEffect) {
+        switch effect {
+        case .layout:
+            panel.applyLayout()
+        case .hotKey:
+            applyHotKey()
+        case .launchAtLogin:
+            LaunchAtLogin.set(settings.launchAtLogin)
+        case .language:
+            installMainMenu(
+                strings: settings.strings,
+                quitTarget: self,
+                quitAction: #selector(requestQuit)
+            )
+            prefs.refreshTitle()
+        case .bookmarkSync:
+            applyBookmarkSync()
+        case .webEngine:
+            guard activeWebEngine != settings.webEngine else { return }
             activeWebEngine = settings.webEngine
             manager.replaceFactory(activeWebEngine.makeFactory())
         }
+    }
+
+    private func importChromeBookmarks() {
+        let loc = settings.strings
+        let profiles: [(profile: ChromeProfile, fileURL: URL)] =
+            ChromeCookieImporter.discoverProfiles().compactMap { profile in
+                let fileURL = profile.directoryURL.appendingPathComponent("Bookmarks")
+                guard FileManager.default.fileExists(atPath: fileURL.path) else {
+                    return nil
+                }
+                return (profile: profile, fileURL: fileURL)
+            }
+        guard !profiles.isEmpty else {
+            showImportAlert(
+                title: loc.chromeBookmarksUnavailableTitle,
+                message: loc.chromeBookmarksUnavailableMessage
+            )
+            return
+        }
+
+        let profilePicker = NSPopUpButton(
+            frame: NSRect(x: 0, y: 0, width: 300, height: 26),
+            pullsDown: false
+        )
+        for candidate in profiles {
+            profilePicker.addItem(
+                withTitle: "\(candidate.profile.name) — \(candidate.profile.id)"
+            )
+        }
+
+        let confirmation = NSAlert()
+        confirmation.alertStyle = .informational
+        confirmation.messageText = loc.chromeBookmarksConfirmTitle
+        confirmation.informativeText = loc.chromeBookmarksConfirmMessage(
+            profiles.count == 1 ? profiles[0].profile.name : loc.chromeProfile
+        )
+        if profiles.count > 1 {
+            confirmation.accessoryView = profilePicker
+        }
+        confirmation.addButton(withTitle: loc.importChromeBookmarks)
+        confirmation.addButton(withTitle: loc.cancel)
+        NSApp.activate(ignoringOtherApps: true)
+        guard confirmation.runModal() == .alertFirstButtonReturn else { return }
+
+        let selectedIndex = profiles.count > 1
+            ? max(0, profilePicker.indexOfSelectedItem)
+            : 0
+        let selected = profiles[selectedIndex]
+        let source = BookmarkImporter.Source(
+            name: "Chrome",
+            fileURL: selected.fileURL,
+            isSafari: false
+        )
+        let imported = BookmarkImporter.importBookmarks(from: source)
+        guard !imported.isEmpty else {
+            showImportAlert(
+                title: loc.chromeBookmarksEmptyTitle,
+                message: loc.chromeBookmarksEmptyMessage
+            )
+            return
+        }
+
+        let folderName = selected.profile.id == "Default"
+            ? "Chrome"
+            : "Chrome — \(selected.profile.name)"
+        bookmarks.importOrRefreshNodes(imported, as: folderName)
+        showImportAlert(
+            title: loc.chromeBookmarksImportedTitle,
+            message: loc.chromeBookmarksImportedMessage
+        )
+    }
+
+    private func showImportAlert(title: String, message: String) {
+        let alert = NSAlert()
+        alert.alertStyle = .informational
+        alert.messageText = title
+        alert.informativeText = message
+        alert.addButton(withTitle: settings.strings.done)
+        NSApp.activate(ignoringOtherApps: true)
+        alert.runModal()
     }
 }

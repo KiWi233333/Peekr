@@ -55,7 +55,13 @@ struct Localized {
 
     // Menu bar
     var toggle: String { t("Toggle Peekr", "显示 / 隐藏") }
-    var pinOpen: String { t("Pin Open", "固定常开") }
+    var showPeekr: String { t("Show Peekr", "显示 Peekr") }
+    var hidePeekr: String { t("Hide Peekr", "隐藏 Peekr") }
+    var pinOpen: String { t("Keep Open", "保持打开") }
+    var autoHideMenu: String { t("Hide Automatically", "自动隐藏") }
+    var importFromChrome: String { t("Import from Chrome", "从 Chrome 导入") }
+    var importChromeBookmarks: String { t("Import Bookmarks", "导入书签") }
+    var importAction: String { t("Import…", "导入…") }
     var preferences: String { t("Preferences…", "偏好设置…") }
     var quit: String { t("Quit Peekr", "退出 Peekr") }
     var quitConfirmTitle: String { t("Quit Peekr?", "退出 Peekr？") }
@@ -164,10 +170,12 @@ struct Localized {
     // Preferences
     var preferencesWindowTitle: String { t("Peekr Preferences", "Peekr 偏好设置") }
     var general: String { t("General", "通用") }
+    var browser: String { t("Browser", "浏览器") }
     var apps: String { t("Apps", "应用") }
     var about: String { t("About", "关于") }
     var docking: String { t("Docking", "停靠") }
     var panel: String { t("Panel", "面板") }
+    var panelBehavior: String { t("Panel Behavior", "面板行为") }
     var shortcutStartup: String { t("Shortcut & Startup", "快捷键与启动") }
     var width: String { t("Width", "宽度") }
     var height: String { t("Height", "高度") }
@@ -178,13 +186,20 @@ struct Localized {
           "面板尺寸，所有应用共用一个。拖动面板的底部边角即可调整。")
     }
     var hoverDelay: String { t("Hover delay", "悬停延迟") }
-    var edgeSensitivity: String { t("Edge sensitivity", "边缘灵敏度") }
+    var edgeSensitivity: String { t("Edge trigger width", "边缘触发区域") }
     var autoHide: String { t("Auto-hide the panel", "自动隐藏面板") }
     var autoHideMethod: String { t("Hide when", "隐藏时机") }
     func autoHideModeName(_ mode: AutoHideMode) -> String {
         switch mode {
         case .focusLoss: return t("Focus is lost", "失去焦点时")
         case .mouseLeave: return t("Cursor leaves the panel", "光标离开面板时")
+        }
+    }
+    func autoHidePolicyName(_ policy: AutoHidePolicy) -> String {
+        switch policy {
+        case .off: return t("Off", "关闭")
+        case .focusLoss: return t("When focus is lost", "失去焦点时")
+        case .mouseLeave: return t("When the cursor leaves", "光标移出时")
         }
     }
     var followCursor: String { t("Follow cursor across displays", "跨显示器跟随光标") }
@@ -203,10 +218,21 @@ struct Localized {
 
     // Web engine
     var webEngineSection: String { t("Web Engine", "浏览器内核") }
+    var chromeDataSection: String { t("Chrome Data", "Chrome 数据") }
+    var chromeDataHint: String {
+        t("Import cookies into Peekr's Chromium profile or copy Chrome bookmarks into Peekr.",
+          "将 Cookie 导入 Peekr 的 Chromium Profile，或把 Chrome 书签复制到 Peekr。")
+    }
     var webEngineHint: String {
         t("Both engines are bundled. Switching recreates open pages. WebKit isolates site data per app; Chromium uses one persistent profile.",
           "两种内核均已内置。切换时会重建已打开页面。WebKit 按应用隔离站点数据；Chromium 使用一个持久 Profile。")
     }
+    var switchEngineTitle: String { t("Switch web engine?", "切换浏览器内核？") }
+    func switchEngineMessage(_ engine: String) -> String {
+        t("Switch to \(engine)? Open pages will be recreated and unsaved page state may be lost.",
+          "切换到 \(engine)？已打开页面将被重建，页面中未保存的状态可能丢失。")
+    }
+    var switchEngine: String { t("Switch Engine", "切换内核") }
     func engineName(_ kind: WebEngineKind) -> String {
         switch kind {
         case .system: return t("System · WebKit", "系统内核 · WebKit")
@@ -225,9 +251,47 @@ struct Localized {
     }
 
     var defaultSize: String { t("Default (screen ratio)", "默认（屏幕比例）") }
+    func anchorName(_ anchor: PanelAnchor) -> String {
+        switch anchor {
+        case .left: return t("Left edge", "左侧")
+        case .right: return t("Right edge", "右侧")
+        case .topLeft: return t("Top-left", "左上角")
+        case .topRight: return t("Top-right", "右上角")
+        case .bottomLeft: return t("Bottom-left", "左下角")
+        case .bottomRight: return t("Bottom-right", "右下角")
+        }
+    }
     var dockingHint: String {
         t("Hover this edge/corner, or drag the panel by its grip and release near any edge/corner. Snapping changes the slide direction — not the size.",
           "悬停此边缘/角落，或拖动面板抓手并在任意边缘/角落松开。吸附只改变滑出方向，不改变尺寸。")
+    }
+    var chromeBookmarksUnavailableTitle: String {
+        t("Chrome bookmarks not found", "未找到 Chrome 书签")
+    }
+    var chromeBookmarksUnavailableMessage: String {
+        t("Open Chrome once and make sure its Default profile contains bookmarks, then try again.",
+          "请先打开一次 Chrome，并确认默认 Profile 中已有书签，然后重试。")
+    }
+    var chromeBookmarksEmptyTitle: String {
+        t("No bookmarks to import", "没有可导入的书签")
+    }
+    var chromeBookmarksEmptyMessage: String {
+        t("Peekr found Chrome's bookmark file but it did not contain importable bookmarks.",
+          "Peekr 找到了 Chrome 书签文件，但其中没有可导入的书签。")
+    }
+    var chromeBookmarksConfirmTitle: String {
+        t("Import Chrome bookmarks?", "导入 Chrome 书签？")
+    }
+    func chromeBookmarksConfirmMessage(_ profile: String) -> String {
+        t("Import bookmarks from “\(profile)”? Peekr will add or refresh that Chrome profile's imported folder.",
+          "从“\(profile)”导入书签？Peekr 将新增或刷新这个 Chrome Profile 的导入文件夹。")
+    }
+    var chromeBookmarksImportedTitle: String {
+        t("Chrome bookmarks imported", "Chrome 书签已导入")
+    }
+    var chromeBookmarksImportedMessage: String {
+        t("The imported bookmarks are available from Peekr's bookmark panel.",
+          "导入的书签现在可以在 Peekr 的书签面板中使用。")
     }
     func appsCount(_ n: Int) -> String { isChinese ? "\(n) 个应用" : "\(n) apps" }
 

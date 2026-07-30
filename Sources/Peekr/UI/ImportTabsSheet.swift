@@ -1,20 +1,20 @@
 import SwiftUI
 
+enum BrowserImportMode: Hashable {
+    case tabs
+    case cookies
+}
+
 /// Imports open tabs or Chrome cookies through one explicit, user-driven entry.
 /// Browser access never happens on appearance: Apple Events and keychain access
 /// are only requested after the corresponding import button is pressed.
 struct ImportTabsSheet: View {
-    private enum ImportMode: Hashable {
-        case tabs
-        case cookies
-    }
-
     let model: AppModel
     let settings: Settings
     let icons: IconStore
     var onClose: () -> Void
 
-    @State private var mode: ImportMode = .tabs
+    @State private var mode: BrowserImportMode
     @State private var tabs: [ImportedTab] = []
     @State private var selected: Set<ImportedTab.ID> = []
     @State private var scanned = false
@@ -28,14 +28,28 @@ struct ImportTabsSheet: View {
 
     private var loc: Localized { settings.strings }
 
+    init(
+        model: AppModel,
+        settings: Settings,
+        icons: IconStore,
+        initialMode: BrowserImportMode = .tabs,
+        onClose: @escaping () -> Void
+    ) {
+        self.model = model
+        self.settings = settings
+        self.icons = icons
+        self.onClose = onClose
+        _mode = State(initialValue: initialMode)
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text(loc.importTitle)
                 .font(.system(size: 17, weight: .bold, design: .rounded))
 
             Picker("", selection: $mode) {
-                Text(loc.importTabsMode).tag(ImportMode.tabs)
-                Text(loc.importCookiesMode).tag(ImportMode.cookies)
+                Text(loc.importTabsMode).tag(BrowserImportMode.tabs)
+                Text(loc.importCookiesMode).tag(BrowserImportMode.cookies)
             }
             .pickerStyle(.segmented)
 
