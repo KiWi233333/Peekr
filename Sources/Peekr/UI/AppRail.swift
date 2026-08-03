@@ -2,113 +2,171 @@ import AppKit
 import SwiftUI
 import Inject
 
-/// Left sidebar: a workspace switcher above a vertical list of the active
-/// workspace's tabs. Tabs show icon + name, reorder by drag, and rename inline
-/// (double-click). Workspace ops go straight to `model`; `onWorkspaceSwitched`
-/// lets the panel re-point the web area at the newly active tab.
+/// Browser-grade vertical tab sidebar: Arc-like Spaces at the top and Edge-like
+/// coloured, collapsible tab groups in one ordered tree beneath them.
 struct AppRail: View {
     let model: AppModel
     let settings: Settings
     let icons: IconStore
     let badges: BadgeStore
     var onSelect: (UUID) -> Void
-    var onAdd: () -> Void
+    var onNewTab: (TabGroup.ID?) -> Void
     var onEdit: (WebApp) -> Void
     var onWorkspaceSwitched: () -> Void
+    var onReopenClosedTab: () -> Void
+    var onCollapse: () -> Void
 
-    @State private var dropTarget: UUID?
+    @State private var dropTarget: String?
+    @State private var hoveringGroup: UUID?
     @State private var renamingTab: UUID?
+    @State private var renamingGroup: UUID?
     @State private var renamingWorkspace: UUID?
+    @State private var groupDraft = ""
     @State private var workspaceDraft = ""
     @ObserveInjection private var inject
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @FocusState private var groupFieldFocused: UUID?
     @FocusState private var workspaceFieldFocused: Bool
+    @Namespace private var sidebarMotionNamespace
 
     private var loc: Localized { settings.strings }
 
     var body: some View {
-        VStack(spacing: 8) {
-            workspaceBar
-            Divider().opacity(0.4).padding(.horizontal, 10)
-            tabList
-            addTabButton
+        VStack(spacing: 0) {
+            workspaceHeader
+            Divider().overlay(.primary.opacity(0.14)).padding(.horizontal, 12)
+            tabTree
         }
-        .padding(.vertical, 10)
-        .frame(width: Theme.sidebarWidth)
+        .padding(.top, 10)
+        .padding(.bottom, 9)
+        .frame(width: 360)
         .frame(maxHeight: .infinity)
+        // Preserve AppKit's adaptive appearance. Liquid Glass can switch from
+        // light to dark based on the content underneath it, so forcing a dark
+        // scheme or painting a uniform tint here breaks both contrast and depth.
+        .foregroundStyle(.primary)
         .enableInjection()
     }
 
-    // MARK: - Workspace switcher
+    // MARK: - Spaces
 
-    private var workspaceBar: some View {
-        VStack(spacing: 7) {
-            HStack(spacing: 6) {
+    private var workspaceHeader: some View {
+        VStack(spacing: 9) {
+            HStack(spacing: 7) {
+                Button(action: onCollapse) {
+                    Image(systemName: settings.anchor.railOnLeft ? "sidebar.left" : "sidebar.right")
+                        .font(.system(size: 15, weight: .semibold))
+                        .frame(width: 26, height: 26)
+                        .contentShape(Circle())
+                        .contentTransition(.symbolEffect(.replace))
+                }
+                .buttonStyle(IconButtonStyle())
+                .foregroundStyle(.secondary)
+                .help(loc.collapseSidebar)
+                .accessibilityLabel(loc.collapseSidebar)
+                .animation(reduceMotion ? nil : Motion.sidebarStyle, value: settings.anchor.railOnLeft)
+
                 if renamingWorkspace == model.activeWorkspaceID {
                     TextField(loc.defaultWorkspace, text: $workspaceDraft)
                         .textFieldStyle(.plain)
-                        .font(.system(size: 13, weight: .bold, design: .rounded))
+                        .font(.system(size: 13.5, weight: .semibold))
                         .focused($workspaceFieldFocused)
                         .onSubmit(commitRenameWorkspace)
                         .onExitCommand { renamingWorkspace = nil }
                 } else {
-                    Text(displayName(model.activeWorkspace))
-                        .font(.system(size: 13, weight: .bold, design: .rounded))
-                        .lineLimit(1)
-                        .onTapGesture(count: 2) { beginRenameWorkspace(model.activeWorkspace) }
+                    Menu {
+                        Picker(
+                            "",
+                            selection: Binding(
+                                get: { model.activeWorkspaceID },
+                                set: { id in
+                                    guard id != model.activeWorkspaceID else { return }
+                                    model.selectWorkspace(id)
+                                    onWorkspaceSwitched()
+                                }
+                            )
+                        ) {
+                            ForEach(model.workspaces) { workspace in
+                                Label(displayName(workspace), systemImage: workspace.symbol)
+                                    .tag(workspace.id)
+                            }
+                        }
+                        .labelsHidden()
+                        .pickerStyle(.inline)
+                        Divider()
+                        Button {
+                            model.addWorkspace()
+                            onWorkspaceSwitched()
+                        } label: {
+                            Label(loc.newWorkspace, systemImage: "plus")
+                        }
+                    } label: {
+                        HStack(spacing: 4) {
+                            Text(displayName(model.activeWorkspace))
+                                .font(.system(size: 13.5, weight: .semibold))
+                                .lineLimit(1)
+                            Image(systemName: "chevron.down")
+                                .font(.system(size: 8, weight: .bold))
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .menuStyle(.borderlessButton)
+                    .menuIndicator(.hidden)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .onTapGesture(count: 2) { beginRenameWorkspace(model.activeWorkspace) }
                 }
+
                 Spacer(minLength: 4)
-                Button { model.addWorkspace(); onWorkspaceSwitched() } label: {
-                    Image(systemName: "plus.square.on.square").font(.system(size: 12, weight: .semibold))
+                Menu {
+                    Button {
+                        model.addGroup(name: loc.tabGroup, color: .blue)
+                    } label: {
+                        Label(loc.newTabGroup, systemImage: "rectangle.3.group")
+                    }
+                    Button {
+                        model.addWorkspace()
+                        onWorkspaceSwitched()
+                    } label: {
+                        Label(loc.newWorkspace, systemImage: "square.stack.3d.up.badge.a")
+                    }
+                    Divider()
+                    Button { beginRenameWorkspace(model.activeWorkspace) } label: {
+                        Label(loc.rename, systemImage: "pencil")
+                    }
+                    if model.workspaces.count > 1 {
+                        Button(role: .destructive) {
+                            model.removeWorkspace(model.activeWorkspaceID)
+                            onWorkspaceSwitched()
+                        } label: {
+                            Label(loc.delete, systemImage: "trash")
+                        }
+                    }
+                } label: {
+                    Image(systemName: "square.grid.2x2")
+                        .font(.system(size: 13, weight: .semibold))
+                        .frame(width: 26, height: 26)
+                        .background(.primary.opacity(0.08), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
                 }
-                .buttonStyle(IconButtonStyle())
-                .foregroundStyle(.secondary)
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .fixedSize()
                 .help(loc.newWorkspace)
             }
 
-            if model.workspaces.count > 1 {
-                HStack(spacing: 5) {
-                    ForEach(model.workspaces) { workspace in chip(workspace) }
-                    Spacer(minLength: 0)
-                }
-            }
         }
-        .padding(.horizontal, 12)
-    }
-
-    private func chip(_ workspace: Workspace) -> some View {
-        let active = workspace.id == model.activeWorkspaceID
-        return Button { model.selectWorkspace(workspace.id); onWorkspaceSwitched() } label: {
-            Text(chipLabel(workspace))
-                .font(.system(size: 10, weight: .bold, design: .rounded))
-                .frame(minWidth: 22, minHeight: 18)
-                .padding(.horizontal, 4)
-                .background(Capsule().fill(active ? AnyShapeStyle(Color.primary) : AnyShapeStyle(.primary.opacity(0.1))))
-                .foregroundStyle(active ? AnyShapeStyle(Color(nsColor: .windowBackgroundColor)) : AnyShapeStyle(.secondary))
-        }
-        .buttonStyle(.plain)
-        .help(displayName(workspace))
-        .contextMenu {
-            Button { beginRenameWorkspace(workspace) } label: { Label(loc.rename, systemImage: "pencil") }
-            if model.workspaces.count > 1 {
-                Button(role: .destructive) { model.removeWorkspace(workspace.id); onWorkspaceSwitched() } label: {
-                    Label(loc.delete, systemImage: "trash")
-                }
-            }
-        }
+        .padding(.horizontal, 13)
+        .padding(.bottom, 14)
     }
 
     private func displayName(_ workspace: Workspace) -> String {
         workspace.name.isEmpty ? loc.defaultWorkspace : workspace.name
     }
 
-    private func chipLabel(_ workspace: Workspace) -> String {
-        if let first = workspace.name.first { return String(first).uppercased() }
-        let index = model.workspaces.firstIndex { $0.id == workspace.id } ?? 0
-        return "\(index + 1)"
-    }
-
     private func beginRenameWorkspace(_ workspace: Workspace) {
-        if workspace.id != model.activeWorkspaceID { model.selectWorkspace(workspace.id); onWorkspaceSwitched() }
+        if workspace.id != model.activeWorkspaceID {
+            model.selectWorkspace(workspace.id)
+            onWorkspaceSwitched()
+        }
         workspaceDraft = workspace.name
         renamingWorkspace = workspace.id
         workspaceFieldFocused = true
@@ -116,85 +174,538 @@ struct AppRail: View {
 
     private func commitRenameWorkspace() {
         if let id = renamingWorkspace {
-            model.renameWorkspace(id, to: workspaceDraft.trimmingCharacters(in: .whitespaces))
+            model.renameWorkspace(id, to: workspaceDraft.trimmingCharacters(in: .whitespacesAndNewlines))
         }
         renamingWorkspace = nil
     }
 
-    // MARK: - Tabs
+    // MARK: - Hierarchical tab tree
 
-    private var tabList: some View {
+    private var tabTree: some View {
         ScrollView {
-            VStack(spacing: 3) {
-                ForEach(model.apps) { app in tabRow(app) }
+            LazyVStack(spacing: 5) {
+                ForEach(model.activeWorkspace.sidebarItems) { item in
+                    sidebarItem(item)
+                }
+                addTabButton
+                    .padding(.top, 5)
             }
-            .padding(.horizontal, 8)
+            .padding(.horizontal, 11)
+            .padding(.vertical, 13)
+            .frame(maxWidth: .infinity, alignment: .top)
+            .animation(
+                reduceMotion ? nil : Motion.sidebarReorder,
+                value: model.activeWorkspace.sidebarItems
+            )
+        }
+        .dropDestination(for: String.self) { items, _ in
+            guard let drag = items.first.flatMap(RailDrag.init) else { return false }
+            withSidebarReorder {
+                switch drag {
+                case .tab(let id): model.moveTabToRoot(id)
+                case .group(let id): model.moveGroup(id, before: nil)
+                }
+            }
+            return true
         }
     }
 
-    private func tabRow(_ app: WebApp) -> some View {
-        TabRow(
-            app: app,
-            selected: app.id == model.selectedID,
-            targeted: dropTarget == app.id,
-            icon: icons.image(for: app),
-            isRenaming: renamingTab == app.id,
-            displayTitle: app.displayName,
-            unread: badges.count(for: app.id),
-            onSelect: { if renamingTab == nil { onSelect(app.id) } },
-            onCommitRename: { model.setAlias(app.id, to: $0.trimmingCharacters(in: .whitespaces)); renamingTab = nil },
-            onCancelRename: { renamingTab = nil }
-        )
-        .draggable(app.id.uuidString) {
-            FaviconView(app: app, icon: icons.image(for: app), size: Theme.tile)
+    @ViewBuilder
+    private func sidebarItem(_ item: SidebarItem) -> some View {
+        switch item.kind {
+        case .tab:
+            if let app = model.tab(item.referenceID) {
+                tabRow(app, group: nil)
+            }
+        case .group:
+            if let group = model.group(item.referenceID) {
+                groupSection(group)
+            }
         }
-        .dropDestination(for: String.self) { items, _ in
-            guard let first = items.first, let dragged = UUID(uuidString: first) else { return false }
-            withAnimation(.snappy) { model.move(dragged, before: app.id) }
+    }
+
+    private func groupSection(_ group: TabGroup) -> some View {
+        VStack(spacing: 0) {
+            groupHeader(group)
+            // Keep disappearing rows inside their own clipping region. SwiftUI
+            // keeps a removed transition alive while the parent height shrinks;
+            // without this boundary those rows paint over the header above.
+            VStack(spacing: 0) {
+                if !group.isCollapsed {
+                    HStack(alignment: .top, spacing: 4) {
+                        RoundedRectangle(cornerRadius: 2, style: .continuous)
+                            .fill(group.tint)
+                            .frame(width: 2)
+                            .padding(.vertical, 2)
+
+                        LazyVStack(spacing: 3) {
+                            ForEach(group.tabIDs, id: \.self) { id in
+                                if let app = model.tab(id) { tabRow(app, group: group) }
+                            }
+                            if group.tabIDs.isEmpty {
+                                Button { onNewTab(group.id) } label: {
+                                    Label(loc.newTabInGroup, systemImage: "plus")
+                                        .font(.system(size: 11.5, weight: .medium))
+                                        .foregroundStyle(.secondary)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                        .padding(.horizontal, 9)
+                                        .padding(.vertical, 7)
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                        .animation(
+                            reduceMotion ? nil : Motion.sidebarReorder,
+                            value: group.tabIDs
+                        )
+                    }
+                    .padding(.leading, 4)
+                    .padding(.top, 4)
+                    .transition(reduceMotion ? .identity : .opacity)
+                }
+            }
+            .clipped()
+        }
+        .matchedGeometryEffect(
+            id: RailDrag.group(group.id).encoded,
+            in: sidebarMotionNamespace,
+            properties: .frame
+        )
+        .animation(
+            reduceMotion ? nil : Motion.sidebarCollapse,
+            value: group.isCollapsed
+        )
+    }
+
+    private func groupHeader(_ group: TabGroup) -> some View {
+        HStack(spacing: 8) {
+            if renamingGroup == group.id {
+                TextField(loc.tabGroup, text: $groupDraft)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 12.5, weight: .semibold))
+                    .foregroundStyle(.black.opacity(0.84))
+                    .focused($groupFieldFocused, equals: group.id)
+                    .onSubmit { commitRenameGroup(group.id) }
+                    .onExitCommand { renamingGroup = nil }
+            } else {
+                Text(group.name)
+                    .font(.system(size: 12.5, weight: .semibold))
+                    .foregroundStyle(.black.opacity(0.84))
+                    .lineLimit(1)
+                    .onTapGesture(count: 2) { beginRenameGroup(group) }
+            }
+            Spacer(minLength: 0)
+            if hoveringGroup == group.id || renamingGroup == group.id {
+                groupMenu(group)
+            }
+            Button { model.toggleGroup(group.id) } label: {
+                Image(systemName: group.isCollapsed ? "chevron.down" : "chevron.up")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(.black.opacity(0.62))
+                    .frame(width: 18, height: 24)
+            }
+            .buttonStyle(.plain)
+            .help(group.isCollapsed ? loc.expandGroup : loc.collapseGroup)
+        }
+        .padding(.leading, 8)
+        .padding(.trailing, 7)
+        .frame(height: 26)
+        .background(
+            group.tint,
+            in: RoundedRectangle(cornerRadius: 8, style: .continuous)
+        )
+        .overlay {
+            if dropTarget == RailDrag.group(group.id).encoded {
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .stroke(.primary.opacity(0.72), lineWidth: 1.5)
+            }
+        }
+        .contentShape(Rectangle())
+        .animation(
+            reduceMotion ? nil : Motion.sidebarStyle,
+            value: group.color
+        )
+        .animation(
+            reduceMotion ? nil : Motion.sidebarStyle,
+            value: group.customColor
+        )
+        .onHover { hoveringGroup = $0 ? group.id : nil }
+        .onTapGesture { if renamingGroup == nil { model.toggleGroup(group.id) } }
+        .overlay {
+            TabGroupContextMenuOverlay(
+                group: group,
+                strings: loc,
+                onRename: { model.renameGroup(group.id, to: $0) },
+                onRecolor: { model.recolorGroup(group.id, to: $0) },
+                onCustomColor: { model.setCustomColor($0, forGroup: group.id) },
+                onNewTab: { onNewTab(group.id) },
+                onDuplicate: { model.duplicateGroup(group.id) },
+                onClose: { close(group) },
+                onUngroup: { model.ungroup(group.id) }
+            )
+        }
+        .draggable(RailDrag.group(group.id).encoded) {
+            Text(group.name)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(.black.opacity(0.84))
+                .padding(.horizontal, 14)
+                .padding(.vertical, 8)
+                .background(
+                    group.tint,
+                    in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+                )
+        }
+        .dropDestination(for: String.self) { items, location in
+            guard let drag = items.first.flatMap(RailDrag.init) else { return false }
+            withSidebarReorder {
+                switch drag {
+                case .tab(let id): model.moveTab(id, toGroup: group.id)
+                case .group(let id):
+                    model.moveGroup(
+                        id,
+                        before: location.y < 13
+                            ? group.id
+                            : nextTopLevelReference(after: group.id)
+                    )
+                }
+            }
             return true
         } isTargeted: { targeted in
-            dropTarget = targeted ? app.id : (dropTarget == app.id ? nil : dropTarget)
+            setDropTarget(targeted ? RailDrag.group(group.id).encoded : nil)
+        }
+    }
+
+    private func groupMenu(_ group: TabGroup) -> some View {
+        Menu {
+            groupActions(group)
+        } label: {
+            Image(systemName: "ellipsis.vertical")
+                .font(.system(size: 11, weight: .bold))
+                .foregroundStyle(.secondary)
+                .frame(width: 18, height: 24)
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+    }
+
+    @ViewBuilder
+    private func groupActions(_ group: TabGroup) -> some View {
+        Button { onNewTab(group.id) } label: {
+            Label(loc.newTabInGroup, systemImage: "plus")
+        }
+        Button { beginRenameGroup(group) } label: {
+            Label(loc.rename, systemImage: "pencil")
+        }
+        Picker(
+            loc.groupColor,
+            selection: Binding(
+                get: { group.color },
+                set: { model.recolorGroup(group.id, to: $0) }
+            )
+        ) {
+            ForEach(TabGroupColor.allCases, id: \.self) { color in
+                Label(color.displayName(chinese: loc.isChinese), systemImage: "circle.fill")
+                    .tag(color)
+            }
+        }
+        .pickerStyle(.menu)
+        ColorPicker(
+            loc.customColor,
+            selection: Binding(
+                get: { group.tint },
+                set: { color in
+                    guard let customColor = TabGroupCustomColor(color: color) else { return }
+                    model.setCustomColor(customColor, forGroup: group.id)
+                }
+            ),
+            supportsOpacity: false
+        )
+        Divider()
+        Button { model.duplicateGroup(group.id) } label: {
+            Label(loc.duplicateGroup, systemImage: "plus.square.on.square")
+        }
+        Button { model.ungroup(group.id) } label: {
+            Label(loc.ungroup, systemImage: "rectangle.3.group.bubble.left")
+        }
+        Divider()
+        Button(role: .destructive) { close(group) } label: {
+            Label(loc.closeGroup, systemImage: "xmark")
+        }
+    }
+
+    private func tabRow(_ app: WebApp, group: TabGroup?) -> some View {
+        BrowserTabRow(
+            app: app,
+            selected: app.id == model.selectedID,
+            targeted: dropTarget == RailDrag.tab(app.id).encoded,
+            icon: icons.image(for: app),
+            isRenaming: renamingTab == app.id,
+            unread: badges.count(for: app.id),
+            closeLabel: loc.closeTab,
+            onSelect: { if renamingTab == nil { onSelect(app.id) } },
+            onClose: { close(app) },
+            onCommitRename: {
+                model.setAlias(app.id, to: $0.trimmingCharacters(in: .whitespacesAndNewlines))
+                renamingTab = nil
+            },
+            onCancelRename: { renamingTab = nil }
+        )
+        .matchedGeometryEffect(
+            id: RailDrag.tab(app.id).encoded,
+            in: sidebarMotionNamespace,
+            properties: .frame
+        )
+        .draggable(RailDrag.tab(app.id).encoded) {
+            HStack(spacing: 8) {
+                FaviconView(app: app, icon: icons.image(for: app), size: 16)
+                Text(app.displayName).font(.system(size: 12, weight: .medium)).lineLimit(1)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 7)
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+        }
+        .dropDestination(for: String.self) { items, location in
+            guard let drag = items.first.flatMap(RailDrag.init) else { return false }
+            handleDrop(drag, on: app, in: group, at: location)
+            return true
+        } isTargeted: { targeted in
+            setDropTarget(targeted ? RailDrag.tab(app.id).encoded : nil)
         }
         .contextMenu {
             Button { onEdit(app) } label: { Label(loc.edit, systemImage: "pencil") }
             Button { renamingTab = app.id } label: { Label(loc.rename, systemImage: "character.cursor.ibeam") }
-            Button { onSelect(app.id) } label: { Label(loc.open, systemImage: "arrow.up.forward.app") }
+            Button {
+                if let copy = model.duplicateTab(app.id) { onSelect(copy.id) }
+            } label: { Label(loc.duplicateTab, systemImage: "plus.square.on.square") }
             Button {
                 icons.refresh(app) { model.rename(app.id, to: $0) }
             } label: { Label(loc.refreshIconAndTitle, systemImage: "arrow.clockwise") }
             Divider()
-            Button(role: .destructive) { model.removeApp(app.id) } label: { Label(loc.delete, systemImage: "trash") }
+            if !model.activeWorkspace.groups.isEmpty {
+                Menu(loc.moveToGroup) {
+                    ForEach(model.activeWorkspace.groups) { destination in
+                        Button(destination.name) {
+                            model.moveTab(app.id, toGroup: destination.id)
+                        }
+                    }
+                    Divider()
+                    Button(loc.newTabGroup) {
+                        model.addGroup(name: loc.tabGroup, color: .blue, containing: [app.id])
+                    }
+                }
+            } else {
+                Button {
+                    model.addGroup(name: loc.tabGroup, color: .blue, containing: [app.id])
+                } label: {
+                    Label(loc.newTabGroup, systemImage: "rectangle.3.group")
+                }
+            }
+            if group != nil {
+                Button { model.moveTabToRoot(app.id) } label: {
+                    Label(loc.removeFromGroup, systemImage: "arrowshape.turn.up.left")
+                }
+            }
+            Divider()
+            Button(role: .destructive) { close(app) } label: {
+                Label(loc.closeTab, systemImage: "xmark")
+            }
         }
     }
 
     private var addTabButton: some View {
-        Button(action: onAdd) {
-            HStack(spacing: 8) {
-                Image(systemName: "plus").font(.system(size: 12, weight: .semibold))
-                Text(loc.newTab).font(.system(size: 12.5, weight: .medium))
-                Spacer(minLength: 0)
-            }
-            .foregroundStyle(.secondary)
-            .padding(.horizontal, 10).padding(.vertical, 7)
-            .background(.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: Theme.tileCorner, style: .continuous))
+        Button { onNewTab(nil) } label: {
+            Image(systemName: "plus")
+                .font(.system(size: 17, weight: .medium))
+                .foregroundStyle(.primary.opacity(0.82))
+                .frame(maxWidth: .infinity)
+                .frame(height: 32)
+                .background(.primary.opacity(0.10), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
         }
         .buttonStyle(.plain)
-        .padding(.horizontal, 8)
         .help(loc.newTab)
+        .contextMenu {
+            Button { onNewTab(nil) } label: { Label(loc.newTab, systemImage: "plus") }
+            Button { model.addGroup(name: loc.tabGroup, color: .blue) } label: {
+                Label(loc.newTabGroup, systemImage: "rectangle.3.group")
+            }
+            if model.hasRecentlyClosedTabs {
+                Divider()
+                Button(action: onReopenClosedTab) {
+                    Label(loc.reopenClosedTab, systemImage: "arrow.uturn.backward")
+                }
+            }
+        }
+    }
+
+    private func beginRenameGroup(_ group: TabGroup) {
+        groupDraft = group.name
+        renamingGroup = group.id
+        groupFieldFocused = group.id
+    }
+
+    private func commitRenameGroup(_ id: TabGroup.ID) {
+        model.renameGroup(id, to: groupDraft)
+        renamingGroup = nil
+    }
+
+    private func close(_ app: WebApp) {
+        let wasSelected = model.selectedID == app.id
+        model.removeApp(app.id)
+        if wasSelected, let id = model.selectedID { onSelect(id) }
+    }
+
+    private func close(_ group: TabGroup) {
+        let closedSelected = model.selectedID.map(group.tabIDs.contains) ?? false
+        model.closeGroup(group.id)
+        if closedSelected, let id = model.selectedID { onSelect(id) }
+    }
+
+    private func setDropTarget(_ target: String?) {
+        withAnimation(reduceMotion ? nil : Motion.sidebarDropTarget) {
+            dropTarget = target
+        }
+    }
+
+    private func withSidebarReorder(_ mutation: () -> Void) {
+        withAnimation(reduceMotion ? nil : Motion.sidebarReorder, mutation)
+    }
+
+    private func handleDrop(
+        _ drag: RailDrag,
+        on app: WebApp,
+        in group: TabGroup?,
+        at location: CGPoint
+    ) {
+        var createdGroup: TabGroup?
+        withSidebarReorder {
+            switch drag {
+            case .tab(let draggedID):
+                if let group {
+                    let reference = location.y < 16
+                        ? app.id
+                        : nextTabReference(after: app.id, in: group)
+                    model.moveTab(draggedID, toGroup: group.id, before: reference)
+                } else if location.y >= 8, location.y <= 24, location.x > 42 {
+                    createdGroup = model.combine(draggedID, with: app.id, name: loc.tabGroup)
+                } else {
+                    let reference = location.y < 16
+                        ? app.id
+                        : nextTopLevelReference(after: app.id)
+                    model.moveTabToRoot(draggedID, beforeItem: reference)
+                }
+            case .group(let groupID):
+                let topLevelID = group?.id ?? app.id
+                model.moveGroup(
+                    groupID,
+                    before: location.y < 16
+                        ? topLevelID
+                        : nextTopLevelReference(after: topLevelID)
+                )
+            }
+        }
+        if let createdGroup { beginRenameGroup(createdGroup) }
+    }
+
+    private func nextTabReference(after tabID: WebApp.ID, in group: TabGroup) -> WebApp.ID? {
+        guard let index = group.tabIDs.firstIndex(of: tabID) else { return nil }
+        return group.tabIDs.indices.contains(index + 1) ? group.tabIDs[index + 1] : nil
+    }
+
+    private func nextTopLevelReference(after referenceID: UUID) -> UUID? {
+        let items = model.activeWorkspace.sidebarItems
+        guard let index = items.firstIndex(where: { $0.referenceID == referenceID }) else { return nil }
+        return items.indices.contains(index + 1) ? items[index + 1].referenceID : nil
     }
 }
 
-/// One row in the tab sidebar: favicon + name, with inline rename, hover tint
-/// and a left selection bar.
-private struct TabRow: View {
+private enum RailDrag: Hashable {
+    case tab(UUID)
+    case group(UUID)
+
+    init?(_ encoded: String) {
+        let parts = encoded.split(separator: ":", maxSplits: 1).map(String.init)
+        guard parts.count == 2, let id = UUID(uuidString: parts[1]) else { return nil }
+        switch parts[0] {
+        case "tab": self = .tab(id)
+        case "group": self = .group(id)
+        default: return nil
+        }
+    }
+
+    var encoded: String {
+        switch self {
+        case .tab(let id): return "tab:\(id.uuidString)"
+        case .group(let id): return "group:\(id.uuidString)"
+        }
+    }
+}
+
+extension TabGroupColor {
+    static let palette: [TabGroupColor] = [
+        .gray, .blue, .red, .yellow, .green, .pink, .purple, .cyan, .orange
+    ]
+
+    var tint: Color {
+        switch self {
+        case .blue: return Color(red: 0.43, green: 0.65, blue: 0.98)
+        case .purple: return Color(red: 0.65, green: 0.49, blue: 0.93)
+        case .pink: return Color(red: 0.97, green: 0.48, blue: 0.75)
+        case .red: return Color(red: 0.96, green: 0.46, blue: 0.42)
+        case .orange: return Color(red: 0.98, green: 0.63, blue: 0.32)
+        case .green: return Color(red: 0.43, green: 0.78, blue: 0.55)
+        case .gray: return Color(red: 0.62, green: 0.65, blue: 0.69)
+        case .yellow: return Color(red: 0.98, green: 0.78, blue: 0.31)
+        case .cyan: return Color(red: 0.37, green: 0.76, blue: 0.84)
+        }
+    }
+
+    func displayName(chinese: Bool) -> String {
+        switch self {
+        case .blue: return chinese ? "蓝色" : "Blue"
+        case .purple: return chinese ? "紫色" : "Purple"
+        case .pink: return chinese ? "粉色" : "Pink"
+        case .red: return chinese ? "红色" : "Red"
+        case .orange: return chinese ? "橙色" : "Orange"
+        case .green: return chinese ? "绿色" : "Green"
+        case .gray: return chinese ? "灰色" : "Gray"
+        case .yellow: return chinese ? "黄色" : "Yellow"
+        case .cyan: return chinese ? "青色" : "Cyan"
+        }
+    }
+}
+
+extension TabGroupCustomColor {
+    var tint: Color {
+        Color(red: red, green: green, blue: blue)
+    }
+
+    init?(color: Color) {
+        guard let converted = NSColor(color).usingColorSpace(.sRGB) else { return nil }
+        self.init(
+            red: Double(converted.redComponent),
+            green: Double(converted.greenComponent),
+            blue: Double(converted.blueComponent)
+        )
+    }
+}
+
+extension TabGroup {
+    var tint: Color { customColor?.tint ?? color.tint }
+}
+
+/// Browser tab row with favicon, unread state and a close affordance that
+/// appears on hover, matching the interaction density of Arc and Edge.
+private struct BrowserTabRow: View {
     let app: WebApp
     let selected: Bool
     let targeted: Bool
     let icon: NSImage?
     let isRenaming: Bool
-    let displayTitle: String
     let unread: Int?
+    let closeLabel: String
     var onSelect: () -> Void
+    var onClose: () -> Void
     var onCommitRename: (String) -> Void
     var onCancelRename: () -> Void
 
@@ -203,12 +714,10 @@ private struct TabRow: View {
     @FocusState private var focused: Bool
 
     var body: some View {
-        HStack(spacing: 9) {
-            FaviconView(app: app, icon: icon, size: 22)
+        HStack(spacing: 7) {
+            FaviconView(app: app, icon: icon, size: 16)
                 .overlay(alignment: .topTrailing) {
-                    if let unread {
-                        UnreadBadge(count: unread).offset(x: 6, y: -6)
-                    }
+                    if let unread { UnreadBadge(count: unread).offset(x: 6, y: -6) }
                 }
             if isRenaming {
                 TextField("", text: $draft)
@@ -219,33 +728,44 @@ private struct TabRow: View {
                     .onExitCommand(perform: onCancelRename)
                     .onAppear { draft = app.displayName; focused = true }
             } else {
-                Text(displayTitle)
+                Text(app.displayName)
                     .font(.system(size: 12.5, weight: selected ? .semibold : .regular))
+                    .foregroundStyle(selected ? AnyShapeStyle(.primary) : AnyShapeStyle(.primary.opacity(0.86)))
                     .lineLimit(1)
             }
-            Spacer(minLength: 0)
+            Spacer(minLength: 2)
+            if hovering || selected {
+                Button(action: onClose) {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 9.5, weight: .bold))
+                        .foregroundStyle(.primary.opacity(0.82))
+                        .frame(width: 20, height: 20)
+                        .background(.primary.opacity(hovering ? 0.10 : 0), in: Circle())
+                }
+                .buttonStyle(.plain)
+                .help(closeLabel)
+                .accessibilityLabel(closeLabel)
+            }
         }
-        .padding(.horizontal, 8).padding(.vertical, 6)
+        .padding(.horizontal, 9)
+        .frame(height: 32)
         .background(
-            RoundedRectangle(cornerRadius: Theme.tileCorner, style: .continuous)
-                .fill(.primary.opacity(targeted ? 0.16 : (selected ? 0.10 : (hovering ? 0.05 : 0))))
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(.primary.opacity(targeted ? 0.18 : (selected ? 0.12 : (hovering ? 0.07 : 0))))
         )
-        .overlay(alignment: .leading) {
-            Capsule().fill(Color.primary)
-                .frame(width: 3, height: selected ? 16 : 0)
-                .offset(x: -4)
-                .animation(.spring(response: 0.3, dampingFraction: 0.7), value: selected)
+        .overlay {
+            if targeted {
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .stroke(.primary.opacity(0.58), lineWidth: 1.5)
+            }
         }
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
-        .onTapGesture { onSelect() }
-        .animation(.easeOut(duration: 0.12), value: hovering)
+        .onTapGesture(perform: onSelect)
+        .animation(.easeOut(duration: 0.1), value: hovering)
     }
 }
 
-/// Unread-count pill shown on a tab's favicon. Red is the universal unread
-/// signal (macOS dock, Ferdium/Rambox) — a deliberate exception to the otherwise
-/// monochrome palette, because the badge's whole job is to catch the eye.
 private struct UnreadBadge: View {
     let count: Int
 
@@ -261,9 +781,7 @@ private struct UnreadBadge: View {
     }
 }
 
-/// Favicon (or monogram fallback) for a web app, rounded like an app icon.
-/// Shared by the tab sidebar and the Preferences list so icon rendering lives
-/// in one place.
+/// Favicon (or monogram fallback) shared by the browser rail and Preferences.
 struct FaviconView: View {
     let app: WebApp
     let icon: NSImage?
@@ -292,8 +810,6 @@ struct FaviconView: View {
     }
 }
 
-/// A single dock entry used in Preferences: a centered, rounded favicon with a
-/// faint hover/selection backing.
 struct AppTile: View {
     let app: WebApp
     let selected: Bool

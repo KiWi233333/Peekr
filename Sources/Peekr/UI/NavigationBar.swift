@@ -9,21 +9,29 @@ struct NavigationBar: View {
     let settings: Settings
     let model: AppModel
     let bookmarks: BookmarksModel
+    let showsSidebarToggle: Bool
+    let sidebarOnLeft: Bool
 
     var onMoveBegan: () -> Void
     var onMoveChanged: (CGSize) -> Void
     var onMoveEnded: () -> Void
     var onBookmarks: () -> Void
+    var onToggleSidebar: () -> Void
 
     @State private var text = ""
     @State private var isDragging = false
     @State private var suggestions: [OmniboxSuggestion] = []
     @State private var selectedIndex: Int?
     @ObserveInjection private var inject
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var suggestTask: Task<Void, Never>?
     /// Set while a chosen candidate is being written into the field, so the
     /// resulting text change doesn't re-query suggestions and drop the selection.
     @State private var fillingFromSuggestion = false
+    /// A tab switch owns the omnibox contents even while the field is focused.
+    /// Without this guard, ⌘W after ⌘T leaves the closed tab's home-page
+    /// URL over the newly activated page.
+    @State private var shouldSyncFocusedAddress = false
     @FocusState private var focused: Bool
 
     private var showSuggestions: Bool { focused && !suggestions.isEmpty }
@@ -42,6 +50,7 @@ struct NavigationBar: View {
                 text = state.urlString
                 updateSuggestions()
             } else {
+                shouldSyncFocusedAddress = false
                 clearSuggestions()
             }
         }
@@ -49,13 +58,26 @@ struct NavigationBar: View {
             if fillingFromSuggestion { fillingFromSuggestion = false; return }
             updateSuggestions()
         }
-        .onChange(of: state.urlString) { _, _ in if !focused { syncText() } }
+        .onChange(of: state.currentID) { _, _ in
+            shouldSyncFocusedAddress = true
+            syncText()
+            if focused { updateSuggestions() }
+        }
+        .onChange(of: state.urlString) { _, _ in
+            if !focused || shouldSyncFocusedAddress {
+                syncText()
+                shouldSyncFocusedAddress = false
+            }
+        }
         .onChange(of: state.focusOmniboxToken) { _, _ in focused = true }
         .enableInjection()
     }
 
     private var bar: some View {
         HStack(spacing: 6) {
+            if showsSidebarToggle, sidebarOnLeft {
+                sidebarToggle
+            }
             grip
             navButton("chevron.backward", enabled: state.canGoBack) { manager.goBack() }
             navButton("chevron.forward", enabled: state.canGoForward) { manager.goForward() }
@@ -63,6 +85,9 @@ struct NavigationBar: View {
             omnibox
             navButton("bookmark", enabled: true) { onBookmarks() }
             navButton("safari", enabled: !state.urlString.isEmpty) { openExternally() }
+            if showsSidebarToggle, !sidebarOnLeft {
+                sidebarToggle
+            }
         }
         .padding(.horizontal, 9)
         .padding(.vertical, 6)
@@ -73,6 +98,21 @@ struct NavigationBar: View {
     }
 
     // MARK: - Pieces
+
+    private var sidebarToggle: some View {
+        Button(action: onToggleSidebar) {
+            Image(systemName: sidebarOnLeft ? "sidebar.left" : "sidebar.right")
+                .font(.system(size: 12, weight: .semibold))
+                .frame(width: 26, height: 26)
+                .contentShape(Circle())
+                .contentTransition(.symbolEffect(.replace))
+        }
+        .buttonStyle(IconButtonStyle())
+        .foregroundStyle(.primary)
+        .help(settings.strings.expandSidebar)
+        .accessibilityLabel(settings.strings.expandSidebar)
+        .animation(reduceMotion ? nil : Motion.sidebarStyle, value: sidebarOnLeft)
+    }
 
     private var grip: some View {
         Image(systemName: "line.3.horizontal")

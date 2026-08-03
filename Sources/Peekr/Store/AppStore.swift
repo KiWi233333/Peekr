@@ -15,8 +15,8 @@ struct AppStore {
         self.fileURL = fileURL
     }
 
-    func load() -> WorkspacesData {
-        guard let data = try? Data(contentsOf: fileURL) else { return Self.defaults }
+    func load(fallback: WorkspacesData = Self.defaults()) -> WorkspacesData {
+        guard let data = try? Data(contentsOf: fileURL) else { return fallback }
         // Current format: a workspaces object.
         if let decoded = try? JSONDecoder().decode(WorkspacesData.self, from: data),
            !decoded.workspaces.isEmpty {
@@ -26,7 +26,7 @@ struct AppStore {
         if let legacy = try? JSONDecoder().decode([WebApp].self, from: data), !legacy.isEmpty {
             return WorkspacesData(workspaces: [Workspace(tabs: legacy)])
         }
-        return Self.defaults
+        return fallback
     }
 
     func save(_ data: WorkspacesData) {
@@ -34,12 +34,12 @@ struct AppStore {
         try? encoded.write(to: fileURL, options: .atomic)
     }
 
-    static var defaults: WorkspacesData {
+    static func defaults(searchEngine: SearchEngine = .google) -> WorkspacesData {
         WorkspacesData(workspaces: [Workspace(tabs: [
-            WebApp(title: "ChatGPT", urlString: "https://chatgpt.com"),
-            WebApp(title: "GitHub", urlString: "https://github.com"),
-            WebApp(title: "YouTube", urlString: "https://youtube.com"),
-            WebApp(title: "Gmail", urlString: "https://mail.google.com")
+            WebApp(
+                title: searchEngine.displayName,
+                urlString: searchEngine.homepageURL.absoluteString
+            )
         ])])
     }
 }

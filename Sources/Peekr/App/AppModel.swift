@@ -1,177 +1,554 @@
 import Foundation
 import Observation
 
-/// Observable source of truth for the workspaces, the active tab and pin state.
-/// Tab operations act on the *active* workspace, so the rail, web area and
-/// Preferences all stay in sync with whichever space is showing.
+/// Observable browser model: Arc-like Spaces containing an ordered mix of
+/// ungrouped tabs and Edge-like collapsible tab groups.
 @MainActor
 @Observable
 final class AppModel {
     var workspaces: [Workspace]
     var activeWorkspaceID: UUID
-    var selectedID: WebApp.ID?
     var isPinned: Bool = false
 
-    /// Called when a tab is removed, so the composition root can tear down its
-    /// cached web engine (and badge). Keeps the model free of any web reference.
+    /// Called after a tab record leaves the model, allowing the composition root
+    /// to tear down its cached engine and badge without coupling this layer to UI.
     var onRemove: ((WebApp.ID) -> Void)?
 
-    private let store: AppStore
-
-    init(store: AppStore) {
-        self.store = store
-        let data = store.load()
-        workspaces = data.workspaces
-        activeWorkspaceID = data.activeWorkspaceID ?? data.workspaces.first?.id ?? UUID()
-        selectedID = workspaces.first { $0.id == activeWorkspaceID }?.tabs.first?.id
+    private struct ClosedTab {
+        let app: WebApp
+        let workspaceID: Workspace.ID
+        let groupID: TabGroup.ID?
+        let topLevelIndex: Int
+        let childIndex: Int?
     }
 
-    // MARK: - Active workspace
+    /// A group made implicitly by dropping one loose tab onto another. It is
+    /// deliberately runtime-only: relaunching the app is a strong enough
+    /// boundary to treat every persisted group as intentional.
+    private struct ProvisionalGroup {
+        let createdAt: TimeInterval
+    }
 
-    var activeWorkspace: Workspace { workspaces.first { $0.id == activeWorkspaceID } ?? workspaces[0] }
+    private static let provisionalGroupLifetime: TimeInterval = 8
 
-    /// Tabs of the active workspace — what the rail and web area bind to.
-    var apps: [WebApp] { activeWorkspace.tabs }
+    private let store: AppStore
+    private let searchEngine: () -> SearchEngine
+    private let provisionalNow: () -> TimeInterval
+    private var recentlyClosed: [ClosedTab] = []
+    private var selectionHistory: [WebApp.ID] = []
+    private var provisionalGroups: [TabGroup.ID: ProvisionalGroup] = [:]
+    private var pendingPersist: Task<Void, Never>?
 
-    /// Every tab across all workspaces — used as an omnibox suggestion source.
+    init(
+        store: AppStore,
+        searchEngine: @escaping () -> SearchEngine = { .google },
+        provisionalNow: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }
+    ) {
+        self.store = store
+        self.searchEngine = searchEngine
+        self.provisionalNow = provisionalNow
+        let data = store.load(fallback: AppStore.defaults(searchEngine: searchEngine()))
+        let loadedWorkspaces = data.workspaces.isEmpty ? [Workspace()] : data.workspaces
+        let validActiveID = data.activeWorkspaceID.flatMap { id in
+            loadedWorkspaces.contains { $0.id == id } ? id : nil
+        }
+        workspaces = loadedWorkspaces
+        activeWorkspaceID = validActiveID ?? loadedWorkspaces[0].id
+        for index in workspaces.indices { workspaces[index].normalizeSidebar() }
+        if let selectedID { selectionHistory = [selectedID] }
+    }
+
+    // MARK: - Active space and ordering
+
+    private var activeIndex: Int {
+        workspaces.firstIndex { $0.id == activeWorkspaceID } ?? 0
+    }
+
+    var activeWorkspace: Workspace { workspaces[activeIndex] }
+
+    /// Browser order for the active Space, including children of collapsed
+    /// groups. Collapse is presentation-only and never changes shortcut order.
+    var apps: [WebApp] {
+        orderedApps(in: activeWorkspace)
+    }
+
     var allTabs: [WebApp] { workspaces.flatMap(\.tabs) }
 
-    private var activeIndex: Int { workspaces.firstIndex { $0.id == activeWorkspaceID } ?? 0 }
+    var selectedID: WebApp.ID? {
+        get { workspaces[activeIndex].selectedTabID }
+        set { workspaces[activeIndex].selectedTabID = newValue }
+    }
 
-    func select(_ id: WebApp.ID) { selectedID = id }
+    var hasRecentlyClosedTabs: Bool { !recentlyClosed.isEmpty }
 
-    // MARK: - Tabs (operate on the active workspace)
+    func tab(_ id: WebApp.ID) -> WebApp? {
+        guard let location = locate(id) else { return nil }
+        return workspaces[location.workspace].tabs[location.tab]
+    }
+
+    func group(_ id: TabGroup.ID) -> TabGroup? {
+        workspaces[activeIndex].groups.first { $0.id == id }
+    }
+
+    func group(containing tabID: WebApp.ID) -> TabGroup? {
+        workspaces[activeIndex].group(containing: tabID)
+    }
+
+    func select(_ id: WebApp.ID) {
+        guard workspaces[activeIndex].tabs.contains(where: { $0.id == id }) else { return }
+        selectedID = id
+        recordSelection(id)
+        persist()
+    }
 
     @discardableResult
-    func addApp(title: String, urlString: String, alias: String = "") -> WebApp {
+    func selectAdjacentTab(reverse: Bool = false) -> WebApp.ID? {
+        let ids = activeWorkspace.orderedTabIDs
+        guard !ids.isEmpty else { return nil }
+        let current = selectedID.flatMap { ids.firstIndex(of: $0) } ?? 0
+        let delta = reverse ? -1 : 1
+        let next = (current + delta + ids.count) % ids.count
+        select(ids[next])
+        return ids[next]
+    }
+
+    @discardableResult
+    func selectMostRecentTab() -> WebApp.ID? {
+        guard let current = selectedID else { return selectAdjacentTab() }
+        guard let recent = selectionHistory.first(where: { $0 != current && tab($0) != nil }) else {
+            return selectAdjacentTab()
+        }
+        if let location = locate(recent), workspaces[location.workspace].id != activeWorkspaceID {
+            selectWorkspace(workspaces[location.workspace].id)
+        }
+        select(recent)
+        return recent
+    }
+
+    // MARK: - Tabs
+
+    @discardableResult
+    func addApp(
+        title: String,
+        urlString: String,
+        alias: String = "",
+        toGroup groupID: TabGroup.ID? = nil
+    ) -> WebApp {
         let app = WebApp(title: title, urlString: urlString, alias: alias)
         workspaces[activeIndex].tabs.append(app)
+        if let groupID, let groupIndex = activeGroupIndex(groupID) {
+            workspaces[activeIndex].groups[groupIndex].tabIDs.append(app.id)
+            workspaces[activeIndex].groups[groupIndex].isCollapsed = false
+            if workspaces[activeIndex].groups[groupIndex].tabIDs.count >= 3 {
+                confirmGroup(groupID)
+            }
+        } else {
+            workspaces[activeIndex].sidebarItems.append(.tab(app.id))
+        }
         selectedID = app.id
+        recordSelection(app.id)
         persist()
         return app
     }
 
+    @discardableResult
+    func addBlankTab(toGroup groupID: TabGroup.ID? = nil) -> WebApp {
+        let provider = searchEngine()
+        return addApp(
+            title: provider.displayName,
+            urlString: provider.homepageURL.absoluteString,
+            toGroup: groupID
+        )
+    }
+
+    @discardableResult
+    func duplicateTab(_ id: WebApp.ID) -> WebApp? {
+        guard let source = tab(id) else { return nil }
+        let copy = WebApp(title: source.title, urlString: source.urlString, alias: source.alias)
+        workspaces[activeIndex].tabs.append(copy)
+        if let group = group(containing: id), let groupIndex = activeGroupIndex(group.id) {
+            let sourceIndex = workspaces[activeIndex].groups[groupIndex].tabIDs.firstIndex(of: id)
+                ?? workspaces[activeIndex].groups[groupIndex].tabIDs.count - 1
+            workspaces[activeIndex].groups[groupIndex].tabIDs.insert(
+                copy.id,
+                at: min(sourceIndex + 1, workspaces[activeIndex].groups[groupIndex].tabIDs.count)
+            )
+            workspaces[activeIndex].groups[groupIndex].isCollapsed = false
+            if workspaces[activeIndex].groups[groupIndex].tabIDs.count >= 3 {
+                confirmGroup(group.id)
+            }
+        } else {
+            let sourceIndex = workspaces[activeIndex].sidebarItems.firstIndex {
+                $0.kind == .tab && $0.referenceID == id
+            } ?? workspaces[activeIndex].sidebarItems.count - 1
+            workspaces[activeIndex].sidebarItems.insert(
+                .tab(copy.id),
+                at: min(sourceIndex + 1, workspaces[activeIndex].sidebarItems.count)
+            )
+        }
+        selectedID = copy.id
+        recordSelection(copy.id)
+        persist()
+        return copy
+    }
+
     func update(_ app: WebApp) {
-        guard let idx = workspaces[activeIndex].tabs.firstIndex(where: { $0.id == app.id }) else { return }
-        workspaces[activeIndex].tabs[idx] = app
+        guard let location = locate(app.id) else { return }
+        workspaces[location.workspace].tabs[location.tab] = app
         persist()
     }
 
-    /// Set the user-facing alias — the single write path the rail's inline rename
-    /// and the edit sheet both use. Empty clears it, so `displayName` falls back
-    /// to the page title.
     func setAlias(_ id: WebApp.ID, to alias: String) {
-        guard let idx = workspaces[activeIndex].tabs.firstIndex(where: { $0.id == id }) else { return }
-        workspaces[activeIndex].tabs[idx].alias = alias
+        guard let location = locate(id) else { return }
+        workspaces[location.workspace].tabs[location.tab].alias = alias
         persist()
     }
 
-    /// Set the page title. The favicon-refresh path writes the freshly-fetched
-    /// title here; the rail's inline rename writes the alias (`setAlias`) instead.
     func rename(_ id: WebApp.ID, to title: String) {
-        guard let idx = workspaces[activeIndex].tabs.firstIndex(where: { $0.id == id }) else { return }
-        workspaces[activeIndex].tabs[idx].title = title
+        guard let location = locate(id) else { return }
+        workspaces[location.workspace].tabs[location.tab].title = title
         persist()
     }
 
-    /// Mirror the engine's live `document.title` onto the tab as it navigates, so
-    /// the rail name tracks the current page like a real browser tab. Searches all
-    /// workspaces because engines outlive workspace switches; strips the unread
-    /// token so it never duplicates the red badge; and coalesces the disk write —
-    /// a busy page flips its title several times a second, but the rail updates
-    /// in-memory instantly while only one JSON write lands after it settles.
     func applyLiveTitle(_ id: WebApp.ID, to rawTitle: String) {
         let title = BadgeParser.strippingCount(fromTitle: rawTitle)
-        guard !title.isEmpty, let (w, t) = locate(id),
-              workspaces[w].tabs[t].title != title else { return }
-        workspaces[w].tabs[t].title = title
+        guard !title.isEmpty, let location = locate(id),
+              workspaces[location.workspace].tabs[location.tab].title != title else { return }
+        workspaces[location.workspace].tabs[location.tab].title = title
         schedulePersist()
     }
 
-    private func locate(_ id: WebApp.ID) -> (workspace: Int, tab: Int)? {
-        for (w, workspace) in workspaces.enumerated() {
-            if let t = workspace.tabs.firstIndex(where: { $0.id == id }) { return (w, t) }
-        }
-        return nil
-    }
-
     func removeApp(_ id: WebApp.ID) {
-        workspaces[activeIndex].tabs.removeAll { $0.id == id }
-        if selectedID == id { selectedID = workspaces[activeIndex].tabs.first?.id }
+        guard let location = locate(id) else { return }
+        let workspaceIndex = location.workspace
+        let workspace = workspaces[workspaceIndex]
+        let ordered = workspace.orderedTabIDs
+        let oldOrderIndex = ordered.firstIndex(of: id) ?? 0
+        let group = workspace.group(containing: id)
+        let topIndex = workspace.sidebarItems.firstIndex {
+            $0.referenceID == (group?.id ?? id)
+        } ?? workspace.sidebarItems.count
+        let childIndex = group?.tabIDs.firstIndex(of: id)
+
+        recentlyClosed.append(ClosedTab(
+            app: workspace.tabs[location.tab],
+            workspaceID: workspace.id,
+            groupID: group?.id,
+            topLevelIndex: topIndex,
+            childIndex: childIndex
+        ))
+        if recentlyClosed.count > 25 { recentlyClosed.removeFirst(recentlyClosed.count - 25) }
+
+        removeTabReference(id, from: workspaceIndex, pruneEmptyGroups: true)
+        workspaces[workspaceIndex].tabs.removeAll { $0.id == id }
+        selectionHistory.removeAll { $0 == id }
+
+        if workspaces[workspaceIndex].selectedTabID == id {
+            let remaining = workspaces[workspaceIndex].orderedTabIDs
+            workspaces[workspaceIndex].selectedTabID = remaining.isEmpty
+                ? nil
+                : remaining[min(oldOrderIndex, remaining.count - 1)]
+            if workspaceIndex == activeIndex, let selectedID { recordSelection(selectedID) }
+        }
         persist()
         onRemove?(id)
     }
 
-    /// Move the tab identified by `draggedID` to sit just before `targetID`.
-    func move(_ draggedID: WebApp.ID, before targetID: WebApp.ID) {
-        guard draggedID != targetID,
-              let from = workspaces[activeIndex].tabs.firstIndex(where: { $0.id == draggedID })
-        else { return }
-        let item = workspaces[activeIndex].tabs.remove(at: from)
-        if let to = workspaces[activeIndex].tabs.firstIndex(where: { $0.id == targetID }) {
-            workspaces[activeIndex].tabs.insert(item, at: to)
+    @discardableResult
+    func reopenLastClosedTab() -> WebApp? {
+        guard let closed = recentlyClosed.popLast() else { return nil }
+        let workspaceIndex = workspaces.firstIndex { $0.id == closed.workspaceID } ?? activeIndex
+        activeWorkspaceID = workspaces[workspaceIndex].id
+        workspaces[workspaceIndex].tabs.append(closed.app)
+
+        if let groupID = closed.groupID,
+           let groupIndex = workspaces[workspaceIndex].groups.firstIndex(where: { $0.id == groupID }) {
+            let index = min(closed.childIndex ?? workspaces[workspaceIndex].groups[groupIndex].tabIDs.count,
+                            workspaces[workspaceIndex].groups[groupIndex].tabIDs.count)
+            workspaces[workspaceIndex].groups[groupIndex].tabIDs.insert(closed.app.id, at: index)
+            workspaces[workspaceIndex].groups[groupIndex].isCollapsed = false
         } else {
-            workspaces[activeIndex].tabs.append(item)
+            // A provisional two-tab group may have dissolved when this tab was
+            // closed. Preserve its former child order when reopening the tab as
+            // a loose sibling beside the one that remained.
+            let childOffset = closed.groupID == nil ? 0 : min(closed.childIndex ?? 0, 1)
+            let index = min(
+                closed.topLevelIndex + childOffset,
+                workspaces[workspaceIndex].sidebarItems.count
+            )
+            workspaces[workspaceIndex].sidebarItems.insert(.tab(closed.app.id), at: index)
+        }
+
+        selectedID = closed.app.id
+        recordSelection(closed.app.id)
+        persist()
+        return closed.app
+    }
+
+    /// Compatibility entry point used by the existing Preferences list.
+    func move(_ draggedID: WebApp.ID, before targetID: WebApp.ID) {
+        moveTab(draggedID, before: targetID)
+    }
+
+    func moveTab(_ draggedID: WebApp.ID, before targetID: WebApp.ID) {
+        guard draggedID != targetID,
+              workspaces[activeIndex].tabs.contains(where: { $0.id == draggedID }),
+              workspaces[activeIndex].tabs.contains(where: { $0.id == targetID }) else { return }
+
+        if let targetGroup = group(containing: targetID) {
+            moveTab(draggedID, toGroup: targetGroup.id, before: targetID)
+        } else {
+            moveTabToRoot(draggedID, beforeItem: targetID)
+        }
+    }
+
+    func moveTab(_ tabID: WebApp.ID, toGroup groupID: TabGroup.ID, before targetID: WebApp.ID? = nil) {
+        guard tabID != targetID else { return }
+        guard workspaces[activeIndex].tabs.contains(where: { $0.id == tabID }),
+              activeGroupIndex(groupID) != nil else { return }
+        removeTabReference(tabID, from: activeIndex, pruneEmptyGroups: false)
+        dissolveProvisionalSingletonGroups(in: activeIndex, excluding: groupID)
+        pruneEmptyGroups(in: activeIndex, excluding: groupID)
+        guard let groupIndex = activeGroupIndex(groupID) else { return }
+        let insertIndex = targetID.flatMap {
+            workspaces[activeIndex].groups[groupIndex].tabIDs.firstIndex(of: $0)
+        } ?? workspaces[activeIndex].groups[groupIndex].tabIDs.count
+        workspaces[activeIndex].groups[groupIndex].tabIDs.insert(tabID, at: insertIndex)
+        workspaces[activeIndex].groups[groupIndex].isCollapsed = false
+        if workspaces[activeIndex].groups[groupIndex].tabIDs.count >= 3 {
+            confirmGroup(groupID)
         }
         persist()
     }
 
-    /// Reorder from a List's drag offsets (no SwiftUI dependency here).
-    func moveApps(fromOffsets source: IndexSet, toOffset destination: Int) {
-        var tabs = workspaces[activeIndex].tabs
-        let moving = source.sorted().map { tabs[$0] }
-        for index in source.sorted(by: >) { tabs.remove(at: index) }
-        let adjusted = destination - source.filter { $0 < destination }.count
-        tabs.insert(contentsOf: moving, at: min(max(0, adjusted), tabs.count))
-        workspaces[activeIndex].tabs = tabs
+    func moveTabToRoot(_ tabID: WebApp.ID, beforeItem referenceID: UUID? = nil) {
+        guard tabID != referenceID else { return }
+        guard workspaces[activeIndex].tabs.contains(where: { $0.id == tabID }) else { return }
+        removeTabReference(tabID, from: activeIndex, pruneEmptyGroups: true)
+        let index = referenceID.flatMap { id in
+            workspaces[activeIndex].sidebarItems.firstIndex { $0.referenceID == id }
+        } ?? workspaces[activeIndex].sidebarItems.count
+        workspaces[activeIndex].sidebarItems.insert(.tab(tabID), at: index)
         persist()
     }
 
-    // MARK: - Workspaces
+    /// Dropping a tab on an ungrouped tab creates a group; dropping on a grouped
+    /// tab joins that existing group. The dragged tab keeps its original ID.
+    @discardableResult
+    func combine(
+        _ draggedID: WebApp.ID,
+        with targetID: WebApp.ID,
+        name: String = "Tab Group"
+    ) -> TabGroup? {
+        guard draggedID != targetID else { return group(containing: targetID) }
+        if let targetGroup = group(containing: targetID) {
+            moveTab(draggedID, toGroup: targetGroup.id, before: targetID)
+            return group(targetGroup.id)
+        }
+        let group = addGroup(
+            name: name,
+            color: nextGroupColor(),
+            containing: [targetID, draggedID]
+        )
+        provisionalGroups[group.id] = ProvisionalGroup(createdAt: provisionalNow())
+        return group
+    }
+
+    /// Reorder from the flat Preferences list. Moving a child out of a group is
+    /// explicit here, matching the result of dropping it at top level in the rail.
+    func moveApps(fromOffsets source: IndexSet, toOffset destination: Int) {
+        let ids = apps.map(\.id)
+        let moving = source.sorted().compactMap { ids.indices.contains($0) ? ids[$0] : nil }
+        guard !moving.isEmpty else { return }
+        let remaining = ids.filter { !moving.contains($0) }
+        let adjusted = destination - source.filter { $0 < destination }.count
+        let target = remaining.indices.contains(adjusted) ? remaining[adjusted] : nil
+        for id in moving { moveTabToRoot(id, beforeItem: target) }
+    }
+
+    // MARK: - Groups
+
+    @discardableResult
+    func addGroup(
+        name: String,
+        color: TabGroupColor = .blue,
+        containing tabIDs: [WebApp.ID] = []
+    ) -> TabGroup {
+        let validIDs = tabIDs.filter { id in
+            workspaces[activeIndex].tabs.contains { $0.id == id }
+        }
+        let anchorID = validIDs.compactMap { topLevelReference(for: $0) }.first
+        let insertion = anchorID.flatMap { id in
+            workspaces[activeIndex].sidebarItems.firstIndex { $0.referenceID == id }
+        } ?? workspaces[activeIndex].sidebarItems.count
+
+        for id in validIDs { removeTabReference(id, from: activeIndex, pruneEmptyGroups: true) }
+        let group = TabGroup(name: name, color: color, tabIDs: validIDs)
+        workspaces[activeIndex].groups.append(group)
+        workspaces[activeIndex].sidebarItems.insert(
+            .group(group.id),
+            at: min(insertion, workspaces[activeIndex].sidebarItems.count)
+        )
+        persist()
+        return group
+    }
+
+    func renameGroup(_ id: TabGroup.ID, to name: String) {
+        guard let index = activeGroupIndex(id) else { return }
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        workspaces[activeIndex].groups[index].name = trimmed.isEmpty ? "Tab Group" : trimmed
+        confirmGroup(id)
+        persist()
+    }
+
+    func recolorGroup(_ id: TabGroup.ID, to color: TabGroupColor) {
+        guard let index = activeGroupIndex(id) else { return }
+        workspaces[activeIndex].groups[index].color = color
+        workspaces[activeIndex].groups[index].customColor = nil
+        confirmGroup(id)
+        persist()
+    }
+
+    func setCustomColor(_ color: TabGroupCustomColor, forGroup id: TabGroup.ID) {
+        guard let index = activeGroupIndex(id) else { return }
+        workspaces[activeIndex].groups[index].customColor = color
+        confirmGroup(id)
+        persist()
+    }
+
+    func toggleGroup(_ id: TabGroup.ID) {
+        guard let index = activeGroupIndex(id) else { return }
+        workspaces[activeIndex].groups[index].isCollapsed.toggle()
+        confirmGroup(id)
+        persist()
+    }
+
+    func moveGroup(_ id: TabGroup.ID, before referenceID: UUID?) {
+        guard id != referenceID else { return }
+        guard let from = workspaces[activeIndex].sidebarItems.firstIndex(where: {
+            $0.kind == .group && $0.referenceID == id
+        }) else { return }
+        let item = workspaces[activeIndex].sidebarItems.remove(at: from)
+        let to = referenceID.flatMap { ref in
+            workspaces[activeIndex].sidebarItems.firstIndex { $0.referenceID == ref }
+        } ?? workspaces[activeIndex].sidebarItems.count
+        workspaces[activeIndex].sidebarItems.insert(item, at: to)
+        confirmGroup(id)
+        persist()
+    }
+
+    func ungroup(_ id: TabGroup.ID) {
+        guard let groupIndex = activeGroupIndex(id),
+              let itemIndex = workspaces[activeIndex].sidebarItems.firstIndex(where: {
+                  $0.kind == .group && $0.referenceID == id
+              }) else { return }
+        let tabIDs = workspaces[activeIndex].groups[groupIndex].tabIDs
+        workspaces[activeIndex].groups.remove(at: groupIndex)
+        workspaces[activeIndex].sidebarItems.remove(at: itemIndex)
+        provisionalGroups.removeValue(forKey: id)
+        workspaces[activeIndex].sidebarItems.insert(
+            contentsOf: tabIDs.map(SidebarItem.tab), at: itemIndex
+        )
+        persist()
+    }
+
+    func closeGroup(_ id: TabGroup.ID) {
+        guard let group = group(id) else { return }
+        let closing = Set(group.tabIDs)
+        let oldOrder = activeWorkspace.orderedTabIDs
+        let selectionIndex = selectedID.flatMap { oldOrder.firstIndex(of: $0) } ?? 0
+        let nextIDs = oldOrder.filter { !closing.contains($0) }
+        if let selectedID, closing.contains(selectedID) {
+            self.selectedID = nextIDs.isEmpty ? nil : nextIDs[min(selectionIndex, nextIDs.count - 1)]
+        }
+        for tabID in group.tabIDs { removeApp(tabID) }
+        if let remainingGroup = activeGroupIndex(id) {
+            workspaces[activeIndex].groups.remove(at: remainingGroup)
+        }
+        workspaces[activeIndex].sidebarItems.removeAll {
+            $0.kind == .group && $0.referenceID == id
+        }
+        persist()
+    }
+
+    @discardableResult
+    func duplicateGroup(_ id: TabGroup.ID) -> TabGroup? {
+        guard let source = group(id) else { return nil }
+        confirmGroup(id)
+        let copies = source.tabIDs.compactMap { tab($0) }.map {
+            WebApp(title: $0.title, urlString: $0.urlString, alias: $0.alias)
+        }
+        workspaces[activeIndex].tabs.append(contentsOf: copies)
+        let duplicate = TabGroup(
+            name: source.name,
+            color: source.color,
+            customColor: source.customColor,
+            isCollapsed: source.isCollapsed,
+            tabIDs: copies.map(\.id)
+        )
+        workspaces[activeIndex].groups.append(duplicate)
+        let sourceIndex = workspaces[activeIndex].sidebarItems.firstIndex {
+            $0.kind == .group && $0.referenceID == id
+        } ?? (workspaces[activeIndex].sidebarItems.count - 1)
+        workspaces[activeIndex].sidebarItems.insert(
+            .group(duplicate.id),
+            at: min(sourceIndex + 1, workspaces[activeIndex].sidebarItems.count)
+        )
+        persist()
+        return duplicate
+    }
+
+    // MARK: - Spaces
 
     func selectWorkspace(_ id: UUID) {
         guard id != activeWorkspaceID, workspaces.contains(where: { $0.id == id }) else { return }
         activeWorkspaceID = id
-        selectedID = activeWorkspace.tabs.first?.id
+        if selectedID == nil { selectedID = activeWorkspace.orderedTabIDs.first }
+        if let selectedID { recordSelection(selectedID) }
         persist()
     }
 
     @discardableResult
     func addWorkspace() -> Workspace {
-        let workspace = Workspace()
+        let provider = searchEngine()
+        let tab = WebApp(
+            title: provider.displayName,
+            urlString: provider.homepageURL.absoluteString
+        )
+        let workspace = Workspace(tabs: [tab])
         workspaces.append(workspace)
         activeWorkspaceID = workspace.id
-        selectedID = nil
+        recordSelection(tab.id)
         persist()
         return workspace
     }
 
     func renameWorkspace(_ id: UUID, to name: String) {
-        guard let idx = workspaces.firstIndex(where: { $0.id == id }) else { return }
-        workspaces[idx].name = name
+        guard let index = workspaces.firstIndex(where: { $0.id == id }) else { return }
+        workspaces[index].name = name
         persist()
     }
 
-    /// Remove a workspace (never the last one — there's always at least one).
     func removeWorkspace(_ id: UUID) {
-        guard workspaces.count > 1, let idx = workspaces.firstIndex(where: { $0.id == id }) else { return }
-        workspaces.remove(at: idx)
-        if activeWorkspaceID == id {
-            activeWorkspaceID = workspaces[0].id
-            selectedID = activeWorkspace.tabs.first?.id
-        }
+        guard workspaces.count > 1,
+              let index = workspaces.firstIndex(where: { $0.id == id }) else { return }
+        let removedIDs = workspaces[index].tabs.map(\.id)
+        let removedGroupIDs = workspaces[index].groups.map(\.id)
+        workspaces.remove(at: index)
+        for groupID in removedGroupIDs { provisionalGroups.removeValue(forKey: groupID) }
+        if activeWorkspaceID == id { activeWorkspaceID = workspaces[0].id }
+        selectionHistory.removeAll { removedIDs.contains($0) }
         persist()
+        for tabID in removedIDs { onRemove?(tabID) }
     }
+
+    // MARK: - Persistence and helpers
 
     func persist() {
         pendingPersist?.cancel()
+        for index in workspaces.indices { workspaces[index].normalizeSidebar() }
         store.save(WorkspacesData(workspaces: workspaces, activeWorkspaceID: activeWorkspaceID))
     }
-
-    /// Debounce for the high-frequency live-title path: collapse a burst of title
-    /// changes into a single write ~1s after the last one. Any immediate `persist()`
-    /// supersedes a pending one (it cancels the timer), so state never lags.
-    private var pendingPersist: Task<Void, Never>?
 
     private func schedulePersist() {
         pendingPersist?.cancel()
@@ -180,5 +557,100 @@ final class AppModel {
             guard !Task.isCancelled else { return }
             self?.persist()
         }
+    }
+
+    private func orderedApps(in workspace: Workspace) -> [WebApp] {
+        let byID = Dictionary(uniqueKeysWithValues: workspace.tabs.map { ($0.id, $0) })
+        return workspace.orderedTabIDs.compactMap { byID[$0] }
+    }
+
+    private func locate(_ id: WebApp.ID) -> (workspace: Int, tab: Int)? {
+        for (workspaceIndex, workspace) in workspaces.enumerated() {
+            if let tabIndex = workspace.tabs.firstIndex(where: { $0.id == id }) {
+                return (workspaceIndex, tabIndex)
+            }
+        }
+        return nil
+    }
+
+    private func activeGroupIndex(_ id: TabGroup.ID) -> Int? {
+        workspaces[activeIndex].groups.firstIndex { $0.id == id }
+    }
+
+    private func topLevelReference(for tabID: WebApp.ID) -> UUID? {
+        group(containing: tabID)?.id ?? tabID
+    }
+
+    private func removeTabReference(
+        _ tabID: WebApp.ID,
+        from workspaceIndex: Int,
+        pruneEmptyGroups: Bool
+    ) {
+        workspaces[workspaceIndex].sidebarItems.removeAll {
+            $0.kind == .tab && $0.referenceID == tabID
+        }
+        for index in workspaces[workspaceIndex].groups.indices {
+            workspaces[workspaceIndex].groups[index].tabIDs.removeAll { $0 == tabID }
+        }
+        guard pruneEmptyGroups else { return }
+        dissolveProvisionalSingletonGroups(in: workspaceIndex)
+        self.pruneEmptyGroups(in: workspaceIndex)
+    }
+
+    private func pruneEmptyGroups(in workspaceIndex: Int, excluding preservedID: TabGroup.ID? = nil) {
+        let emptyIDs = Set(workspaces[workspaceIndex].groups.filter(\.tabIDs.isEmpty).map(\.id))
+            .subtracting(preservedID.map { [$0] } ?? [])
+        for id in emptyIDs { provisionalGroups.removeValue(forKey: id) }
+        workspaces[workspaceIndex].groups.removeAll { emptyIDs.contains($0.id) }
+        workspaces[workspaceIndex].sidebarItems.removeAll {
+            $0.kind == .group && emptyIDs.contains($0.referenceID)
+        }
+    }
+
+    /// Replace a still-temporary one-tab group with its remaining tab at the
+    /// exact same top-level position. The destination group is excluded while a
+    /// child is merely being reordered inside it.
+    private func dissolveProvisionalSingletonGroups(
+        in workspaceIndex: Int,
+        excluding preservedID: TabGroup.ID? = nil
+    ) {
+        let candidateIDs = workspaces[workspaceIndex].groups.compactMap { group in
+            group.id != preservedID && group.tabIDs.count == 1 ? group.id : nil
+        }
+        for id in candidateIDs where isLiveProvisionalGroup(id) {
+            guard let groupIndex = workspaces[workspaceIndex].groups.firstIndex(where: { $0.id == id }),
+                  let remainingID = workspaces[workspaceIndex].groups[groupIndex].tabIDs.first,
+                  let itemIndex = workspaces[workspaceIndex].sidebarItems.firstIndex(where: {
+                      $0.kind == .group && $0.referenceID == id
+                  }) else { continue }
+            workspaces[workspaceIndex].groups.remove(at: groupIndex)
+            workspaces[workspaceIndex].sidebarItems[itemIndex] = .tab(remainingID)
+            provisionalGroups.removeValue(forKey: id)
+        }
+    }
+
+    private func isLiveProvisionalGroup(_ id: TabGroup.ID) -> Bool {
+        guard let provisional = provisionalGroups[id] else { return false }
+        let age = provisionalNow() - provisional.createdAt
+        guard age >= 0, age < Self.provisionalGroupLifetime else {
+            provisionalGroups.removeValue(forKey: id)
+            return false
+        }
+        return true
+    }
+
+    private func confirmGroup(_ id: TabGroup.ID) {
+        provisionalGroups.removeValue(forKey: id)
+    }
+
+    private func nextGroupColor() -> TabGroupColor {
+        let colors = TabGroupColor.allCases.filter { $0 != .gray }
+        return colors[workspaces[activeIndex].groups.count % colors.count]
+    }
+
+    private func recordSelection(_ id: WebApp.ID) {
+        selectionHistory.removeAll { $0 == id }
+        selectionHistory.insert(id, at: 0)
+        if selectionHistory.count > 50 { selectionHistory.removeLast(selectionHistory.count - 50) }
     }
 }

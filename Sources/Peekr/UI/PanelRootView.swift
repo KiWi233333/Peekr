@@ -22,8 +22,10 @@ struct PanelRootView: View {
 
     @State private var editTarget: EditTarget?
     @State private var bookmarksOpen = false
+    @State private var isRailCollapsed = false
     @State private var moving = false
     @ObserveInjection private var inject
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     /// Initial root for the hosting view before the controller wires callbacks.
     static func placeholder(model: AppModel, settings: Settings, manager: WebViewManager, icons: IconStore, badges: BadgeStore, bookmarks: BookmarksModel) -> PanelRootView {
@@ -56,11 +58,15 @@ struct PanelRootView: View {
                 .gesture(moveGesture)
             HStack(spacing: 0) {
                 if anchor.railOnLeft {
-                    rail
+                    if !isRailCollapsed {
+                        rail.transition(.move(edge: .leading).combined(with: .opacity))
+                    }
                     webArea
                 } else {
                     webArea
-                    rail
+                    if !isRailCollapsed {
+                        rail.transition(.move(edge: .trailing).combined(with: .opacity))
+                    }
                 }
             }
         }
@@ -88,14 +94,19 @@ struct PanelRootView: View {
         .onChange(of: editTarget != nil) { _, _ in onModalChange(isModalOpen) }
         .onChange(of: bookmarksOpen) { _, _ in onModalChange(isModalOpen) }
         .animation(.smooth(duration: 0.3), value: anchor.railOnLeft)
+        .animation(reduceMotion ? nil : Motion.sidebarCollapse, value: isRailCollapsed)
         .enableInjection()
     }
 
     private var rail: some View {
         AppRail(
             model: model, settings: settings, icons: icons, badges: badges,
-            onSelect: { id in manager.activate(id); model.select(id) },
-            onAdd: { editTarget = EditTarget(app: nil) },
+            onSelect: { id in model.select(id); manager.activate(id) },
+            onNewTab: { groupID in
+                let app = model.addBlankTab(toGroup: groupID)
+                manager.activate(app.id)
+                manager.state.focusOmniboxToken += 1
+            },
             onEdit: { editTarget = EditTarget(app: $0) },
             onWorkspaceSwitched: {
                 // Re-point the web area at the new workspace's active tab.
@@ -105,7 +116,11 @@ struct PanelRootView: View {
                 } else {
                     manager.state.currentID = nil
                 }
-            }
+            },
+            onReopenClosedTab: {
+                if let app = model.reopenLastClosedTab() { manager.activate(app.id) }
+            },
+            onCollapse: { isRailCollapsed = true }
         )
     }
 
@@ -126,8 +141,11 @@ struct PanelRootView: View {
             NavigationBar(
                 state: manager.state, manager: manager, settings: settings,
                 model: model, bookmarks: bookmarks,
+                showsSidebarToggle: isRailCollapsed,
+                sidebarOnLeft: anchor.railOnLeft,
                 onMoveBegan: onMoveBegan, onMoveChanged: onMoveChanged, onMoveEnded: onMoveEnded,
-                onBookmarks: { bookmarksOpen = true }
+                onBookmarks: { bookmarksOpen = true },
+                onToggleSidebar: { isRailCollapsed = false }
             )
             .padding(.horizontal, 12)
             .padding(.top, 8)

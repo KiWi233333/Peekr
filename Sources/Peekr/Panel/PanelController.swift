@@ -222,6 +222,11 @@ final class PanelController {
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown]) { [weak self] event in
             guard let self else { return event }
             if event.keyCode == UInt16(kVK_Escape) { self.hide(); return nil }
+            let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+            if event.keyCode == UInt16(kVK_Tab), flags.contains(.control) {
+                self.handleControlTab(reverse: flags.contains(.shift))
+                return nil
+            }
             if event.modifierFlags.contains(.command), self.handleCommand(event) { return nil }
             return event
         }
@@ -271,7 +276,22 @@ final class PanelController {
         case "r": manager.reloadOrStop()
         case "[": manager.goBack()
         case "]": manager.goForward()
-        case "w": hide()
+        case "t":
+            if event.modifierFlags.contains(.shift) {
+                if let app = model.reopenLastClosedTab() { manager.activate(app.id) }
+            } else {
+                let app = model.addBlankTab()
+                manager.activate(app.id)
+                manager.state.focusOmniboxToken += 1
+            }
+        case "w":
+            guard let id = model.selectedID else { hide(); return true }
+            model.removeApp(id)
+            if let nextID = model.selectedID {
+                manager.activate(nextID)
+            } else {
+                manager.state.currentID = nil
+            }
         default:
             guard let n = Int(chars), (1...9).contains(n), n - 1 < model.apps.count else { return false }
             let id = model.apps[n - 1].id
@@ -279,6 +299,11 @@ final class PanelController {
             manager.activate(id)
         }
         return true
+    }
+
+    private func handleControlTab(reverse: Bool) {
+        guard let id = model.selectAdjacentTab(reverse: reverse) else { return }
+        manager.activate(id)
     }
 
     // MARK: - Helpers

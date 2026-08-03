@@ -67,7 +67,10 @@ final class WebViewManagerEngineSwitchTests: XCTestCase {
             icons: IconStore()
         )
         let firstID = model.apps[0].id
-        let secondID = model.apps[1].id
+        let secondID = model.addApp(
+            title: "Second",
+            urlString: "https://second.example"
+        ).id
         manager.activate(firstID)
         manager.activate(secondID)
 
@@ -78,5 +81,34 @@ final class WebViewManagerEngineSwitchTests: XCTestCase {
         XCTAssertNil(manager.state.currentID)
         XCTAssertNil(manager.view(for: firstID))
         XCTAssertNil(manager.view(for: secondID))
+    }
+
+    func testClosingCurrentTabDiscardsItsEngineAndActivatesModelFallback() {
+        let storeURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("peekr-manager-\(UUID().uuidString).json")
+        let model = AppModel(store: AppStore(fileURL: storeURL))
+        let factory = FakeFactory()
+        let manager = WebViewManager(
+            model: model,
+            factory: factory,
+            badges: BadgeStore(),
+            icons: IconStore()
+        )
+        model.onRemove = { manager.discard($0) }
+        let firstID = model.apps[0].id
+        let secondID = model.addApp(
+            title: "Second",
+            urlString: "https://second.example"
+        ).id
+        model.select(firstID)
+        manager.activate(firstID)
+
+        model.removeApp(firstID)
+
+        XCTAssertEqual(factory.engines.count, 2)
+        XCTAssertEqual(factory.engines[0].closeCount, 1)
+        XCTAssertEqual(manager.state.currentID, secondID)
+        XCTAssertNotNil(manager.view(for: secondID))
+        XCTAssertNil(manager.view(for: firstID))
     }
 }

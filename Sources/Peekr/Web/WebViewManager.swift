@@ -29,7 +29,7 @@ final class WebViewManager {
 
     /// Ensure an engine exists for `id`, make it current and mirror its state.
     func activate(_ id: UUID) {
-        guard let app = model.apps.first(where: { $0.id == id }) else { return }
+        guard let app = model.allTabs.first(where: { $0.id == id }) else { return }
         let engine = engine(for: app)
         state.currentID = id
         mirror(engine.navState)
@@ -40,12 +40,16 @@ final class WebViewManager {
     func reload(_ id: UUID) { engines[id]?.reload() }
 
     func discard(_ id: UUID) {
+        let wasCurrent = state.currentID == id
         engines[id]?.close()
         engines[id]?.hostView.removeFromSuperview()
         engines[id] = nil
         lastTitles[id] = nil
         badges.clear(id)
-        if state.currentID == id { state.currentID = nil }
+        if wasCurrent {
+            state.currentID = nil
+            if let nextID = model.selectedID, nextID != id { activate(nextID) }
+        }
     }
 
     /// Replace the rendering backend and recreate cached pages. The selected

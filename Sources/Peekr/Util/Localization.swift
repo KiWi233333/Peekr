@@ -62,6 +62,7 @@ struct Localized {
     var importFromChrome: String { t("Import from Chrome", "从 Chrome 导入") }
     var importChromeBookmarks: String { t("Import Bookmarks", "导入书签") }
     var importAction: String { t("Import…", "导入…") }
+    var customColor: String { t("Custom Color…", "自定义颜色…") }
     var preferences: String { t("Preferences…", "偏好设置…") }
     var quit: String { t("Quit Peekr", "退出 Peekr") }
     var quitConfirmTitle: String { t("Quit Peekr?", "退出 Peekr？") }
@@ -137,6 +138,22 @@ struct Localized {
     var dragHint: String { t("Drag to move • release near an edge or corner to snap", "拖动移动 • 在边缘或角落松开自动吸附") }
     var newTab: String { t("New Tab", "新建标签") }
     var rename: String { t("Rename", "重命名") }
+    var closeTab: String { t("Close Tab", "关闭标签") }
+    var duplicateTab: String { t("Duplicate Tab", "复制标签") }
+    var newTabGroup: String { t("New Tab Group", "新建标签组") }
+    var tabGroup: String { t("Tab Group", "标签组") }
+    var newTabInGroup: String { t("New Tab in Group", "在组中新建标签") }
+    var moveToGroup: String { t("Move to Group", "移到标签组") }
+    var removeFromGroup: String { t("Remove from Group", "移出标签组") }
+    var duplicateGroup: String { t("Duplicate Group", "复制标签组") }
+    var ungroup: String { t("Ungroup", "解散标签组") }
+    var closeGroup: String { t("Close Group", "关闭标签组") }
+    var groupColor: String { t("Group Color", "标签组颜色") }
+    var reopenClosedTab: String { t("Reopen Closed Tab", "重新打开关闭的标签") }
+    var collapseGroup: String { t("Collapse Group", "折叠标签组") }
+    var expandGroup: String { t("Expand Group", "展开标签组") }
+    var collapseSidebar: String { t("Collapse Sidebar", "折叠侧栏") }
+    var expandSidebar: String { t("Expand Sidebar", "展开侧栏") }
     var newWorkspace: String { t("New Workspace", "新建工作区") }
     var defaultWorkspace: String { t("Workspace", "工作区") }
     var resizeHint: String { t("Drag to resize", "拖动调整大小") }
