@@ -24,7 +24,53 @@ enum PanelGeometry {
     /// Floor the user can shrink the panel to — shared by the resize handles and
     /// the preferences sliders so both agree on the minimum. (The maximum is the
     /// screen's visible size when resizing; a fixed cap in the sliders.)
-    static let minSize = NSSize(width: 280, height: 240)
+    static let minSize = NSSize(width: 600, height: 240)
+
+    /// Native window-resize semantics: the dragged edge follows the pointer and
+    /// its opposite edge remains fixed. For example, dragging the bottom-right
+    /// corner keeps the top and left edges stationary. The moving edges are
+    /// clamped to the screen's visible frame and the panel's minimum size.
+    static func resizedFrame(
+        from start: NSRect,
+        dragging edges: [PanelResizeEdge],
+        delta: NSSize,
+        within bounds: NSRect,
+        minimumSize: NSSize = minSize
+    ) -> NSRect {
+        let minWidth = Swift.min(minimumSize.width, bounds.width)
+        let minHeight = Swift.min(minimumSize.height, bounds.height)
+        var frame = start
+
+        if edges.contains(.leading) {
+            let x = Swift.min(
+                Swift.max(start.minX + delta.width, bounds.minX),
+                start.maxX - minWidth)
+            frame.origin.x = x
+            frame.size.width = start.maxX - x
+        } else if edges.contains(.trailing) {
+            let maxX = Swift.max(
+                Swift.min(start.maxX + delta.width, bounds.maxX),
+                start.minX + minWidth)
+            frame.origin.x = start.minX
+            frame.size.width = maxX - start.minX
+        }
+
+        if edges.contains(.bottom) {
+            let y = Swift.min(
+                Swift.max(start.minY + delta.height, bounds.minY),
+                start.maxY - minHeight)
+            frame.origin.y = y
+            frame.size.height = start.maxY - y
+        } else if edges.contains(.top) {
+            let maxY = Swift.max(
+                Swift.min(start.maxY + delta.height, bounds.maxY),
+                start.minY + minHeight)
+            frame.origin.y = start.minY
+            frame.size.height = maxY - start.minY
+        }
+
+        return frame
+    }
 
     /// On-screen (docked) and off-screen (hidden) frames for an anchor + size.
     static func layout(anchor: PanelAnchor, screen: NSScreen, size: NSSize) -> PanelLayout {

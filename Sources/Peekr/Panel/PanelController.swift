@@ -19,7 +19,6 @@ final class PanelController {
     var onVisibilityChange: ((Bool) -> Void)?
 
     private let panel: SlidePanel
-    private let backdrop = makePanelBackdrop(cornerRadius: Theme.panelCorner)
     private var hosting: NSHostingView<PanelRootView>!
 
     private(set) var isVisible = false
@@ -32,7 +31,7 @@ final class PanelController {
     private var resignKeyObserver: Any?
     private var dragStartOrigin: NSPoint = .zero
     private var dragStartMouse: NSPoint = .zero
-    private var resizeStartSize: NSSize = .zero
+    private var resizeStartFrame: NSRect = .zero
     /// The size being dragged out right now. While set it wins over the stored
     /// per-app size, so the panel tracks the cursor without writing to the model
     /// on every frame; it's committed once on `resizeEnded`.
@@ -48,20 +47,26 @@ final class PanelController {
 
         panel = SlidePanel(contentRect: NSRect(x: 0, y: 0, width: 440, height: 640))
 
-        let container = NSView(frame: panel.frame)
+        let container = NSView(frame: NSRect(origin: .zero, size: panel.frame.size))
         container.wantsLayer = true
         container.layer?.cornerRadius = Theme.panelCorner
         container.layer?.masksToBounds = true
-
-        backdrop.frame = container.bounds
-        backdrop.autoresizingMask = [.width, .height]
-        container.addSubview(backdrop)
 
         hosting = NSHostingView(rootView: PanelRootView.placeholder(model: model, settings: settings, manager: manager, icons: icons, badges: badges, bookmarks: bookmarks))
         hosting.frame = container.bounds
         hosting.autoresizingMask = [.width, .height]
         container.addSubview(hosting)
-        panel.contentView = container
+
+        // `NSGlassEffectView` must own the content it treats. Keeping glass and
+        // SwiftUI as sibling views prevents AppKit from adapting foreground
+        // appearance and is specifically unsupported by Apple's guidance.
+        let panelSurface = makePanelBackdrop(
+            contentView: container,
+            cornerRadius: Theme.panelCorner
+        )
+        panelSurface.frame = NSRect(origin: .zero, size: panel.frame.size)
+        panelSurface.autoresizingMask = [.width, .height]
+        panel.contentView = panelSurface
 
         // Real callbacks once self is fully initialised.
         hosting.rootView = PanelRootView(
@@ -164,7 +169,7 @@ final class PanelController {
 
     private func resizeBegan() {
         autoHideSuspended = true
-        resizeStartSize = panel.frame.size
+        resizeStartFrame = panel.frame
         dragStartMouse = NSEvent.mouseLocation
         liveResize = panel.frame.size
     }
@@ -172,24 +177,16 @@ final class PanelController {
     /// One edge for an edge handle, two (a width + a height edge) for a corner.
     private func resizeChanged(_ edges: [PanelResizeEdge]) {
         guard let screen = activeScreen else { return }
-        let vf = screen.visibleFrame
         // Absolute screen-coordinate deltas (y is up), same anti-jitter reason
         // as moveChanged.
         let dx = NSEvent.mouseLocation.x - dragStartMouse.x
         let dy = NSEvent.mouseLocation.y - dragStartMouse.y
-        var w = resizeStartSize.width
-        var h = resizeStartSize.height
-        for edge in edges {
-            switch edge {
-            case .trailing: w = resizeStartSize.width + dx
-            case .leading:  w = resizeStartSize.width - dx
-            case .top:      h = resizeStartSize.height + dy
-            case .bottom:   h = resizeStartSize.height - dy
-            }
-        }
-        liveResize = NSSize(
-            width: min(max(PanelGeometry.minSize.width, w), vf.width),
-            height: min(max(PanelGeometry.minSize.height, h), vf.height))
+        let frame = PanelGeometry.resizedFrame(
+            from: resizeStartFrame,
+            dragging: edges,
+            delta: NSSize(width: dx, height: dy),
+            within: screen.visibleFrame)
+        liveResize = frame.size
         // Suppress implicit layer animations during the live drag. The glass
         // backdrop (NSGlassEffectView) animates its bounds by default, which
         // makes the panel lag behind the cursor ("resistance") on every frame.
@@ -197,7 +194,7 @@ final class PanelController {
         // animation on `animate(...)` still applies elsewhere.
         CATransaction.begin()
         CATransaction.setDisableActions(true)
-        panel.setFrame(currentLayout(on: screen).onscreen, display: true)
+        panel.setFrame(frame, display: true)
         CATransaction.commit()
     }
 

@@ -56,41 +56,74 @@ extension View {
         if #available(macOS 26.0, *) {
             self.glassEffect(peekrGlass(tint: tint, interactive: interactive), in: shape)
         } else {
-            fallbackGlass(in: shape)
+            fallbackGlass(in: shape, tint: tint)
         }
         #else
-        fallbackGlass(in: shape)
+        fallbackGlass(in: shape, tint: tint)
         #endif
     }
 
     /// Frosted-material substitute used below macOS 26 or when built with an
     /// older SDK that has no Liquid Glass.
     @ViewBuilder
-    private func fallbackGlass<S: Shape>(in shape: S) -> some View {
+    private func fallbackGlass<S: Shape>(in shape: S, tint: Color?) -> some View {
         self
-            .background(.ultraThinMaterial, in: shape)
-            .overlay(shape.stroke(.white.opacity(0.12), lineWidth: 0.8))
+            .background { FallbackGlassSurface(shape: shape, tint: tint) }
             .shadow(color: .black.opacity(0.18), radius: 8, y: 3)
     }
 }
 
-/// The panel window's whole-background material, as an AppKit view layered
-/// behind the SwiftUI content. Real Liquid Glass (`NSGlassEffectView`) on
-/// macOS 26+, a frosted `NSVisualEffectView` below — the AppKit counterpart to
-/// `liquidGlass`, so glass selection still lives in exactly one place.
+/// Pre-Tahoe material that follows the same accessibility contract as system
+/// Liquid Glass: Reduce Transparency becomes opaque, and Increased Contrast
+/// strengthens the adaptive (light/dark) edge instead of forcing white.
+private struct FallbackGlassSurface<S: Shape>: View {
+    let shape: S
+    let tint: Color?
+
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @Environment(\.colorSchemeContrast) private var contrast
+
+    var body: some View {
+        ZStack {
+            if reduceTransparency {
+                shape.fill(Color(nsColor: .controlBackgroundColor))
+            } else {
+                shape.fill(.ultraThinMaterial)
+            }
+            if let tint { shape.fill(tint) }
+            shape.stroke(
+                .primary.opacity(contrast == .increased ? 0.32 : 0.14),
+                lineWidth: contrast == .increased ? 1 : 0.8
+            )
+        }
+    }
+}
+
+/// The panel window's whole-background material and content container. Apple
+/// requires content to be assigned to `NSGlassEffectView.contentView` so the
+/// system can adapt both glass and foreground legibility together; placing a
+/// glass view behind its content as a sibling defeats those treatments.
 @MainActor
-func makePanelBackdrop(cornerRadius: CGFloat) -> NSView {
+func makePanelBackdrop(contentView: NSView, cornerRadius: CGFloat) -> NSView {
     #if compiler(>=6.2)
     if #available(macOS 26.0, *) {
         let glass = NSGlassEffectView()
         glass.cornerRadius = cornerRadius
+        glass.contentView = contentView
         return glass
     }
     #endif
     let effect = NSVisualEffectView()
-    effect.material = .popover
+    effect.frame = contentView.frame
+    effect.material = .sidebar
     effect.blendingMode = .behindWindow
     effect.state = .active
+    effect.wantsLayer = true
+    effect.layer?.cornerRadius = cornerRadius
+    effect.layer?.masksToBounds = true
+    contentView.frame = effect.bounds
+    contentView.autoresizingMask = [.width, .height]
+    effect.addSubview(contentView)
     return effect
 }
 

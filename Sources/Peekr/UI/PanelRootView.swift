@@ -139,12 +139,25 @@ struct PanelRootView: View {
 /// Clean neutral backdrop. Translucency comes from the window's visual-effect
 /// view; this adds only a faint top highlight for depth.
 struct PanelBackground: View {
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @Environment(\.colorSchemeContrast) private var contrast
+
+    @ViewBuilder
     var body: some View {
-        LinearGradient(
-            colors: [.white.opacity(0.05), .clear],
-            startPoint: .top, endPoint: .center
-        )
-        .allowsHitTesting(false)
+        if reduceTransparency {
+            Color(nsColor: .windowBackgroundColor)
+                .allowsHitTesting(false)
+        } else {
+            LinearGradient(
+                colors: [
+                    .primary.opacity(contrast == .increased ? 0.08 : 0.045),
+                    .clear
+                ],
+                startPoint: .top,
+                endPoint: .center
+            )
+            .allowsHitTesting(false)
+        }
     }
 }
 
