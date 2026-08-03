@@ -13,16 +13,24 @@ final class WebViewManager {
     private var factory: WebEngineFactory
     private let badges: BadgeStore
     private let icons: IconStore
+    private let searchEngine: () -> SearchEngine
     private var engines: [UUID: WebEngine] = [:]
     /// Last title seen per engine, so the badge/title pipeline only runs on a real
     /// title change and not on every `estimatedProgress` KVO tick during a load.
     private var lastTitles: [UUID: String] = [:]
 
-    init(model: AppModel, factory: WebEngineFactory, badges: BadgeStore, icons: IconStore) {
+    init(
+        model: AppModel,
+        factory: WebEngineFactory,
+        badges: BadgeStore,
+        icons: IconStore,
+        searchEngine: @escaping () -> SearchEngine = { .google }
+    ) {
         self.model = model
         self.factory = factory
         self.badges = badges
         self.icons = icons
+        self.searchEngine = searchEngine
     }
 
     // MARK: - Lifecycle
@@ -104,7 +112,9 @@ final class WebViewManager {
     /// open the address in a fresh tab so the bar always works.
     func loadAddress(_ raw: String) {
         let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty, let url = Self.url(fromOmnibox: text) else { return }
+        guard !text.isEmpty,
+              let url = Self.url(fromOmnibox: text, searchEngine: searchEngine())
+        else { return }
         if let current {
             current.load(url)
         } else {
@@ -113,7 +123,7 @@ final class WebViewManager {
         }
     }
 
-    static func url(fromOmnibox text: String) -> URL? {
+    static func url(fromOmnibox text: String, searchEngine: SearchEngine = .google) -> URL? {
         let lower = text.lowercased()
         if lower.hasPrefix("http://") || lower.hasPrefix("https://") {
             return URL(string: text)
@@ -122,8 +132,7 @@ final class WebViewManager {
         if looksLikeDomain, let url = URL(string: "https://\(text)") {
             return url
         }
-        let query = text.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? text
-        return URL(string: "https://www.google.com/search?q=\(query)")
+        return searchEngine.searchURL(for: text)
     }
 
     // MARK: - Private

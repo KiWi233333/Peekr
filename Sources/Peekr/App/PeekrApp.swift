@@ -34,10 +34,10 @@ struct PeekrApp: CefSwiftApp {
         configuration.persistSessionCookies = true
         configuration.defaultRuntimeStyle = .alloy
         configuration.locale = SettingsStore().load().language.cefLocaleIdentifier
-        let version =
-            Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
-            ?? "0.1.0"
-        configuration.userAgentProduct = "Peekr/\(version)"
+        // Keep `userAgentProduct` nil so CEF emits its standard Chromium UA.
+        // Setting this replaces the `Chrome/<version>` product token instead
+        // of appending to it, which makes simple detectors misclassify Peekr as
+        // Safari because `Safari/537.36` remains while `Chrome/...` disappears.
         // The bundle pipeline flips this only for a properly signed hardened
         // build. Chromium cannot derive a validation category from an ordinary
         // local/ad-hoc build, so attempting to sandbox that build produces

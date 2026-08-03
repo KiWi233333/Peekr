@@ -15,8 +15,8 @@ struct OmniboxSuggestion: Identifiable, Hashable {
 }
 
 /// Builds omnibox suggestions Chrome-style: a top "search / open" action, then
-/// matching open tabs and bookmarks (instant, local), plus Google search
-/// completions (async network).
+/// matching open tabs and bookmarks (instant, local), plus the selected
+/// provider's search completions (async network).
 enum OmniboxSuggestions {
     /// Instant, local suggestions for `query`.
     static func local(for query: String, tabs: [WebApp], bookmarks: [BookmarkNode], searchLabel: String) -> [OmniboxSuggestion] {
@@ -57,16 +57,27 @@ enum OmniboxSuggestions {
         return dedup(out)
     }
 
-    /// Google search-suggest completions (returns [] on any failure).
-    static func searchCompletions(for query: String) async -> [OmniboxSuggestion] {
+    /// Provider search-suggest completions (returns [] on any failure).
+    static func searchCompletions(
+        for query: String,
+        using engine: SearchEngine = .google
+    ) async -> [OmniboxSuggestion] {
         let q = query.trimmingCharacters(in: .whitespaces)
-        guard !q.isEmpty,
-              let encoded = q.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
-              let url = URL(string: "https://suggestqueries.google.com/complete/search?client=firefox&q=\(encoded)"),
+        guard !q.isEmpty, let url = suggestionURL(for: q, using: engine),
               let (data, _) = try? await URLSession.shared.data(from: url),
-              let json = try? JSONSerialization.jsonObject(with: data) as? [Any],
-              json.count >= 2, let completions = json[1] as? [String]
+              let json = try? JSONSerialization.jsonObject(with: data)
         else { return [] }
+
+        let completions: [String]
+        if let values = json as? [Any], values.count >= 2,
+           let strings = values[1] as? [String] {
+            completions = strings
+        } else if let values = json as? [[String: Any]] {
+            completions = values.compactMap { $0["phrase"] as? String }
+        } else {
+            return []
+        }
+
         return completions.prefix(6).map {
             OmniboxSuggestion(kind: .search, primary: $0, secondary: nil, target: $0)
         }
@@ -76,6 +87,38 @@ enum OmniboxSuggestions {
 
     private static func matches(_ lowerQuery: String, _ fields: String...) -> Bool {
         fields.contains { $0.lowercased().contains(lowerQuery) }
+    }
+
+    private static func suggestionURL(for query: String, using engine: SearchEngine) -> URL? {
+        let endpoint: String
+        let queryItems: [URLQueryItem]
+        switch engine {
+        case .google:
+            endpoint = "https://suggestqueries.google.com/complete/search"
+            queryItems = [
+                URLQueryItem(name: "client", value: "firefox"),
+                URLQueryItem(name: "q", value: query),
+            ]
+        case .bing:
+            endpoint = "https://api.bing.com/osjson.aspx"
+            queryItems = [URLQueryItem(name: "query", value: query)]
+        case .duckDuckGo:
+            endpoint = "https://duckduckgo.com/ac/"
+            queryItems = [
+                URLQueryItem(name: "q", value: query),
+                URLQueryItem(name: "type", value: "list"),
+            ]
+        case .baidu:
+            endpoint = "https://suggestion.baidu.com/su"
+            queryItems = [
+                URLQueryItem(name: "wd", value: query),
+                URLQueryItem(name: "action", value: "opensearch"),
+            ]
+        }
+
+        guard var components = URLComponents(string: endpoint) else { return nil }
+        components.queryItems = queryItems
+        return components.url
     }
 
     private static func flatten(_ nodes: [BookmarkNode]) -> [BookmarkNode] {

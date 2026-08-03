@@ -30,7 +30,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             quitTarget: self,
             quitAction: #selector(requestQuit)
         )
-        model = AppModel(store: AppStore())
+        let currentSearchEngine: () -> SearchEngine = { [weak self] in
+            self?.settings.searchEngine ?? .google
+        }
+        model = AppModel(store: AppStore(), searchEngine: currentSearchEngine)
         bookmarks = BookmarksModel(store: BookmarkStore())
         icons = IconStore()
         icons.warm(model.apps)
@@ -41,7 +44,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             model: model,
             factory: activeWebEngine.makeFactory(),
             badges: badges,
-            icons: icons
+            icons: icons,
+            searchEngine: currentSearchEngine
         )
         // Tear down a deleted tab's web engine (stops background media, frees the
         // process) and its badge — the model itself stays web-agnostic.

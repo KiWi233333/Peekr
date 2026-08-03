@@ -129,6 +129,7 @@ private struct GeneralTab: View {
                         Text(loc.autoHidePolicyName(policy)).tag(policy)
                     }
                 }
+                .pickerStyle(.menu)
             }
 
             Section(loc.shortcutStartup) {
@@ -143,6 +144,7 @@ private struct GeneralTab: View {
                         Text(lang.nativeName).tag(lang)
                     }
                 }
+                .pickerStyle(.menu)
             }
         }
         .formStyle(.grouped)
@@ -273,6 +275,20 @@ private struct BrowserTab: View {
 
     var body: some View {
         Form {
+            Section(loc.searchEngineSection) {
+                Picker(loc.defaultSearchEngine, selection: $settings.searchEngine) {
+                    ForEach(SearchEngine.allCases) { engine in
+                        Text(engine.displayName).tag(engine)
+                    }
+                }
+                .pickerStyle(.menu)
+
+                Text(loc.searchEngineHint)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
             Section(loc.webEngineSection) {
                 Picker("", selection: engineSelection) {
                     ForEach(WebEngineKind.allCases) { kind in
@@ -316,6 +332,7 @@ private struct BrowserTab: View {
                         Text(loc.syncIntervalName(interval)).tag(interval)
                     }
                 }
+                .pickerStyle(.menu)
             }
         }
         .formStyle(.grouped)

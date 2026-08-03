@@ -73,6 +73,7 @@ struct SettingsData: Codable, Equatable {
     var language: AppLanguage = .system
     var bookmarkSync: BookmarkSyncInterval = .off
     var webEngine: WebEngineKind = .system
+    var searchEngine: SearchEngine = .google
 
     init() {}
 
@@ -96,6 +97,7 @@ struct SettingsData: Codable, Equatable {
         language = v(.language, .system)
         bookmarkSync = v(.bookmarkSync, .off)
         webEngine = v(.webEngine, .system)
+        searchEngine = v(.searchEngine, .google)
     }
 }
 
@@ -118,6 +120,7 @@ final class Settings {
     var language: AppLanguage
     var bookmarkSync: BookmarkSyncInterval
     var webEngine: WebEngineKind
+    var searchEngine: SearchEngine
 
     private let store: SettingsStore
 
@@ -138,6 +141,7 @@ final class Settings {
         language = d.language
         bookmarkSync = d.bookmarkSync
         webEngine = d.webEngine
+        searchEngine = d.searchEngine
     }
 
     var snapshot: SettingsData {
@@ -148,6 +152,7 @@ final class Settings {
         s.lastScreenNumber = lastScreenNumber; s.autoHide = autoHide
         s.autoHideMode = autoHideMode; s.language = language
         s.bookmarkSync = bookmarkSync; s.webEngine = webEngine
+        s.searchEngine = searchEngine
         return s
     }
 

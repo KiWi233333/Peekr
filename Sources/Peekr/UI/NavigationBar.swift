@@ -296,13 +296,17 @@ struct NavigationBar: View {
 
         suggestions = OmniboxSuggestions.local(
             for: query, tabs: model.allTabs, bookmarks: bookmarks.roots,
-            searchLabel: settings.strings.googleSearch)
+            searchLabel: settings.strings.searchWith(settings.searchEngine))
         selectedIndex = nil
 
         suggestTask?.cancel()
+        let engine = settings.searchEngine
         suggestTask = Task {
-            let completions = await OmniboxSuggestions.searchCompletions(for: query)
-            guard !Task.isCancelled, query == text.trimmingCharacters(in: .whitespaces) else { return }
+            let completions = await OmniboxSuggestions.searchCompletions(for: query, using: engine)
+            guard !Task.isCancelled,
+                  engine == settings.searchEngine,
+                  query == text.trimmingCharacters(in: .whitespaces)
+            else { return }
             let existing = Set(suggestions.map { $0.target.lowercased() })
             suggestions.append(contentsOf: completions.filter { !existing.contains($0.target.lowercased()) })
         }

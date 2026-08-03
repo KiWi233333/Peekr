@@ -160,7 +160,9 @@ struct Localized {
 
     // Omnibox
     var omniboxPlaceholder: String { t("Search or enter address", "搜索或输入网址") }
-    var googleSearch: String { t("Google Search", "Google 搜索") }
+    func searchWith(_ engine: SearchEngine) -> String {
+        t("Search with \(engine.displayName)", "使用 \(engine.displayName) 搜索")
+    }
 
     // Bookmarks
     var bookmarks: String { t("Bookmarks", "书签") }
@@ -234,6 +236,12 @@ struct Localized {
     var pressKeys: String { t("Press keys…", "按下按键…") }
 
     // Web engine
+    var searchEngineSection: String { t("Search", "搜索") }
+    var defaultSearchEngine: String { t("Default search engine", "默认搜索引擎") }
+    var searchEngineHint: String {
+        t("Address-bar searches and new tabs use this engine. Existing tabs are not changed.",
+          "地址栏搜索和新建标签页会使用此引擎；已有标签页不会被更改。")
+    }
     var webEngineSection: String { t("Web Engine", "浏览器内核") }
     var chromeDataSection: String { t("Chrome Data", "Chrome 数据") }
     var chromeDataHint: String {

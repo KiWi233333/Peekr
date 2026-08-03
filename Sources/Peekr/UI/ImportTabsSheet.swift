@@ -184,6 +184,7 @@ struct ImportTabsSheet: View {
                                     .tag(profile.id)
                             }
                         }
+                        .pickerStyle(.menu)
 
                         if selectedProfile?.cookieDatabaseURL == nil {
                             Label(loc.chromeCookieDatabaseMissing, systemImage: "exclamationmark.triangle")
@@ -230,10 +231,13 @@ struct ImportTabsSheet: View {
     }
 
     private func row(_ tab: ImportedTab) -> some View {
-        Button { toggle(tab.id) } label: {
+        Toggle(
+            isOn: Binding(
+                get: { selected.contains(tab.id) },
+                set: { _ in toggle(tab.id) }
+            )
+        ) {
             HStack(spacing: 10) {
-                Image(systemName: selected.contains(tab.id) ? "checkmark.circle.fill" : "circle")
-                    .foregroundStyle(selected.contains(tab.id) ? AnyShapeStyle(.primary) : AnyShapeStyle(.tertiary))
                 VStack(alignment: .leading, spacing: 1) {
                     Text(tab.title.isEmpty ? tab.urlString : tab.title)
                         .font(.system(size: 12, weight: .medium)).lineLimit(1)
@@ -244,7 +248,7 @@ struct ImportTabsSheet: View {
             }
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .toggleStyle(.checkbox)
     }
 
     /// Distinct browsers in discovery order (preserves grouping).
