@@ -132,16 +132,20 @@ func makePanelBackdrop(contentView: NSView, cornerRadius: CGFloat) -> NSView {
 /// Shared by the nav-bar buttons and the sidebar's workspace controls.
 struct IconButtonStyle: ButtonStyle {
     @State private var hovering = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .background {
                 Circle().fill(.primary.opacity(configuration.isPressed ? 0.16 : (hovering ? 0.08 : 0)))
+                    .transaction { $0.animation = nil }
             }
-            .scaleEffect(configuration.isPressed ? 0.88 : 1)
+            .scaleEffect(configuration.isPressed ? 0.94 : 1)
             .onHover { hovering = $0 }
-            .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
-            .animation(.easeOut(duration: 0.12), value: hovering)
+            .animation(
+                reduceMotion ? nil : Motion.controlFeedback,
+                value: configuration.isPressed
+            )
     }
 }
 

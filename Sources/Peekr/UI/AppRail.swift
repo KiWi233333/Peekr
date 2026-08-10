@@ -182,10 +182,12 @@ struct AppRail: View {
     // MARK: - Hierarchical tab tree
 
     private var tabTree: some View {
-        ScrollView {
+        let snapshot = RailSnapshot(workspace: model.activeWorkspace)
+
+        return ScrollView {
             LazyVStack(spacing: 5) {
-                ForEach(model.activeWorkspace.sidebarItems) { item in
-                    sidebarItem(item)
+                ForEach(snapshot.workspace.sidebarItems) { item in
+                    sidebarItem(item, snapshot: snapshot)
                 }
                 addTabButton
                     .padding(.top, 5)
@@ -195,7 +197,7 @@ struct AppRail: View {
             .frame(maxWidth: .infinity, alignment: .top)
             .animation(
                 reduceMotion ? nil : Motion.sidebarReorder,
-                value: model.activeWorkspace.sidebarItems
+                value: snapshot.workspace.sidebarItems
             )
         }
         .dropDestination(for: String.self) { items, _ in
@@ -211,20 +213,20 @@ struct AppRail: View {
     }
 
     @ViewBuilder
-    private func sidebarItem(_ item: SidebarItem) -> some View {
+    private func sidebarItem(_ item: SidebarItem, snapshot: RailSnapshot) -> some View {
         switch item.kind {
         case .tab:
-            if let app = model.tab(item.referenceID) {
+            if let app = snapshot.tabsByID[item.referenceID] {
                 tabRow(app, group: nil)
             }
         case .group:
-            if let group = model.group(item.referenceID) {
-                groupSection(group)
+            if let group = snapshot.groupsByID[item.referenceID] {
+                groupSection(group, tabsByID: snapshot.tabsByID)
             }
         }
     }
 
-    private func groupSection(_ group: TabGroup) -> some View {
+    private func groupSection(_ group: TabGroup, tabsByID: [WebApp.ID: WebApp]) -> some View {
         VStack(spacing: 0) {
             groupHeader(group)
             // Keep disappearing rows inside their own clipping region. SwiftUI
@@ -240,7 +242,7 @@ struct AppRail: View {
 
                         LazyVStack(spacing: 3) {
                             ForEach(group.tabIDs, id: \.self) { id in
-                                if let app = model.tab(id) { tabRow(app, group: group) }
+                                if let app = tabsByID[id] { tabRow(app, group: group) }
                             }
                             if group.tabIDs.isEmpty {
                                 Button { onNewTab(group.id) } label: {
@@ -261,7 +263,11 @@ struct AppRail: View {
                     }
                     .padding(.leading, 4)
                     .padding(.top, 4)
-                    .transition(reduceMotion ? .identity : .opacity)
+                    .transition(
+                        reduceMotion
+                            ? .identity
+                            : .move(edge: .top).combined(with: .opacity)
+                    )
                 }
             }
             .clipped()
@@ -271,14 +277,12 @@ struct AppRail: View {
             in: sidebarMotionNamespace,
             properties: .frame
         )
-        .animation(
-            reduceMotion ? nil : Motion.sidebarCollapse,
-            value: group.isCollapsed
-        )
     }
 
     private func groupHeader(_ group: TabGroup) -> some View {
-        HStack(spacing: 8) {
+        let showsMenu = hoveringGroup == group.id || renamingGroup == group.id
+
+        return HStack(spacing: 8) {
             if renamingGroup == group.id {
                 TextField(loc.tabGroup, text: $groupDraft)
                     .textFieldStyle(.plain)
@@ -295,14 +299,24 @@ struct AppRail: View {
                     .onTapGesture(count: 2) { beginRenameGroup(group) }
             }
             Spacer(minLength: 0)
-            if hoveringGroup == group.id || renamingGroup == group.id {
-                groupMenu(group)
-            }
-            Button { model.toggleGroup(group.id) } label: {
+            groupMenu(group)
+                .opacity(showsMenu ? 1 : 0)
+                .allowsHitTesting(showsMenu)
+                .accessibilityHidden(!showsMenu)
+                .animation(
+                    reduceMotion ? nil : Motion.controlFeedback,
+                    value: showsMenu
+                )
+            Button { toggleGroup(group.id) } label: {
                 Image(systemName: group.isCollapsed ? "chevron.down" : "chevron.up")
                     .font(.system(size: 10, weight: .bold))
                     .foregroundStyle(.black.opacity(0.62))
                     .frame(width: 18, height: 24)
+                    .contentTransition(.symbolEffect(.replace))
+                    .animation(
+                        reduceMotion ? nil : Motion.iconSwap,
+                        value: group.isCollapsed
+                    )
             }
             .buttonStyle(.plain)
             .help(group.isCollapsed ? loc.expandGroup : loc.collapseGroup)
@@ -330,7 +344,7 @@ struct AppRail: View {
             value: group.customColor
         )
         .onHover { hoveringGroup = $0 ? group.id : nil }
-        .onTapGesture { if renamingGroup == nil { model.toggleGroup(group.id) } }
+        .onTapGesture { if renamingGroup == nil { toggleGroup(group.id) } }
         .overlay {
             TabGroupContextMenuOverlay(
                 group: group,
@@ -435,11 +449,13 @@ struct AppRail: View {
     }
 
     private func tabRow(_ app: WebApp, group: TabGroup?) -> some View {
-        BrowserTabRow(
+        let icon = icons.image(for: app)
+
+        return BrowserTabRow(
             app: app,
             selected: app.id == model.selectedID,
             targeted: dropTarget == RailDrag.tab(app.id).encoded,
-            icon: icons.image(for: app),
+            icon: icon,
             isRenaming: renamingTab == app.id,
             unread: badges.count(for: app.id),
             closeLabel: loc.closeTab,
@@ -458,7 +474,7 @@ struct AppRail: View {
         )
         .draggable(RailDrag.tab(app.id).encoded) {
             HStack(spacing: 8) {
-                FaviconView(app: app, icon: icons.image(for: app), size: 16)
+                FaviconView(app: app, icon: icon, size: 16)
                 Text(app.displayName).font(.system(size: 12, weight: .medium)).lineLimit(1)
             }
             .padding(.horizontal, 10)
@@ -571,6 +587,12 @@ struct AppRail: View {
         withAnimation(reduceMotion ? nil : Motion.sidebarReorder, mutation)
     }
 
+    private func toggleGroup(_ id: TabGroup.ID) {
+        withAnimation(reduceMotion ? nil : Motion.sidebarCollapse) {
+            model.toggleGroup(id)
+        }
+    }
+
     private func handleDrop(
         _ drag: RailDrag,
         on app: WebApp,
@@ -638,6 +660,21 @@ private enum RailDrag: Hashable {
         case .tab(let id): return "tab:\(id.uuidString)"
         case .group(let id): return "group:\(id.uuidString)"
         }
+    }
+}
+
+/// One render-pass lookup table for the active workspace. Without this snapshot,
+/// every visible row calls back into `AppModel.locate`, turning a full sidebar
+/// refresh into repeated scans across every workspace and tab.
+private struct RailSnapshot {
+    let workspace: Workspace
+    let tabsByID: [WebApp.ID: WebApp]
+    let groupsByID: [TabGroup.ID: TabGroup]
+
+    init(workspace: Workspace) {
+        self.workspace = workspace
+        tabsByID = Dictionary(uniqueKeysWithValues: workspace.tabs.map { ($0.id, $0) })
+        groupsByID = Dictionary(uniqueKeysWithValues: workspace.groups.map { ($0.id, $0) })
     }
 }
 
@@ -712,13 +749,19 @@ private struct BrowserTabRow: View {
     @State private var hovering = false
     @State private var draft = ""
     @FocusState private var focused: Bool
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         HStack(spacing: 7) {
             FaviconView(app: app, icon: icon, size: 16)
                 .overlay(alignment: .topTrailing) {
-                    if let unread { UnreadBadge(count: unread).offset(x: 6, y: -6) }
+                    if let unread {
+                        UnreadBadge(count: unread)
+                            .offset(x: 6, y: -6)
+                            .transition(.scale.combined(with: .opacity))
+                    }
                 }
+                .animation(reduceMotion ? nil : Motion.badgePop, value: unread)
             if isRenaming {
                 TextField("", text: $draft)
                     .textFieldStyle(.plain)
@@ -734,18 +777,23 @@ private struct BrowserTabRow: View {
                     .lineLimit(1)
             }
             Spacer(minLength: 2)
-            if hovering || selected {
-                Button(action: onClose) {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 9.5, weight: .bold))
-                        .foregroundStyle(.primary.opacity(0.82))
-                        .frame(width: 20, height: 20)
-                        .background(.primary.opacity(hovering ? 0.10 : 0), in: Circle())
-                }
-                .buttonStyle(.plain)
-                .help(closeLabel)
-                .accessibilityLabel(closeLabel)
+            Button(action: onClose) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 9.5, weight: .bold))
+                    .foregroundStyle(.primary.opacity(0.82))
+                    .frame(width: 20, height: 20)
+                    .background(.primary.opacity(0.10), in: Circle())
             }
+            .buttonStyle(.plain)
+            .help(closeLabel)
+            .accessibilityLabel(closeLabel)
+            .accessibilityHidden(!(hovering || selected))
+            .allowsHitTesting(hovering || selected)
+            .opacity(hovering || selected ? 1 : 0)
+            .animation(
+                reduceMotion ? nil : Motion.controlFeedback,
+                value: hovering || selected
+            )
         }
         .padding(.horizontal, 9)
         .frame(height: 32)
@@ -756,18 +804,18 @@ private struct BrowserTabRow: View {
         .overlay {
             if targeted {
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .stroke(.primary.opacity(0.58), lineWidth: 1.5)
+                    .strokeBorder(.primary.opacity(0.58), lineWidth: 1.5)
             }
         }
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
         .onTapGesture(perform: onSelect)
-        .animation(.easeOut(duration: 0.1), value: hovering)
     }
 }
 
 private struct UnreadBadge: View {
     let count: Int
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         Text(count > 99 ? "99+" : "\(count)")
@@ -777,6 +825,8 @@ private struct UnreadBadge: View {
             .frame(minWidth: 16, minHeight: 16)
             .background(Capsule().fill(.red))
             .overlay(Capsule().stroke(.black.opacity(0.12), lineWidth: 0.5))
+            .contentTransition(.numericText(value: Double(count)))
+            .animation(reduceMotion ? nil : Motion.badgePop, value: count)
             .fixedSize()
     }
 }
@@ -817,6 +867,7 @@ struct AppTile: View {
     let icon: NSImage?
 
     @State private var hovering = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         FaviconView(app: app, icon: icon, size: 32)
@@ -826,8 +877,7 @@ struct AppTile: View {
                     .fill(.primary.opacity(targeted ? 0.16 : (hovering ? 0.07 : 0)))
             }
             .scaleEffect(selected ? 1.0 : 0.95)
-            .animation(.spring(response: 0.28, dampingFraction: 0.72), value: selected)
-            .animation(.easeOut(duration: 0.12), value: hovering)
+            .animation(reduceMotion ? nil : Motion.tileSelection, value: selected)
             .onHover { hovering = $0 }
             .help(app.displayName)
     }

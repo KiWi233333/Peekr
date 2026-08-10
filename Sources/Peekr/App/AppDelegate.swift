@@ -58,6 +58,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         edge.onTrigger = { [weak self] in self?.panel.show() }
         edge.start()
 
+        // Opt-in launch hook for automated native UI/design verification. It is
+        // inert for normal launches and avoids requiring Accessibility permission
+        // merely to press the global shortcut in a test environment.
+        if ProcessInfo.processInfo.environment["PEEKR_SHOW_PANEL_ON_LAUNCH"] == "1" {
+            panel.show()
+        }
+
         applyHotKey()
 
         browserImports = BrowserImportWindowController(

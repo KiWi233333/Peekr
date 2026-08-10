@@ -100,7 +100,7 @@ final class PanelController {
         let layout = currentLayout(on: screen)
         panel.setFrame(layout.offscreen, display: false)
         panel.makeKeyAndOrderFront(nil)
-        animate(to: layout.onscreen, duration: 0.24, curve: .easeOut)
+        animate(to: layout.onscreen, duration: Motion.Duration.panelOpen)
         installMonitors()
     }
 
@@ -111,11 +111,11 @@ final class PanelController {
         removeMonitors()
 
         let layout = currentLayout(on: activeScreen ?? resolveScreen())
-        NSAnimationContext.runAnimationGroup({ ctx in
-            ctx.duration = 0.2
-            ctx.timingFunction = CAMediaTimingFunction(name: .easeIn)
+        Motion.appKit(Motion.Duration.panelClose, animations: { [panel] in
             panel.animator().setFrame(layout.offscreen, display: true)
-        }, completionHandler: {
+        }, reducedMotion: { [panel] in
+            panel.setFrame(layout.offscreen, display: true)
+        }, completion: {
             MainActor.assumeIsolated { [weak self] in
                 guard let self, !self.isVisible else { return }
                 self.panel.orderOut(nil)
@@ -126,7 +126,7 @@ final class PanelController {
     /// Re-apply size/anchor while visible (after preference changes).
     func applyLayout() {
         guard isVisible, let screen = activeScreen else { return }
-        animate(to: currentLayout(on: screen).onscreen, duration: 0.25, curve: .easeInEaseOut)
+        animate(to: currentLayout(on: screen).onscreen, duration: Motion.Duration.panelLayout)
     }
 
     // MARK: - Drag to snap (position + slide direction only — never size)
@@ -161,7 +161,7 @@ final class PanelController {
         persistScreen(screen)
         settings.persist()
 
-        animate(to: currentLayout(on: screen).onscreen, duration: 0.3, curve: .easeOut)
+        animate(to: currentLayout(on: screen).onscreen, duration: Motion.Duration.panelSnap)
         autoHideSuspended = false
     }
 
@@ -322,20 +322,12 @@ final class PanelController {
         return PanelGeometry.resolveSize(global: global, visible: visible)
     }
 
-    private func animate(to frame: NSRect, duration: TimeInterval, curve: CAMediaTimingFunctionName) {
-        // Honor the system reduced-motion preference (native apps do).
-        guard !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else {
-            panel.setFrame(frame, display: true)
-            return
-        }
-        NSAnimationContext.runAnimationGroup { ctx in
-            ctx.duration = duration
-            ctx.timingFunction = CAMediaTimingFunction(name: curve)
-            // Let the hosted WKWebView keep painting during the slide instead of
-            // freezing (legacy Cocoa resize suspends subview drawing). Survival A.4.
-            ctx.allowsImplicitAnimation = true
+    private func animate(to frame: NSRect, duration: TimeInterval) {
+        Motion.appKit(duration, animations: { [panel] in
             panel.animator().setFrame(frame, display: true)
-        }
+        }, reducedMotion: { [panel] in
+            panel.setFrame(frame, display: true)
+        })
     }
 
     private func resolveScreen() -> NSScreen {
