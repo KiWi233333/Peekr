@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Vertical tabs now support named and colored groups, collapsing, drag reordering,
+  duplication, reopening, and independent selection in each workspace.
+- The default search engine can be switched between Google, Bing, DuckDuckGo,
+  and Baidu for new tabs and omnibox searches.
+
+### Changed
+- Panel and sidebar transitions now follow native motion timing, respect Reduce
+  Motion, and avoid redundant sidebar rendering work.
+- Favicons are shared and persisted by normalized domain, while omnibox
+  suggestions use stable identities and debounced refreshes.
+- Chromium keeps its standard user-agent product token for better website
+  compatibility.
+
+### Fixed
+- Panel edge and corner resizing now keeps the opposite edges fixed and clamps
+  cleanly to the visible screen while preserving Liquid Glass rendering.
+- Chromium interaction no longer crashes the app: packaging now uses the CEF
+  runtime pinned and validated by CefSwift instead of overriding it with CEF 151.
+
 ## [0.2.1]
 
 ### Added
