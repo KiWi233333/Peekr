@@ -2,16 +2,16 @@ import Foundation
 
 /// One row in the omnibox autocomplete dropdown.
 struct OmniboxSuggestion: Identifiable, Hashable {
-    enum Kind: Hashable { case search, openURL, tab, bookmark }
-    let id = UUID()
+    enum Kind: String, Hashable { case search, openURL, tab, bookmark }
     let kind: Kind
     let primary: String
     let secondary: String?
     /// Passed verbatim to `WebViewManager.loadAddress` when chosen.
     let target: String
 
-    static func == (lhs: OmniboxSuggestion, rhs: OmniboxSuggestion) -> Bool { lhs.id == rhs.id }
-    func hash(into hasher: inout Hasher) { hasher.combine(id) }
+    /// Stable across query refreshes so SwiftUI reuses unchanged rows (and their
+    /// favicon requests) instead of tearing the entire dropdown down per keypress.
+    var id: String { "\(kind.rawValue)|\(target.lowercased())" }
 }
 
 /// Builds omnibox suggestions Chrome-style: a top "search / open" action, then

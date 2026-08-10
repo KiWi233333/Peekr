@@ -9,6 +9,7 @@ struct NavigationBar: View {
     let settings: Settings
     let model: AppModel
     let bookmarks: BookmarksModel
+    let icons: IconStore
     let showsSidebarToggle: Bool
     let sidebarOnLeft: Bool
 
@@ -39,8 +40,19 @@ struct NavigationBar: View {
     var body: some View {
         VStack(spacing: 6) {
             bar
-            if showSuggestions { suggestionsList }
+            if showSuggestions {
+                suggestionsList
+                    .transition(
+                        reduceMotion
+                            ? .identity
+                            : .scale(scale: 0.97, anchor: .top).combined(with: .opacity)
+                    )
+            }
         }
+        .animation(
+            reduceMotion ? nil : (showSuggestions ? Motion.dropdownOpen : Motion.dropdownClose),
+            value: showSuggestions
+        )
         .onAppear { syncText() }
         .onChange(of: focused) { _, isFocused in
             // Focus shows the full URL for editing. Blur only closes the dropdown
@@ -137,6 +149,8 @@ struct NavigationBar: View {
                 .font(.system(size: 12, weight: .semibold))
                 .frame(width: 26, height: 26)
                 .contentShape(Circle())
+                .contentTransition(.symbolEffect(.replace))
+                .animation(reduceMotion ? nil : Motion.iconSwap, value: symbol)
         }
         .buttonStyle(IconButtonStyle())
         .foregroundStyle(enabled ? AnyShapeStyle(.primary) : AnyShapeStyle(.tertiary))
@@ -218,17 +232,20 @@ struct NavigationBar: View {
     /// kind's SF symbol while loading or when there's no host (search rows).
     @ViewBuilder
     private func suggestionIcon(_ suggestion: OmniboxSuggestion) -> some View {
-        if suggestion.kind != .search, let host = suggestionHost(suggestion),
-           let url = IconStore.faviconURL(host: host) {
-            AsyncImage(url: url) { phase in
-                if let image = phase.image {
-                    image.resizable().interpolation(.high).aspectRatio(contentMode: .fit)
+        if suggestion.kind != .search, let host = suggestionHost(suggestion) {
+            Group {
+                if let image = icons.image(forHost: host) {
+                    Image(nsImage: image)
+                        .resizable()
+                        .interpolation(.high)
+                        .aspectRatio(contentMode: .fit)
                 } else {
                     symbolIcon(suggestion.kind)
                 }
             }
             .frame(width: 16, height: 16)
             .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
+            .onAppear { icons.load(host: host) }
         } else {
             symbolIcon(suggestion.kind).frame(width: 16)
         }
@@ -302,6 +319,15 @@ struct NavigationBar: View {
         suggestTask?.cancel()
         let engine = settings.searchEngine
         suggestTask = Task {
+            do {
+                try await Task.sleep(for: .milliseconds(120))
+            } catch {
+                return
+            }
+            guard !Task.isCancelled,
+                  engine == settings.searchEngine,
+                  query == text.trimmingCharacters(in: .whitespaces)
+            else { return }
             let completions = await OmniboxSuggestions.searchCompletions(for: query, using: engine)
             guard !Task.isCancelled,
                   engine == settings.searchEngine,

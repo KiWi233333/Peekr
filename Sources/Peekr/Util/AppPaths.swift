@@ -15,7 +15,7 @@ enum AppPaths {
         return base
     }()
 
-    /// `…/Peekr/icons` for the per-app favicon cache (created on first access).
+    /// `…/Peekr/icons` for custom per-app icons plus the shared domain cache.
     static let iconsDirectory: URL = {
         let dir = supportDirectory.appendingPathComponent("icons", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)

@@ -73,4 +73,28 @@ final class SearchEngineTests: XCTestCase {
             "https://example.com"
         )
     }
+
+    func testOmniboxSuggestionIdentityIsStableAcrossRefreshes() {
+        let first = OmniboxSuggestion(
+            kind: .tab,
+            primary: "Peekr",
+            secondary: "peekr.app",
+            target: "https://peekr.app"
+        )
+        let refreshed = OmniboxSuggestion(
+            kind: .tab,
+            primary: "Peekr Browser",
+            secondary: "peekr.app",
+            target: "https://peekr.app"
+        )
+        let bookmark = OmniboxSuggestion(
+            kind: .bookmark,
+            primary: "Peekr",
+            secondary: nil,
+            target: "https://peekr.app"
+        )
+
+        XCTAssertEqual(first.id, refreshed.id)
+        XCTAssertNotEqual(first.id, bookmark.id)
+    }
 }

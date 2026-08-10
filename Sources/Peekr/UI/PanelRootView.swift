@@ -93,7 +93,9 @@ struct PanelRootView: View {
         }
         .onChange(of: editTarget != nil) { _, _ in onModalChange(isModalOpen) }
         .onChange(of: bookmarksOpen) { _, _ in onModalChange(isModalOpen) }
-        .animation(.smooth(duration: 0.3), value: anchor.railOnLeft)
+        // Moving the sidebar between edges must not tween the embedded browser
+        // across the window. The real NSPanel already performs the dock snap;
+        // swapping this layout atomically avoids a second expensive web redraw.
         .animation(reduceMotion ? nil : Motion.sidebarCollapse, value: isRailCollapsed)
         .enableInjection()
     }
@@ -140,7 +142,7 @@ struct PanelRootView: View {
 
             NavigationBar(
                 state: manager.state, manager: manager, settings: settings,
-                model: model, bookmarks: bookmarks,
+                model: model, bookmarks: bookmarks, icons: icons,
                 showsSidebarToggle: isRailCollapsed,
                 sidebarOnLeft: anchor.railOnLeft,
                 onMoveBegan: onMoveBegan, onMoveChanged: onMoveChanged, onMoveEnded: onMoveEnded,

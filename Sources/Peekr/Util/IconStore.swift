@@ -1,80 +1,109 @@
 import AppKit
+import CryptoKit
 import Observation
 
-/// Loads, caches and persists per-app icons. Favicons are fetched from Google's
-/// favicon service and cached to disk; users can override with a custom image.
+/// Loads, caches and persists website icons. Automatic favicons are shared by
+/// normalized domain in memory and on disk; user overrides remain per app.
 @MainActor
 @Observable
 final class IconStore {
-    private var images: [UUID: NSImage] = [:]
-    /// The host each app's add-time/disk icon was fetched for, so `load`/`fetch`
-    /// don't redo work for an unchanged site.
-    private var iconHost: [UUID: String] = [:]
-    /// The host each app last got a *live-DOM* favicon for. Tracked apart from
-    /// `iconHost` so the first real page settle always refreshes the icon — the
-    /// add-time fetch only sees server HTML and misses JS-injected icons.
-    private var liveIconHost: [UUID: String] = [:]
-    private let dir: URL
+    typealias DomainIconResolver = (_ host: String, _ declaredLinks: [URL]) async -> NSImage?
 
-    init() {
-        dir = AppPaths.iconsDirectory
+    /// Per-app images are reserved for user overrides and legacy cache migration.
+    private var images: [UUID: NSImage] = [:]
+    private var domainImages: [String: NSImage] = [:]
+    /// One generation token per domain coalesces concurrent loads. A forced
+    /// refresh replaces the token, so an older request can never overwrite it.
+    private var domainLoadTokens: [String: UUID] = [:]
+    /// The first live-DOM settle upgrades the add-time icon once per domain.
+    private var liveIconHosts = Set<String>()
+    private let dir: URL
+    private let domainDir: URL
+    private let domainResolver: DomainIconResolver
+
+    init(
+        directory: URL = AppPaths.iconsDirectory,
+        resolver: DomainIconResolver? = nil
+    ) {
+        dir = directory
+        domainDir = directory.appendingPathComponent("domains", isDirectory: true)
+        domainResolver = resolver ?? { host, links in
+            await IconStore.bestIcon(host: host, declaredLinks: links)
+        }
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try? FileManager.default.createDirectory(at: domainDir, withIntermediateDirectories: true)
     }
 
     /// Reading this in a SwiftUI body registers observation, so tiles update
     /// the moment an icon finishes loading.
-    func image(for app: WebApp) -> NSImage? { images[app.id] }
+    func image(for app: WebApp) -> NSImage? {
+        if app.usesCustomIcon, let custom = images[app.id] { return custom }
+        return Self.normalizedHost(app.host).flatMap { domainImages[$0] }
+    }
+
+    /// Shared entry point for URL-bearing UI that has no `WebApp`, such as
+    /// omnibox suggestions.
+    func image(forHost host: String) -> NSImage? {
+        Self.normalizedHost(host).flatMap { domainImages[$0] }
+    }
 
     func warm(_ apps: [WebApp]) {
         for app in apps { load(app) }
     }
 
     func load(_ app: WebApp) {
-        if images[app.id] != nil { return }
-        iconHost[app.id] = app.host
-        if let disk = NSImage(contentsOf: fileURL(app.id)) {
-            images[app.id] = disk
-            return
+        if app.usesCustomIcon {
+            if images[app.id] != nil { return }
+            if let custom = NSImage(contentsOf: fileURL(app.id)) {
+                images[app.id] = custom
+                return
+            }
         }
-        if !app.usesCustomIcon { fetchFavicon(app) }
+        guard let host = Self.normalizedHost(app.host),
+              !loadDomainFromDisk(host, legacyID: app.id) else { return }
+        fetchFavicon(app)
+    }
+
+    func load(host rawHost: String) {
+        guard let host = Self.normalizedHost(rawHost),
+              !loadDomainFromDisk(host) else { return }
+        resolveIcon(host: host, force: false) { [] }
     }
 
     /// Force a fresh favicon fetch (e.g. after the URL changes).
     func refreshFavicon(_ app: WebApp) {
         guard !app.usesCustomIcon else { return }
-        fetchFavicon(app)
+        fetchFavicon(app, force: true)
     }
 
     /// Live favicon sync once a tab settles, driven by the icon `<link>`s the
-    /// engine read from the rendered DOM (so JS-injected icons are caught). Stores
-    /// the result under the app id for the page's *current* host. Runs once per
-    /// host per tab — within-site navigation and the progress-tick stream never
-    /// refetch — but always fires the first real settle, so the add-time
-    /// placeholder icon gets replaced. Custom icons are left untouched.
+    /// engine read from the rendered DOM (so JS-injected icons are caught).
+    /// Runs once per domain — within-site navigation, sibling tabs and progress
+    /// ticks never refetch — while the first real settle can still replace the
+    /// add-time placeholder. Custom icons are left untouched.
     func syncFavicon(_ app: WebApp, pageURL: URL?, domLinks: [URL]) {
-        guard !app.usesCustomIcon, let host = pageURL?.displayHost ?? app.host,
-              liveIconHost[app.id] != host else { return }
-        liveIconHost[app.id] = host
-        let id = app.id
-        Task { [weak self] in
-            await self?.writeIcon(host: host, declaredLinks: domLinks, id: id)
-        }
+        guard !app.usesCustomIcon,
+              let host = Self.normalizedHost(pageURL?.displayHost ?? app.host),
+              liveIconHosts.insert(host).inserted else { return }
+        resolveIcon(host: host, force: true) { domLinks }
     }
 
     /// Re-fetches both the favicon and the page `<title>` from one page load.
     /// `onTitle` fires on the main actor only when a non-empty title is found;
     /// the icon is skipped for apps using a custom image.
     func refresh(_ app: WebApp, onTitle: @escaping (String) -> Void) {
-        guard let host = app.host else { return }
-        iconHost[app.id] = host
+        guard let host = Self.normalizedHost(app.host) else { return }
         let pageURL = app.url ?? URL(string: "https://\(host)")
-        let id = app.id
         let skipIcon = app.usesCustomIcon
+        let token = skipIcon ? nil : reserveDomainLoad(host: host, force: true)
+        let resolver = domainResolver
         Task { [weak self] in
             let doc = await Self.pageDocument(pageURL)
             if let doc, let title = Self.pageTitle(in: doc.html) { onTitle(title) }
-            guard !skipIcon else { return }
+            guard let self, let token else { return }
             let links = doc.map { Self.iconLinks(in: $0.html, base: $0.base) } ?? []
-            await self?.writeIcon(host: host, declaredLinks: links, id: id)
+            let image = await resolver(host, links)
+            self.writeIcon(host: host, image: image, token: token)
         }
     }
 
@@ -123,7 +152,7 @@ final class IconStore {
     func clearCustomIcon(_ app: WebApp) {
         try? FileManager.default.removeItem(at: fileURL(app.id))
         images[app.id] = nil
-        fetchFavicon(app)
+        load(app)
     }
 
     // MARK: - Private
@@ -132,33 +161,84 @@ final class IconStore {
         dir.appendingPathComponent("\(id.uuidString).png")
     }
 
-    private func fetchFavicon(_ app: WebApp) {
-        guard let host = app.host else { return }
-        iconHost[app.id] = host
+    private func domainFileURL(_ host: String) -> URL {
+        let digest = SHA256.hash(data: Data(host.utf8))
+            .map { String(format: "%02x", $0) }
+            .joined()
+        return domainDir.appendingPathComponent("\(digest).png")
+    }
+
+    @discardableResult
+    private func loadDomainFromDisk(_ host: String, legacyID: UUID? = nil) -> Bool {
+        if domainImages[host] != nil { return true }
+        let destination = domainFileURL(host)
+        if let disk = NSImage(contentsOf: destination) {
+            domainImages[host] = disk
+            return true
+        }
+        guard let legacyID else { return false }
+        let legacy = fileURL(legacyID)
+        guard let disk = NSImage(contentsOf: legacy) else { return false }
+        domainImages[host] = disk
+        try? FileManager.default.copyItem(at: legacy, to: destination)
+        return true
+    }
+
+    private func fetchFavicon(_ app: WebApp, force: Bool = false) {
+        guard let host = Self.normalizedHost(app.host) else { return }
         // Prefer the app's real URL (keeps scheme/path) so we can parse the
         // actual page; synthesize an https page URL when only a host is known.
         let pageURL = app.url ?? URL(string: "https://\(host)")
-        let id = app.id
-        Task { [weak self] in
-            let links = await Self.pageDocument(pageURL)
+        resolveIcon(host: host, force: force) {
+            await Self.pageDocument(pageURL)
                 .map { Self.iconLinks(in: $0.html, base: $0.base) } ?? []
-            await self?.writeIcon(host: host, declaredLinks: links, id: id)
         }
     }
 
-    /// Resolves the best icon from the page's declared links plus fallbacks and
-    /// persists it. Shared by the favicon-only and icon+title refresh paths.
-    private func writeIcon(host: String, declaredLinks: [URL], id: UUID) async {
-        guard let image = await Self.bestIcon(host: host, declaredLinks: declaredLinks),
-              let data = image.pngData() else { return }
-        images[id] = image
-        try? data.write(to: fileURL(id), options: .atomic)
+    private func resolveIcon(
+        host: String,
+        force: Bool,
+        links: @escaping () async -> [URL]
+    ) {
+        guard let token = reserveDomainLoad(host: host, force: force) else { return }
+        let resolver = domainResolver
+        Task { [weak self] in
+            let image = await resolver(host, await links())
+            self?.writeIcon(host: host, image: image, token: token)
+        }
+    }
+
+    private func reserveDomainLoad(host: String, force: Bool) -> UUID? {
+        if !force, domainImages[host] != nil || domainLoadTokens[host] != nil { return nil }
+        let token = UUID()
+        domainLoadTokens[host] = token
+        return token
+    }
+
+    /// Publishes only the newest request for a domain, then persists one shared
+    /// PNG. Failed requests clear their token so a later appearance can retry.
+    private func writeIcon(host: String, image: NSImage?, token: UUID) {
+        guard domainLoadTokens[host] == token else { return }
+        domainLoadTokens[host] = nil
+        guard let image, let data = image.pngData() else { return }
+        try? data.write(to: domainFileURL(host), options: .atomic)
+        domainImages[host] = image
     }
 
     /// The favicon-service URL for a host — the same source the resolver falls
-    /// back to. Used directly by lightweight UI (e.g. omnibox suggestion rows).
+    /// back to. Kept as a normalized URL builder for integrations outside the
+    /// shared cache.
     nonisolated static func faviconURL(host: String, size: Int = 64) -> URL? {
-        URL(string: "https://www.google.com/s2/favicons?sz=\(size)&domain=\(host)")
+        guard let host = normalizedHost(host) else { return nil }
+        return URL(string: "https://www.google.com/s2/favicons?sz=\(size)&domain=\(host)")
+    }
+
+    nonisolated static func normalizedHost(_ rawHost: String?) -> String? {
+        guard var host = rawHost?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
+              !host.isEmpty else { return nil }
+        while host.hasSuffix(".") { host.removeLast() }
+        if host.hasPrefix("www.") { host.removeFirst(4) }
+        return host.isEmpty ? nil : host
     }
 
     // MARK: - Favicon resolution
