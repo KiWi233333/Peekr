@@ -1,0 +1,124 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Peekr CEF capability smoke</title>
+<style>
+  html, body { width: 100%; height: 100%; margin: 0; }
+  #native-click {
+    position: fixed;
+    inset: 0;
+    border: 0;
+    background: #1458d4;
+    color: white;
+    font: 24px system-ui;
+  }
+</style>
+<button id="native-click">CEF native input target</button>
+<input id="file-input" type="file" hidden>
+<script>
+const prefix = '__PEEKR_CEF_SMOKE__:';
+const report = (name, ok) => console.log(`${prefix}${name}:${ok ? 'PASS' : 'FAIL'}`);
+
+async function indexedDBRoundTrip() {
+  return new Promise((resolve, reject) => {
+    const open = indexedDB.open('peekr-cef-smoke', 1);
+    open.onupgradeneeded = () => open.result.createObjectStore('values');
+    open.onerror = () => reject(open.error);
+    open.onsuccess = () => {
+      const db = open.result;
+      const write = db.transaction('values', 'readwrite');
+      write.objectStore('values').put('ok', 'key');
+      write.oncomplete = () => {
+        const read = db.transaction('values').objectStore('values').get('key');
+        read.onsuccess = () => resolve(read.result === 'ok');
+        read.onerror = () => reject(read.error);
+      };
+      write.onerror = () => reject(write.error);
+    };
+  });
+}
+
+async function workerRoundTrip() {
+  const blob = new Blob(['onmessage=e=>postMessage(e.data+1)'], {type: 'text/javascript'});
+  const url = URL.createObjectURL(blob);
+  try {
+    return await new Promise((resolve, reject) => {
+      const worker = new Worker(url);
+      worker.onmessage = event => { worker.terminate(); resolve(event.data === 42); };
+      worker.onerror = reject;
+      worker.postMessage(41);
+    });
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+async function run() {
+  const phase = new URLSearchParams(location.search).get('phase') || '1';
+  try {
+    if (phase === '2') {
+      report('PERSISTENT_STORAGE', localStorage.getItem('peekr-cef-persisted') === 'ok');
+    } else {
+      localStorage.setItem('peekr-cef-persisted', 'ok');
+      report('PERSISTENCE_SEEDED', localStorage.getItem('peekr-cef-persisted') === 'ok');
+    }
+    localStorage.setItem('peekr-cef-smoke', 'ok');
+    report('LOCAL_STORAGE', localStorage.getItem('peekr-cef-smoke') === 'ok');
+  } catch { report('LOCAL_STORAGE', false); }
+
+  try { report('INDEXED_DB', await indexedDBRoundTrip()); }
+  catch { report('INDEXED_DB', false); }
+
+  try {
+    const cache = await caches.open('peekr-cef-smoke');
+    await cache.put('/cached-value', new Response('ok'));
+    const cached = await cache.match('/cached-value');
+    report('CACHE_STORAGE', !!cached && await cached.text() === 'ok');
+  } catch { report('CACHE_STORAGE', false); }
+
+  try {
+    await navigator.serviceWorker.register('/service-worker.js');
+    await navigator.serviceWorker.ready;
+    report('SERVICE_WORKER', true);
+  } catch { report('SERVICE_WORKER', false); }
+
+  try {
+    const bytes = new Uint8Array([0,97,115,109,1,0,0,0]);
+    await WebAssembly.instantiate(bytes);
+    report('WEB_ASSEMBLY', true);
+  } catch { report('WEB_ASSEMBLY', false); }
+
+  try { report('WEB_WORKER', await workerRoundTrip()); }
+  catch { report('WEB_WORKER', false); }
+
+  const canvas = document.createElement('canvas');
+  report('WEBGL2', !!canvas.getContext('webgl2'));
+  report('WEBGPU_API', !!navigator.gpu);
+
+  try {
+    const peer = new RTCPeerConnection();
+    await peer.setLocalDescription(await peer.createOffer());
+    peer.close();
+    report('WEBRTC', true);
+  } catch { report('WEBRTC', false); }
+
+  report('GET_USER_MEDIA_API', typeof navigator.mediaDevices?.getUserMedia === 'function');
+  report('GET_DISPLAY_MEDIA_API', typeof navigator.mediaDevices?.getDisplayMedia === 'function');
+  report('FILE_INPUT_API', document.getElementById('file-input').type === 'file');
+  report('FILE_SYSTEM_ACCESS_API', typeof window.showOpenFilePicker === 'function');
+  report('NOTIFICATIONS_API', typeof Notification === 'function');
+  report('USER_AGENT_CHROME_148', /Chrome\/148\./.test(navigator.userAgent));
+  report('NO_ELECTRON_RUNTIME', !/Electron\//.test(navigator.userAgent));
+}
+
+document.getElementById('native-click').addEventListener('click', () => {
+  report('NATIVE_MOUSE_CLICK', true);
+  document.getElementById('file-input').click();
+  const link = document.createElement('a');
+  link.href = '/download.txt';
+  link.download = 'peekr-cef-smoke.txt';
+  document.body.appendChild(link);
+  link.click();
+});
+
+run();
+</script>

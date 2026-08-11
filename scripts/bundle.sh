@@ -15,6 +15,11 @@ FRAMEWORK="$APP/Contents/Frameworks/Chromium Embedded Framework.framework"
 HELPER_ENT="Resources/PeekrCEFHelper.entitlements"
 APP_ENT="Resources/Peekr.entitlements"
 
+# A project-level CEF_VERSION.json selects Peekr's Chrome-codec build. Stage it
+# in CefSwift's cache first because CefSwift's upstream downloader intentionally
+# serves only the redistributable codec set.
+./scripts/prepare-cef.sh stage
+
 # CefSwift owns the version pin, download/checksum, versioned framework layout,
 # helper build and initial inside-out ad-hoc signature. Peekr re-signs below so
 # local stable identities and hardened Developer ID releases keep working.
@@ -27,6 +32,12 @@ swift package \
   --output build \
   --sign -
 
+# Bind CefSwift's extracted cache entry to the exact custom artifact hash. This
+# prevents a same-version official CEF cache from shadowing the codec build.
+if [ -f CEF_VERSION.json ]; then
+  ./scripts/prepare-cef.sh record
+fi
+
 test -d "$APP" || { echo "CefSwift did not create $APP" >&2; exit 1; }
 test -d "$FRAMEWORK" || { echo "CEF framework missing from $APP" >&2; exit 1; }
 
@@ -34,6 +45,7 @@ test -d "$FRAMEWORK" || { echo "CEF framework missing from $APP" >&2; exit 1; }
 # includes those keys plus LSUIElement, icon and Apple Events usage text.
 mkdir -p "$APP/Contents/Resources"
 cp Resources/Info.plist "$APP/Contents/Info.plist"
+/usr/bin/plutil -replace PeekrBuildConfiguration -string "$CONFIG" "$APP/Contents/Info.plist"
 if [ -f Resources/AppIcon.icns ]; then
   cp Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 fi
@@ -43,6 +55,27 @@ CEF_LICENSE="$(find .build/checkouts -path '*/Sources/CCef/LICENSE.CEF.txt' -pri
 if [ -n "$CEF_LICENSE" ]; then
   cp "$CEF_LICENSE" "$APP/Contents/Resources/CEF-LICENSE.txt"
 fi
+
+# The binary distribution also carries Chromium/third-party notices. Resolve
+# the same manifest/version/platform CefSwift used and ship those exact files;
+# this is especially important for the Chrome-branded FFmpeg build.
+if [ -f CEF_VERSION.json ]; then
+  CEF_MANIFEST="CEF_VERSION.json"
+else
+  CEF_MANIFEST="$(find .build/checkouts -path '*/CefSwift/CEF_VERSION.json' -print -quit)"
+fi
+test -n "$CEF_MANIFEST" || { echo "CEF manifest missing after bundle." >&2; exit 1; }
+CEF_VERSION="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["cef"])' "$CEF_MANIFEST")"
+case "$(uname -m)" in
+  arm64) CEF_PLATFORM="macosarm64" ;;
+  x86_64) CEF_PLATFORM="macosx64" ;;
+  *) echo "Unsupported CEF architecture: $(uname -m)" >&2; exit 1 ;;
+esac
+CEF_DIST=".cef/dist/${CEF_VERSION}_${CEF_PLATFORM}_minimal"
+test -f "$CEF_DIST/LICENSE.txt" || { echo "Chromium license missing from $CEF_DIST" >&2; exit 1; }
+test -f "$CEF_DIST/CREDITS.html" || { echo "Chromium credits missing from $CEF_DIST" >&2; exit 1; }
+cp "$CEF_DIST/LICENSE.txt" "$APP/Contents/Resources/Chromium-LICENSE.txt"
+cp "$CEF_DIST/CREDITS.html" "$APP/Contents/Resources/Chromium-CREDITS.html"
 
 # Peekr exposes only English and Chinese UI. CEF's redistribution README allows
 # shipping only configured locales; prune the other locale packs before the
@@ -128,6 +161,12 @@ sign_one "$FRAMEWORK"
 
 for helper in "$APP"/Contents/Frameworks/Peekr\ Helper*.app; do
   [ -d "$helper" ] || continue
+  # Media capture happens in Chromium helper processes. Mirror the main app's
+  # TCC usage strings before the helpers receive their final signature.
+  for usage_key in NSCameraUsageDescription NSMicrophoneUsageDescription NSLocationUsageDescription NSScreenCaptureUsageDescription; do
+    usage_value="$(/usr/bin/plutil -extract "$usage_key" raw "$APP/Contents/Info.plist")"
+    /usr/bin/plutil -replace "$usage_key" -string "$usage_value" "$helper/Contents/Info.plist"
+  done
   if [ "${PEEKR_HARDENED:-0}" = "1" ] && [ -n "$IDENTITY" ]; then
     sign_one "$helper" "$HELPER_ENT"
   else

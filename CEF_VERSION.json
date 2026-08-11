@@ -1,0 +1,15 @@
+{
+  "cef": "148.0.10+g7ee53f5+chromium-148.0.7778.218",
+  "chromium": "148.0.7778.218",
+  "channel": "stable",
+  "platforms": {
+    "macosarm64": {
+      "minimal": {
+        "name": "cef_binary_148.0.10+g7ee53f5+chromium-148.0.7778.218_macosarm64_chrome_codecs_minimal.tar.bz2",
+        "sha1": "ecaf72905c02c0b8458461bdf04b7b8da706f997",
+        "sha256": "49689bad292d405df292c0251270743215aa716d85910d63f8ca1cd1a6b4c4e6",
+        "size": 125443078
+      }
+    }
+  }
+}

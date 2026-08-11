@@ -35,7 +35,15 @@
     <false/>
     <key>NSPrincipalClass</key>
     <string>NSApplication</string>
-    <key>NSAppleEventsUsageDescription</key>
-    <string>Peekr reads the tabs currently open in your browsers so you can add them as web apps.</string>
+	<key>NSAppleEventsUsageDescription</key>
+	<string>Peekr reads the tabs currently open in your browsers so you can add them as web apps.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>Peekr lets websites use the camera only after you approve their permission request.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Peekr lets websites use the microphone only after you approve their permission request.</string>
+	<key>NSLocationUsageDescription</key>
+	<string>Peekr lets websites use your location only after you approve their permission request.</string>
+	<key>NSScreenCaptureUsageDescription</key>
+	<string>Peekr lets websites share your screen only after you approve their permission request.</string>
 </dict>
 </plist>

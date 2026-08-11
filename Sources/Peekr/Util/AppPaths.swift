@@ -8,6 +8,15 @@ enum AppPaths {
     /// `~/Library/Application Support/Peekr` (created on first access).
     static let supportDirectory: URL = {
         let fm = FileManager.default
+        #if DEBUG
+        if let rawOverride = ProcessInfo.processInfo.environment["PEEKR_SMOKE_DATA_ROOT"]?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+           !rawOverride.isEmpty {
+            let isolated = URL(fileURLWithPath: rawOverride, isDirectory: true).standardizedFileURL
+            try? fm.createDirectory(at: isolated, withIntermediateDirectories: true)
+            return isolated
+        }
+        #endif
         let base = (fm.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
             ?? fm.homeDirectoryForCurrentUser)
             .appendingPathComponent("Peekr", isDirectory: true)

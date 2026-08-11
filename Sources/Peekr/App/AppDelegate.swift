@@ -39,7 +39,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         icons.warm(model.apps)
         badges = BadgeStore()
 
+        #if DEBUG
+        let smokeUsesChromium =
+            ProcessInfo.processInfo.environment["PEEKR_SMOKE_SHOW_PANEL"] == "1"
+        activeWebEngine = smokeUsesChromium ? .chromium : settings.webEngine
+        #else
         activeWebEngine = settings.webEngine
+        #endif
         manager = WebViewManager(
             model: model,
             factory: activeWebEngine.makeFactory(),
@@ -106,9 +112,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // out of release builds and never changes persisted settings or tabs.
         if ProcessInfo.processInfo.environment["PEEKR_SMOKE_SHOW_PANEL"] == "1" {
             if let rawURL = ProcessInfo.processInfo.environment["PEEKR_SMOKE_URL"],
-               var app = model.apps.first {
-                app.urlString = rawURL
-                model.update(app)
+               let firstID = model.apps.first?.id {
+                // Smoke navigation must stay in memory; model.update(_:) writes
+                // apps.json and would replace the user's real first tab.
+                smokeTarget: for workspaceIndex in model.workspaces.indices {
+                    guard let tabIndex = model.workspaces[workspaceIndex].tabs
+                        .firstIndex(where: { $0.id == firstID })
+                    else { continue }
+                    model.workspaces[workspaceIndex].tabs[tabIndex].urlString = rawURL
+                    break smokeTarget
+                }
             }
             panel.show()
         }

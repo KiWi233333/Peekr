@@ -1,0 +1,24 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Peekr CEF permission smoke</title>
+<style>
+  html, body { width: 100%; height: 100%; margin: 0; }
+  button { position: fixed; inset: 0; border: 0; background: #7b2cbf; color: white; font: 24px system-ui; }
+</style>
+<button id="request">Request media permissions</button>
+<script>
+const prefix = '__PEEKR_PERMISSION_SMOKE__:';
+const report = (name, ok) => console.log(`${prefix}${name}:${ok ? 'PASS' : 'FAIL'}`);
+
+function expectDenied(name, promise) {
+  promise.then(stream => {
+    stream.getTracks().forEach(track => track.stop());
+    report(name, false);
+  }).catch(error => report(name, error?.name === 'NotAllowedError'));
+}
+
+document.getElementById('request').addEventListener('click', () => {
+  expectDenied('USER_MEDIA_NATIVE_DENY', navigator.mediaDevices.getUserMedia({audio: true, video: true}));
+  expectDenied('DISPLAY_MEDIA_NATIVE_DENY', navigator.mediaDevices.getDisplayMedia({audio: true, video: true}));
+});
+</script>

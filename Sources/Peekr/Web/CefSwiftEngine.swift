@@ -35,6 +35,10 @@ final class CefSwiftEngine: WebEngine {
     private var pendingURL: URL?
     private var faviconURLs: [URL] = []
     private var isClosed = false
+    #if DEBUG
+    private var didRunInputSmoke = false
+    private var completedSmokeDownloads: Set<UInt32> = []
+    #endif
 
     var hostView: NSView { host }
     private(set) var navState: NavState
@@ -143,9 +147,38 @@ final class CefSwiftEngine: WebEngine {
         navState = next
         onNavStateChange?(next)
     }
+
+    #if DEBUG
+    private func recordSmokeMessage(_ message: String, fileName: String) {
+        let resultURL = AppPaths.supportDirectory.appendingPathComponent(fileName)
+        let bytes = Data((message + "\n").utf8)
+        if !FileManager.default.fileExists(atPath: resultURL.path) {
+            FileManager.default.createFile(atPath: resultURL.path, contents: bytes)
+        } else if let handle = try? FileHandle(forWritingTo: resultURL) {
+            _ = try? handle.seekToEnd()
+            try? handle.write(contentsOf: bytes)
+            try? handle.close()
+        }
+    }
+    #endif
 }
 
 extension CefSwiftEngine: CefBrowserDelegate {
+    func browser(
+        _ browser: CefBrowser,
+        requestsPermission request: CefPermissionRequest
+    ) -> CefPermissionDecision {
+        CefPermissionPrompt.decide(request)
+    }
+
+    func browser(
+        _ browser: CefBrowser,
+        didReceiveAuthChallenge challenge: CefAuthChallenge,
+        callback: CefAuthCallback
+    ) -> Bool {
+        CefHTTPAuthPrompt.present(challenge, callback: callback)
+    }
+
     func browser(_ browser: CefBrowser, didChangeTitle title: String) {
         applyTitle(title)
     }
@@ -161,6 +194,33 @@ extension CefSwiftEngine: CefBrowserDelegate {
         canGoForward: Bool
     ) {
         applyLoading(isLoading, canGoBack: canGoBack, canGoForward: canGoForward)
+        #if DEBUG
+        if !isLoading,
+           !didRunInputSmoke,
+           ProcessInfo.processInfo.environment["PEEKR_SMOKE_CLICK"] == "1" {
+            didRunInputSmoke = true
+            Task { @MainActor in
+                try? await Task.sleep(for: .milliseconds(500))
+                let point = CGPoint(x: 120, y: 120)
+                browser.sendMouseMove(to: point, modifiers: 0)
+                browser.sendMouseDown(at: point, button: .left, clickCount: 1, modifiers: 0)
+                browser.sendMouseUp(at: point, button: .left, clickCount: 1, modifiers: 0)
+                try? await Task.sleep(for: .milliseconds(700))
+                if let panel = NSApp.windows.compactMap({ $0 as? NSOpenPanel }).first {
+                    recordSmokeMessage(
+                        "__PEEKR_CEF_SMOKE__:FILE_CHOOSER_NATIVE:PASS",
+                        fileName: "cef-smoke.log"
+                    )
+                    panel.cancel(nil)
+                } else {
+                    recordSmokeMessage(
+                        "__PEEKR_CEF_SMOKE__:FILE_CHOOSER_NATIVE:FAIL",
+                        fileName: "cef-smoke.log"
+                    )
+                }
+            }
+        }
+        #endif
     }
 
     func browser(_ browser: CefBrowser, didChangeProgress progress: Double) {
@@ -169,6 +229,49 @@ extension CefSwiftEngine: CefBrowserDelegate {
 
     func browser(_ browser: CefBrowser, didChangeFavicon urls: [URL]) {
         faviconURLs = urls
+    }
+
+    func browser(
+        _ browser: CefBrowser,
+        didReceiveConsoleMessage message: String,
+        level: CefLogSeverity,
+        source: String,
+        line: Int
+    ) {
+        #if DEBUG
+        if message.hasPrefix("__PEEKR_CODEC_SMOKE__") {
+            recordSmokeMessage(message, fileName: "codec-smoke.log")
+        } else if message.hasPrefix("__PEEKR_CEF_SMOKE__") {
+            recordSmokeMessage(message, fileName: "cef-smoke.log")
+        } else if message.hasPrefix("__PEEKR_PERMISSION_SMOKE__") {
+            recordSmokeMessage(message, fileName: "permission-result.log")
+        }
+        #endif
+    }
+
+    func browser(
+        _ browser: CefBrowser,
+        decidePolicyForDownload download: CefDownload,
+        suggestedName: String
+    ) -> CefDownloadDecision {
+        #if DEBUG
+        if let directory = ProcessInfo.processInfo.environment["PEEKR_SMOKE_DOWNLOAD_DIR"] {
+            let safeName = (suggestedName as NSString).lastPathComponent
+            let name = safeName.isEmpty ? "download" : safeName
+            return .allow(destination: URL(fileURLWithPath: directory).appendingPathComponent(name))
+        }
+        #endif
+        return .allow(destination: nil)
+    }
+
+    func browser(_ browser: CefBrowser, downloadDidProgress download: CefDownload) {
+        #if DEBUG
+        guard ProcessInfo.processInfo.environment["PEEKR_SMOKE_DOWNLOAD_DIR"] != nil,
+              (download.isComplete || download.isCanceled),
+              completedSmokeDownloads.insert(download.id).inserted else { return }
+        let state = download.isComplete ? "PASS" : "FAIL"
+        recordSmokeMessage("__PEEKR_CEF_SMOKE__:DOWNLOAD:\(state)", fileName: "cef-smoke.log")
+        #endif
     }
 
     func browser(

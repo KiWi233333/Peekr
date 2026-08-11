@@ -1,0 +1,15 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Peekr CEF codec smoke test</title>
+<video id="sample" muted playsinline src="sample.mp4"></video>
+<script>
+  const marker = "__PEEKR_CODEC_SMOKE__";
+  const video = document.querySelector("#sample");
+  const mime = 'video/mp4; codecs="avc1.42E01E, mp4a.40.2"';
+  console.error(marker + ":CAN_PLAY:" + (video.canPlayType(mime) || "no"));
+  video.addEventListener("playing", () => console.error(marker + ":PLAYING"), { once: true });
+  video.addEventListener("error", () => {
+    console.error(marker + ":ERROR:" + (video.error ? video.error.code : "unknown"));
+  }, { once: true });
+  video.play().catch(error => console.error(marker + ":REJECTED:" + error.name));
+</script>

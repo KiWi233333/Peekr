@@ -118,6 +118,10 @@ jobs:
         env:
           PEEKR_SIGN_IDENTITY: ${{ steps.signing.outputs.identity }}
           PEEKR_HARDENED: "1"
+          # Required after Peekr pins its custom Chrome-codec CEF manifest.
+          # Prefer a repository variable pointing at an immutable, access-
+          # controlled artifact URL; prepare-cef.sh verifies both SHA-1/SHA-256.
+          PEEKR_CEF_ARTIFACT_URL: ${{ vars.PEEKR_CEF_ARTIFACT_URL }}
         run: ./scripts/bundle.sh release
 
       - name: Set up notarization credentials
