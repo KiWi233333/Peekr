@@ -27,7 +27,7 @@ omitted. Want something moved up? Open or 👍 a
 
 ---
 
-## Now — `v0.3.0`
+## Now — `v0.2.2`
 
 Close the highest-frequency pain points that Peekr's architecture is already
 positioned to win.
