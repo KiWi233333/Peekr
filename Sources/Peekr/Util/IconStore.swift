@@ -12,6 +12,10 @@ final class IconStore {
     /// Per-app images are reserved for user overrides and legacy cache migration.
     private var images: [UUID: NSImage] = [:]
     private var domainImages: [String: NSImage] = [:]
+    /// Runtime host currently shown by each tab. The configured `WebApp.host`
+    /// remains its launch URL; this map lets the rail follow live navigation
+    /// without persisting transient redirects or OAuth callback URLs.
+    private var pageHosts: [UUID: String] = [:]
     /// One generation token per domain coalesces concurrent loads. A forced
     /// refresh replaces the token, so an older request can never overwrite it.
     private var domainLoadTokens: [String: UUID] = [:]
@@ -38,7 +42,8 @@ final class IconStore {
     /// the moment an icon finishes loading.
     func image(for app: WebApp) -> NSImage? {
         if app.usesCustomIcon, let custom = images[app.id] { return custom }
-        return Self.normalizedHost(app.host).flatMap { domainImages[$0] }
+        let host = pageHosts[app.id] ?? Self.normalizedHost(app.host)
+        return host.flatMap { domainImages[$0] }
     }
 
     /// Shared entry point for URL-bearing UI that has no `WebApp`, such as
@@ -76,12 +81,29 @@ final class IconStore {
         fetchFavicon(app, force: true)
     }
 
+    /// Point the rail at the host the engine is displaying as soon as its URL
+    /// changes. Only an existing memory/disk entry is loaded here: the settled
+    /// live-DOM pass below performs the network refresh, so redirect chains do
+    /// not fan out favicon requests.
+    func followNavigation(_ app: WebApp, pageURL: URL?) {
+        guard !app.usesCustomIcon,
+              let host = Self.normalizedHost(pageURL?.displayHost ?? app.host)
+        else { return }
+        if pageHosts[app.id] != host { pageHosts[app.id] = host }
+        _ = loadDomainFromDisk(host)
+    }
+
+    func discardNavigation(for id: WebApp.ID) {
+        pageHosts[id] = nil
+    }
+
     /// Live favicon sync once a tab settles, driven by the icon `<link>`s the
     /// engine read from the rendered DOM (so JS-injected icons are caught).
     /// Runs once per domain — within-site navigation, sibling tabs and progress
     /// ticks never refetch — while the first real settle can still replace the
     /// add-time placeholder. Custom icons are left untouched.
     func syncFavicon(_ app: WebApp, pageURL: URL?, domLinks: [URL]) {
+        followNavigation(app, pageURL: pageURL)
         guard !app.usesCustomIcon,
               let host = Self.normalizedHost(pageURL?.displayHost ?? app.host),
               liveIconHosts.insert(host).inserted else { return }

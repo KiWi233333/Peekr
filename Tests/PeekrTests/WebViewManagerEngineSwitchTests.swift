@@ -17,6 +17,11 @@ final class WebViewManagerEngineSwitchTests: XCTestCase {
         func stopLoading() {}
         func close() { closeCount += 1 }
         func iconLinkURLs() async -> [URL] { [] }
+
+        func publish(_ state: NavState) {
+            navState = state
+            onNavStateChange?(state)
+        }
     }
 
     private final class FakeFactory: WebEngineFactory {
@@ -110,5 +115,41 @@ final class WebViewManagerEngineSwitchTests: XCTestCase {
         XCTAssertEqual(manager.state.currentID, secondID)
         XCTAssertNotNil(manager.view(for: secondID))
         XCTAssertNil(manager.view(for: firstID))
+    }
+
+    func testCrossHostNavigationReplacesStaleTitleBeforeDestinationTitleArrives() {
+        let storeURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("peekr-manager-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: storeURL) }
+        let model = AppModel(store: AppStore(fileURL: storeURL))
+        let factory = FakeFactory()
+        let manager = WebViewManager(
+            model: model,
+            factory: factory,
+            badges: BadgeStore(),
+            icons: IconStore()
+        )
+        let activeID = model.apps[0].id
+        manager.activate(activeID)
+
+        let destination = URL(string: "https://x.com/home")!
+        factory.engines[0].publish(NavState(
+            isLoading: true,
+            progress: 0.2,
+            url: destination,
+            title: "Google"
+        ))
+
+        XCTAssertEqual(model.tab(activeID)?.displayName, "x.com")
+        XCTAssertEqual(manager.state.urlString, destination.absoluteString)
+
+        factory.engines[0].publish(NavState(
+            isLoading: true,
+            progress: 0.4,
+            url: destination,
+            title: "Home / X"
+        ))
+
+        XCTAssertEqual(model.tab(activeID)?.displayName, "Home / X")
     }
 }

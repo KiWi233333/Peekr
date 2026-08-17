@@ -18,6 +18,9 @@ final class WebViewManager {
     /// Last title seen per engine, so the badge/title pipeline only runs on a real
     /// title change and not on every `estimatedProgress` KVO tick during a load.
     private var lastTitles: [UUID: String] = [:]
+    /// Last normalized host seen per engine. Crossing hosts immediately replaces
+    /// stale title/icon presentation while the destination document is loading.
+    private var lastHosts: [UUID: String] = [:]
 
     init(
         model: AppModel,
@@ -53,6 +56,8 @@ final class WebViewManager {
         engines[id]?.hostView.removeFromSuperview()
         engines[id] = nil
         lastTitles[id] = nil
+        lastHosts[id] = nil
+        icons.discardNavigation(for: id)
         badges.clear(id)
         if wasCurrent {
             state.currentID = nil
@@ -72,6 +77,7 @@ final class WebViewManager {
         }
         engines.removeAll()
         lastTitles.removeAll()
+        lastHosts.removeAll()
         state.currentID = nil
 
         guard let activeID else { return }
@@ -91,6 +97,7 @@ final class WebViewManager {
         }
         engines.removeAll()
         lastTitles.removeAll()
+        lastHosts.removeAll()
         state.currentID = nil
     }
 
@@ -143,17 +150,35 @@ final class WebViewManager {
         if let existing = engines[app.id] { return existing }
         let engine = factory.makeEngine(for: app)
         let id = app.id
+        lastTitles[id] = app.title
+        lastHosts[id] = IconStore.normalizedHost(app.host)
+        icons.followNavigation(app, pageURL: app.url)
         // Every engine reports its nav state — foreground or not — so background
         // tabs keep their unread badge, rail title and icon current. Only the
         // foreground page drives the shared `BrowserState` the nav bar binds to.
         engine.onNavStateChange = { [weak self] nav in
             guard let self else { return }
+            let host = IconStore.normalizedHost(nav.url?.displayHost)
+            let hostChanged = host != nil && self.lastHosts[id] != host
+            let titleChanged = self.lastTitles[id] != nav.title
             // Title-derived work (badge regex + rail title) only on a real title
             // change — `estimatedProgress` ticks repeat the same title otherwise.
-            if self.lastTitles[id] != nav.title {
+            if titleChanged {
                 self.lastTitles[id] = nav.title
                 self.badges.update(id, fromTitle: nav.title)
                 self.model.applyLiveTitle(id, to: nav.title)
+            }
+            // URL events commonly arrive before the destination title/favicon.
+            // Switch presentation immediately; retain an already-arrived new
+            // title, otherwise use the destination host until document.title lands.
+            if let host, hostChanged,
+               let app = self.model.allTabs.first(where: { $0.id == id }) {
+                self.lastHosts[id] = host
+                self.icons.followNavigation(app, pageURL: nav.url)
+                if !titleChanged || nav.title.isEmpty {
+                    self.badges.update(id, fromTitle: "")
+                    self.model.applyLiveTitle(id, to: host)
+                }
             }
             // Once the page settles, read its favicon links from the live DOM and
             // refresh the icon. Gated to a settled page so a redirect chain doesn't

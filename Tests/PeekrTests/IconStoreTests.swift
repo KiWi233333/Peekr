@@ -55,6 +55,32 @@ final class IconStoreTests: XCTestCase {
         XCTAssertTrue(store.image(for: customTab) === resolvedIcon)
     }
 
+    func testRailIconFollowsLiveNavigationHostWithoutShowingPreviousSite() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("PeekrIconStoreTests-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let googleIcon = makeImage(color: .systemBlue)
+        let xIcon = makeImage(color: .black)
+        let store = IconStore(directory: directory) { host, _ in
+            host == "x.com" ? xIcon : googleIcon
+        }
+        let tab = WebApp(title: "Google", urlString: "https://google.com")
+
+        store.load(tab)
+        let loadedGoogle = await waitUntil { store.image(for: tab) === googleIcon }
+        XCTAssertTrue(loadedGoogle)
+
+        let destination = try XCTUnwrap(URL(string: "https://x.com/home"))
+        store.followNavigation(tab, pageURL: destination)
+
+        XCTAssertNil(store.image(for: tab), "The previous host's icon must disappear immediately")
+
+        store.syncFavicon(tab, pageURL: destination, domLinks: [])
+        let loadedX = await waitUntil { store.image(for: tab) === xIcon }
+        XCTAssertTrue(loadedX)
+    }
+
     private func waitUntil(_ condition: @MainActor () -> Bool) async -> Bool {
         for _ in 0..<100 {
             if condition() { return true }
