@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   duplication, reopening, and independent selection in each workspace.
 - The default search engine can be switched between Google, Bing, DuckDuckGo,
   and Baidu for new tabs and omnibox searches.
+- The Chromium engine now bundles a self-built CEF with H.264/AAC codec support,
+  native permission and authentication prompts, and downloads.
 
 ### Changed
 - Panel and sidebar transitions now follow native motion timing, respect Reduce
@@ -26,6 +28,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   cleanly to the visible screen while preserving Liquid Glass rendering.
 - Chromium interaction no longer crashes the app: packaging now uses the CEF
   runtime pinned and validated by CefSwift instead of overriding it with CEF 151.
+- Cross-site navigation now swaps the rail title and icon to the destination
+  site immediately instead of showing the previous site until the new page's
+  title and favicon arrive.
 
 ## [0.2.1]
 
