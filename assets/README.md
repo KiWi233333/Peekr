@@ -5,7 +5,7 @@ here and they'll show up automatically:
 
 | File | Used in | Suggested size |
 |------|---------|----------------|
-| `icon.png` | README header logo | 256×256 (square, transparent) |
+| `icon.png` | README header logo | 512×512 (square, transparent) |
 | `hero.png` | README hero banner | ~1640×1024 (2× for retina) |
 | `screenshot-panel.png` | Screenshots section | slide-over panel in action |
 | `screenshot-prefs.png` | Screenshots section | Preferences window |

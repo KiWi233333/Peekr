@@ -1,41 +1,51 @@
 <svg width="1024" height="1024" viewBox="0 0 1024 1024" fill="none" xmlns="http://www.w3.org/2000/svg">
   <defs>
-    <!-- aqua → blue "peek / water" accent -->
-    <linearGradient id="bg" x1="160" y1="120" x2="880" y2="920" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#22D3EE"/>
-      <stop offset="0.55" stop-color="#2C8CF5"/>
-      <stop offset="1" stop-color="#2563EB"/>
+    <linearGradient id="base" x1="96" y1="62" x2="870" y2="950" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#62C8F4"/>
+      <stop offset="0.46" stop-color="#347DE9"/>
+      <stop offset="1" stop-color="#5D74E4"/>
     </linearGradient>
-    <linearGradient id="panel" x1="430" y1="250" x2="430" y2="770" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#FFFFFF"/>
-      <stop offset="1" stop-color="#EAF2FF"/>
+    <linearGradient id="motion" x1="285" y1="318" x2="936" y2="706" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#7ED8F8" stop-opacity="0.18"/>
+      <stop offset="0.55" stop-color="#F49AC3" stop-opacity="0.72"/>
+      <stop offset="1" stop-color="#FF9B68" stop-opacity="0.9"/>
     </linearGradient>
-    <linearGradient id="dot" x1="0" y1="0" x2="0" y2="1" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#2C8CF5"/>
-      <stop offset="1" stop-color="#2563EB"/>
+    <linearGradient id="glass" x1="412" y1="280" x2="690" y2="748" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#DDF4FF" stop-opacity="0.82"/>
+      <stop offset="1" stop-color="#B8B9FA" stop-opacity="0.56"/>
     </linearGradient>
-    <!-- macOS squircle: icon art lives inside this rounded square with margin -->
+    <linearGradient id="panel" x1="604" y1="224" x2="786" y2="826" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFFFFF"/>
+      <stop offset="0.74" stop-color="#FFFDFC"/>
+      <stop offset="1" stop-color="#FFECE5"/>
+    </linearGradient>
+    <linearGradient id="dot" x1="0" y1="0" x2="0" y2="1">
+      <stop stop-color="#3766E8"/>
+      <stop offset="1" stop-color="#199DEB"/>
+    </linearGradient>
     <clipPath id="squircle">
-      <rect x="100" y="90" width="824" height="824" rx="185" ry="185"/>
+      <rect x="40" y="24" width="944" height="976" rx="242"/>
     </clipPath>
+    <filter id="soft" x="-20%" y="-30%" width="140%" height="160%">
+      <feGaussianBlur stdDeviation="12"/>
+    </filter>
   </defs>
 
-  <!-- background -->
   <g clip-path="url(#squircle)">
-    <rect x="100" y="90" width="824" height="824" fill="url(#bg)"/>
+    <rect x="40" y="24" width="944" height="976" fill="url(#base)"/>
 
-    <!-- back card, faintly stacked behind the peeking panel -->
-    <rect x="360" y="300" width="700" height="420" rx="80" ry="80" fill="#FFFFFF" opacity="0.16"/>
+    <!-- A broad calm wake, matching the raster icon without sharp light beams. -->
+    <path d="M38 568C142 270 356 154 650 172C507 254 450 347 436 478C421 626 330 784 155 822C93 760 55 675 38 568Z" fill="#2455D6" fill-opacity="0.48"/>
+    <path d="M216 419C406 372 614 355 926 278" stroke="#BEEBFF" stroke-opacity="0.42" stroke-width="25" stroke-linecap="round" filter="url(#soft)"/>
+    <path d="M250 631C465 594 689 588 1017 716" stroke="url(#motion)" stroke-width="34" stroke-linecap="round" filter="url(#soft)"/>
+    <path d="M350 748C553 745 752 785 1009 900" stroke="#FF8E76" stroke-opacity="0.54" stroke-width="22" stroke-linecap="round" filter="url(#soft)"/>
 
-    <!-- the slide-over panel, peeking from the right edge -->
-    <rect x="430" y="250" width="700" height="520" rx="80" ry="80" fill="url(#panel)"/>
+    <!-- Translucent intermediate panel and the primary slide-over surface. -->
+    <rect x="432" y="280" width="480" height="468" rx="94" fill="url(#glass)"/>
+    <path d="M628 222H1064V856L604 790C565 784 538 750 538 711V350C538 279 576 222 628 222Z" fill="url(#panel)"/>
 
-    <!-- icon rail (the AppRail) -->
-    <circle cx="500" cy="380" r="26" fill="url(#dot)"/>
-    <circle cx="500" cy="510" r="26" fill="url(#dot)"/>
-    <circle cx="500" cy="640" r="26" fill="#2563EB" opacity="0.28"/>
+    <circle cx="636" cy="398" r="39" fill="url(#dot)"/>
+    <circle cx="636" cy="521" r="39" fill="#199DEB"/>
+    <circle cx="636" cy="644" r="39" fill="#82B9F4"/>
   </g>
-
-  <!-- hairline rim for crispness on light backgrounds -->
-  <rect x="100.5" y="90.5" width="823" height="823" rx="184.5" ry="184.5" fill="none" stroke="#000000" stroke-opacity="0.06" stroke-width="1"/>
 </svg>

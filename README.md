@@ -4,132 +4,67 @@
 
 # Peekr
 
-**A blazing-fast, SlidePad-style slide-over web browser for macOS — dressed in Liquid Glass.**
+**A native slide-over browser for macOS, powered by WebKit or Chromium.**
 
-Pin your web apps to a dock on any screen edge or corner. Flick the cursor there (or hit a hotkey) and the panel *peeks* out — **without stealing focus** from whatever you're doing.
+Move the pointer to a screen edge—or press a hotkey—and Peekr slides into view
+without stealing focus from your current app.
 
 [![Platform](https://img.shields.io/badge/platform-macOS%2014%2B-black?logo=apple&logoColor=white)](https://www.apple.com/macos/)
-[![Swift](https://img.shields.io/badge/Swift-5.10-F05138?logo=swift&logoColor=white)](https://swift.org)
-[![Native](https://img.shields.io/badge/AppKit%20%2B%20SwiftUI-no%20Electron-1E90FF)](#why-peekr)
-[![License](https://img.shields.io/github/license/KiWi233333/Peekr?color=blue)](LICENSE)
+[![Engines](https://img.shields.io/badge/engines-WebKit%20%2B%20Chromium-5C6BC0)](#install)
 [![Release](https://img.shields.io/github/v/release/KiWi233333/Peekr?include_prereleases&sort=semver)](https://github.com/KiWi233333/Peekr/releases)
-[![Stars](https://img.shields.io/github/stars/KiWi233333/Peekr?style=social)](https://github.com/KiWi233333/Peekr/stargazers)
+[![License](https://img.shields.io/github/license/KiWi233333/Peekr?color=blue)](LICENSE)
 
 English · [简体中文](README.zh-CN.md)
 
-<img src="assets/screenshot.png" alt="Peekr peeking out from the screen edge" width="820" />
+<img src="assets/hero.png" alt="Peekr slide-over browser" width="820" />
 
 </div>
-
----
 
 ## Highlights
 
-- ⚡️ **Tiny footprint** — pure native Swift + AppKit + SwiftUI + `WKWebView`. No Electron, no web runtime. ~58 MB idle, 0% CPU, WebViews created lazily on first peek.
-- 🪟 **Liquid Glass** — floats in real macOS 26 `glassEffect` / `GlassEffectContainer`; degrades gracefully to `.ultraThinMaterial` on older systems.
-- 🎯 **Never steals focus** — a borderless non-activating panel: type into a web page without dropping out of your current app.
-- 🧲 **6-way docking** — snap to either side edge or any of the four corners; drag to re-anchor.
-- 🔒 **Isolated, persistent sessions** — every web app gets its own cookie store and stays logged in.
-
-## Why Peekr?
-
-Most "slide-over browser" tools are Electron wrappers that eat hundreds of MB and feel sluggish. Peekr is a ~2,400-line single-target Swift app with **zero third-party dependencies** — it launches instantly, idles at 0% CPU, and feels like a first-class part of macOS. It lives in the menu bar as an `LSUIElement` agent: no Dock icon, no main window, just a panel that peeks out when you want it.
-
-## Features
-
-| | |
-|---|---|
-| **Edge peek + hover delay** | Hover the docked edge/corner to slide out; the dwell delay is configurable. |
-| **6-way docking** | Dock to either side edge or any corner. Drag the panel by its glass background and release near an edge/corner to **auto-snap** to the nearest anchor — without ever changing its size. |
-| **Resizable panel** | Drag the resize handle; defaults to ⅔ of the screen's visible width. |
-| **Global hotkey** | Re-bindable (default `⌃⌥Space`); record any shortcut in Preferences. |
-| **Browser shortcuts** | `⌘L` focus omnibox, `⌘R` reload, `⌘[` / `⌘]` back/forward, `⌘W` close, `⌘1`–`⌘9` switch apps, `Esc` hide. |
-| **Per-app navigation bar** | Glass omnibox with back / forward / reload-stop, a load-or-search address field, progress, and open-in-Safari. |
-| **Icon dock** | Real favicons (auto-fetched + cached) with monogram fallback; drag to reorder; right-click to Edit / Reload / Delete; set a **custom icon**. |
-| **Browser data import** | In Preferences → Apps → **Import Browser Data…**, pull open tabs in as Peekr apps or copy a selected Chrome Profile's cookies into Peekr's Chromium profile. The temporary database snapshot is access-restricted and deleted after import; decrypted values stay local and in memory, and unsupported partitioned cookies are skipped. |
-| **Persistent sessions** | WebKit keeps a separate `WKWebsiteDataStore` per app; Chromium uses one persistent shared profile so imported Chrome sessions work across Peekr apps. |
-| **Multi-display** | Follows the cursor's screen and remembers the last one. |
-| **Pin & auto-hide** | Keep it open, or let it slide away when you leave. |
-| **Bilingual** | English / 简体中文, auto-following the system language. |
-| **Launch at login** | One toggle, backed by `SMAppService`. |
-
-## Screenshots
-
-<div align="center">
-<img src="assets/hero.png" alt="Peekr slide-over panel with the icon rail, navigation bar, and a loaded web app" width="720" />
-</div>
+- **Native macOS UI** — Swift, AppKit, SwiftUI, and Liquid Glass; no Electron.
+- **Fast access** — hover a screen edge or use the global hotkey (`⌃⌥Space`).
+- **Flexible layout** — six docking positions, resizing, pinning, and multi-display support.
+- **Browser essentials** — omnibox, navigation shortcuts, favicons, bookmarks, and tab import.
+- **Two engines** — use WebKit for a lightweight native experience or Chromium for site compatibility and Chrome cookie import.
+- **Persistent sessions** — per-app stores in WebKit and a shared persistent profile in Chromium.
 
 ## Install
 
-### Build from source
+Requires macOS 14 or later.
 
-Requires **Xcode 26** for real Liquid Glass (builds and runs below it with the material fallback). macOS 14+.
+- **`v0.2.1` · WebKit + Chromium (recommended):** [Download DMG](https://github.com/KiWi233333/Peekr/releases/download/v0.2.1/Peekr-0.2.1.dmg)
+- **`v0.1.0` · WebKit only (Safari engine):** [Download DMG](https://github.com/KiWi233333/Peekr/releases/download/v0.1.0/Peekr-0.1.0.dmg)
+
+> `v0.2.1` is the latest release. `v0.1.0` is the last lightweight WebKit-only
+> build and does not include later features or fixes.
+
+## Usage
+
+- Hover the docked edge or press `⌃⌥Space` to show Peekr.
+- Open Preferences with `⌘,`; use `⌘L`, `⌘R`, `⌘W`, and `⌘1`–`⌘9` for browsing.
+- Peekr stores its data in `~/Library/Application Support/Peekr/`.
+
+## Build from source
+
+The released dual-engine build requires macOS 14+ and Xcode 26 for full Liquid
+Glass support.
 
 ```bash
 git clone https://github.com/KiWi233333/Peekr.git
 cd Peekr
-
-make run     # build the release .app (WebKit + bundled Chromium) and launch it
-make dev     # build and launch a debug .app
-make app     # just build build/Peekr.app
-make build   # swift build — quick compile check
-make clean
+git checkout v0.2.1
+make run
 ```
 
-> [!NOTE]
-> Chromium requires CefSwift's framework and five helper bundles, so Peekr no
-> longer runs as a bare `swift run` executable. Both commands create a real
-> `.app`; the first run downloads the build-time CEF artifact into `.cef/`, then
-> every produced app contains the pinned runtime. WebKit keeps per-app data
-> stores; Chromium currently uses CefSwift's single persistent global profile.
-
-### Usage
-
-- Trigger the panel by hovering a docked edge/corner, or pressing the global hotkey (`⌃⌥Space`).
-- Open **Preferences…** (`⌘,`) or **Quit** from the menu-bar item.
-- State lives in `~/Library/Application Support/Peekr/` (`apps.json`, `settings.json`, `icons/`). Delete it to reset.
-
-## Architecture
-
-Peekr has no DI framework — everything is wired by hand in `AppDelegate.applicationDidFinishLaunching`, where construction order *is* the dependency graph. State lives in four `@MainActor @Observable` sources of truth that SwiftUI reads directly.
-
-```
-Sources/Peekr/
-  App/          PeekrApp (CefSwift bootstrap), AppDelegate, AppModel,
-                BookmarksModel, MainMenu
-  Model/        WebApp, Workspace, BookmarkNode, Settings, PanelAnchor, HotKeyConfig
-  Store/        AppStore, SettingsStore, BookmarkStore (JSON persistence)
-  Web/          WebEngine, WebKitEngine, CefSwiftEngine, WebViewManager,
-                BrowserState, BookmarkImporter, OpenTabsImporter
-  Panel/        SlidePanel, PanelController, PanelGeometry, EdgeTrigger
-  UI/           PanelRootView, AppRail, NavigationBar, EditAppSheet,
-                BookmarkSheet, ImportTabsSheet
-  Preferences/  PreferencesWindowController, PreferencesView
-  Input/        GlobalHotKey (Carbon)
-  StatusBar/    StatusBarController
-  Util/         GlassStyle (liquidGlass + theme), IconStore, LaunchAtLogin,
-                Localization, AppPaths
-```
-
-A few load-bearing conventions (see [`CLAUDE.md`](CLAUDE.md) for the full tour):
-
-- **Position ≠ size.** `PanelAnchor` owns all orientation logic; `PanelGeometry` is pure geometry. Drag-snapping changes the dock position and slide direction but **never** the panel size.
-- **One door per concern.** Glass goes through `liquidGlass()`, copy through `Localized`, omnibox URL parsing through `WebViewManager.url(fromOmnibox:)`. Reuse these single entry points instead of re-implementing.
-- **Forgiving decode.** Persisted models hand-roll `init(from:)` with `decodeIfPresent(...) ?? fallback` so schema changes never drop a user's old JSON.
-
-## Roadmap
-
-See **[ROADMAP.md](ROADMAP.md)** for the full, user-need-driven plan. Highlights:
-
-- [x] Browser shortcuts, bookmarks & open-tab import
-- [ ] Per-app panel size memory + real hibernation with a sleep/wake hotkey
-- [ ] App identity: aliases, active-app emphasis, unread / notification badges
-- [ ] Custom CSS / JS injection per URL pattern
-- [ ] Built-in content blocking, app quick-switcher
+Use `git checkout v0.1.0` before `make run` to build the WebKit-only edition.
+Chromium source builds bundle the pinned CefSwift/CEF runtime and therefore run
+as a complete `.app`, not through `swift run`.
 
 ## Contributing
 
-Issues and PRs are welcome! Please read [CONTRIBUTING.md](CONTRIBUTING.md) and our [Code of Conduct](CODE_OF_CONDUCT.md) first. Commit messages follow [Conventional Commits](https://www.conventionalcommits.org/).
+Issues and pull requests are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md),
+[ROADMAP.md](ROADMAP.md), and the [Code of Conduct](CODE_OF_CONDUCT.md).
 
 ## License
 
