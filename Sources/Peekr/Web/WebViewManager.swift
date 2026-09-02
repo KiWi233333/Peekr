@@ -150,6 +150,13 @@ final class WebViewManager {
         if let existing = engines[app.id] { return existing }
         let engine = factory.makeEngine(for: app)
         let id = app.id
+        // The agent target sync binds CDP targets to rail tabs; announce the
+        // one moment a target is guaranteed to appear for a known tab.
+        NotificationCenter.default.post(
+            name: .peekrTabEngineActivated,
+            object: nil,
+            userInfo: ["tabID": id]
+        )
         lastTitles[id] = app.title
         lastHosts[id] = IconStore.normalizedHost(app.host)
         icons.followNavigation(app, pageURL: app.url)

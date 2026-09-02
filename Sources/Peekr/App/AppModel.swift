@@ -366,6 +366,23 @@ final class AppModel {
         for id in moving { moveTabToRoot(id, beforeItem: target) }
     }
 
+    /// Add a tab record into a SPECIFIC workspace without changing that
+    /// workspace's selection — used by the agent target sync, which mirrors
+    /// agent-created Chromium pages into the rail while the user keeps their
+    /// own place. Returns nil when the workspace does not exist.
+    @discardableResult
+    func addApp(title: String, urlString: String, toWorkspace workspaceID: UUID) -> WebApp? {
+        guard let workspaceIndex = workspaces.firstIndex(where: { $0.id == workspaceID }) else {
+            return nil
+        }
+        let app = WebApp(title: title, urlString: urlString)
+        workspaces[workspaceIndex].tabs.append(app)
+        workspaces[workspaceIndex].sidebarItems.append(.tab(app.id))
+        workspaces[workspaceIndex].normalizeSidebar()
+        persist()
+        return app
+    }
+
     // MARK: - Groups
 
     @discardableResult

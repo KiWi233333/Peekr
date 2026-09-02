@@ -14,6 +14,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var prefs: PreferencesWindowController!
     private var browserImports: BrowserImportWindowController!
     private var agentServer: AgentControlServer?
+    private var agentTargetSync: AgentTargetSync?
     private var bookmarkSyncTimer: Timer?
     private var activeWebEngine: WebEngineKind!
     private var isQuitPending = false
@@ -113,6 +114,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let token = UUID().uuidString
             let server = AgentControlServer(model: model, token: token)
             agentServer = server
+            // Mirror agent-created Chromium pages into the rail so user and
+            // agent see one browser.
+            let sync = AgentTargetSync(model: model, port: debugPort)
+            agentTargetSync = sync
+            sync.start()
             Task { @MainActor [weak self] in
                 do {
                     let controlPort = try await server.start()
@@ -133,6 +139,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         } else {
             agentServer?.stop()
             agentServer = nil
+            agentTargetSync?.stop()
+            agentTargetSync = nil
             AgentDiscovery.revoke()
         }
 

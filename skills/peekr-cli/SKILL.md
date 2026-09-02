@@ -110,7 +110,7 @@ verify, report via `cliLog`.
 - CEF exposes no remote debugging over the WebKit engine; agent automation requires the Chromium engine (Peekr's default).
 - `wait()` is in **seconds**; `timeout` options are milliseconds unless named otherwise.
 - `js()` is `Runtime.evaluate`: pass a string, wrap multi-step logic in one IIFE, return once. Regex backslashes inside `js(String.raw` + `...` + `)` templates must be doubled otherwise.
-- Pages opened with `openOrReuseTab` appear in Peekr's browser; deep tab management is CDP-level in this version and new tabs may not appear in the rail yet.
+- Pages you open with `openOrReuseTab` are mirrored into the active agent space's rail live — the user sees your tabs, follows your navigation, and closing a tab (either side) removes it in both layers.
 - If `pageInfo()` reports `w: 0`, fix the viewport (switch tab / reload) before coordinate actions.
 - `snapshotText({ scope: 'only_within_viewport' })` clips to the visible viewport — cheap for long pages, but content above/below the fold disappears from the snapshot; re-snapshot with the default `full_page` after scrolling.
 - Same-origin iframe content is included (nested frames indented under `[iframe src=…]`); cross-origin frames appear as explicit placeholders — fall back to screenshots for those.

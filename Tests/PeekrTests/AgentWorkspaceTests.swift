@@ -136,4 +136,31 @@ final class AgentWorkspaceTests: XCTestCase {
         addTeardownBlock { try? FileManager.default.removeItem(at: url) }
         return AppModel(store: store)
     }
+
+    func testAddAppToSpecificWorkspaceLandsWithoutTouchingSelection() {
+        let model = makeEmptyModel()
+        let agent = model.addAgentWorkspace(owner: "Claude Code", name: "sync")
+        let agentID = agent.id
+
+        // The user's original workspace keeps its selection untouched.
+        let originalSelected = model.workspaces.first { $0.id != agentID }?.selectedTabID
+        let added = model.addApp(title: "Agent Page", urlString: "https://example.com/x", toWorkspace: agentID)
+
+        XCTAssertNotNil(added)
+        let workspace = model.workspaces.first { $0.id == agentID }
+        XCTAssertEqual(workspace?.tabs.last?.id, added?.id)
+        XCTAssertEqual(workspace?.sidebarItems.last?.referenceID, added?.id)
+        XCTAssertNotEqual(model.selectedID, added?.id, "sync-added tabs must not steal selection")
+        XCTAssertEqual(model.workspaces.first { $0.id != agentID }?.selectedTabID, originalSelected)
+
+        // Unknown workspace is rejected instead of crashing.
+        XCTAssertNil(model.addApp(title: "x", urlString: "https://a.b", toWorkspace: UUID()))
+    }
+
+    func testSamePageIdentityRules() {
+        XCTAssertTrue(AgentTargetSync.samePage("https://example.com", "https://example.com"))
+        XCTAssertTrue(AgentTargetSync.samePage("https://example.com", "https://example.com/"))
+        XCTAssertFalse(AgentTargetSync.samePage("https://example.com/a", "https://example.com/b"))
+        XCTAssertFalse(AgentTargetSync.samePage("", "https://example.com"))
+    }
 }
