@@ -335,6 +335,7 @@ struct Localized {
     var agentAccessRelaunchHint: String {
         t("Takes effect after you quit and reopen Peekr.", "退出并重新打开 Peekr 后生效。")
     }
+    var agentDiscoveryPath: String { t("Discovery file", "发现文件") }
     var agentAccessInstallCLI: String { t("Command line tool for AI agents", "面向 AI Agent 的命令行工具") }
     var installAction: String { t("Install…", "安装…") }
     var cliInstallDoneTitle: String { t("Command line tool installed", "命令行工具已安装") }

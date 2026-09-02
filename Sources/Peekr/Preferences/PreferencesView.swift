@@ -351,6 +351,21 @@ private struct BrowserTab: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
+                    // Where agents look for the CDP/control endpoints. Shows
+                    // the path the running app actually uses (smoke roots
+                    // included), so it is always the actionable one.
+                    HStack(alignment: .top) {
+                        Text(loc.agentDiscoveryPath)
+                        Spacer()
+                        Text(AgentDiscovery.fileURL.path)
+                            .font(.caption.monospaced())
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                            .textSelection(.enabled)
+                            .frame(maxWidth: 280, alignment: .trailing)
+                            .help(AgentDiscovery.fileURL.path)
+                    }
                     HStack {
                         Label(loc.agentAccessInstallCLI, systemImage: "terminal")
                         Spacer()
