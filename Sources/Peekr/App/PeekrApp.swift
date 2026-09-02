@@ -12,6 +12,14 @@ struct PeekrApp: CefSwiftApp {
 
     @MainActor
     static var cefConfiguration: CefConfiguration {
+        makeCefConfiguration(SettingsStore().load())
+    }
+
+    /// Build the CEF bootstrap from a settings snapshot. A separate pure-ish
+    /// function so the agent-access port wiring stays testable without touching
+    /// real user settings on disk.
+    @MainActor
+    static func makeCefConfiguration(_ data: SettingsData) -> CefConfiguration {
         let unresolvedRoot =
             AppPaths.supportDirectory.appendingPathComponent("Chromium", isDirectory: true)
         // Canonicalize /tmp → /private/tmp (and other symlink/firmlink parents)
@@ -33,7 +41,14 @@ struct PeekrApp: CefSwiftApp {
         configuration.logFile = root.appendingPathComponent("debug.log")
         configuration.persistSessionCookies = true
         configuration.defaultRuntimeStyle = .alloy
-        configuration.locale = SettingsStore().load().language.cefLocaleIdentifier
+        configuration.locale = data.language.cefLocaleIdentifier
+        // Agent access: expose Chromium's DevTools protocol on localhost so any
+        // CDP-speaking tool (Playwright, browser-use, a custom CLI) can drive
+        // Peekr's pages. CEF only reads this at runtime init, so a settings
+        // change takes effect on relaunch.
+        if data.agentAccessEnabled, (1...65535).contains(data.agentDebugPort) {
+            configuration.remoteDebuggingPort = data.agentDebugPort
+        }
         // Keep `userAgentProduct` nil so CEF emits its standard Chromium UA.
         // Setting this replaces the `Chrome/<version>` product token instead
         // of appending to it, which makes simple detectors misclassify Peekr as

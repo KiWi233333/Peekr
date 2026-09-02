@@ -86,25 +86,40 @@ struct AppRail: View {
                                 }
                             )
                         ) {
-                            ForEach(model.workspaces) { workspace in
-                                Label(displayName(workspace), systemImage: workspace.symbol)
-                                    .tag(workspace.id)
-                            }
+                        ForEach(model.workspaces) { workspace in
+                            Label(
+                                displayName(workspace),
+                                systemImage: workspace.isAgentOwned ? "sparkles" : workspace.symbol
+                            )
+                            .tag(workspace.id)
                         }
-                        .labelsHidden()
-                        .pickerStyle(.inline)
-                        Divider()
-                        Button {
-                            model.addWorkspace()
-                            onWorkspaceSwitched()
-                        } label: {
-                            Label(loc.newWorkspace, systemImage: "plus")
-                        }
+                    }
+                    .labelsHidden()
+                    .pickerStyle(.inline)
+                    Divider()
+                    Button {
+                        model.addWorkspace()
+                        onWorkspaceSwitched()
+                    } label: {
+                        Label(loc.newWorkspace, systemImage: "plus")
+                    }
+                    Button {
+                        model.addAgentWorkspace()
+                        onWorkspaceSwitched()
+                    } label: {
+                        Label(loc.newAgentWorkspace, systemImage: "sparkles")
+                    }
                     } label: {
                         HStack(spacing: 4) {
                             Text(displayName(model.activeWorkspace))
                                 .font(.system(size: 13.5, weight: .semibold))
                                 .lineLimit(1)
+                            if model.activeWorkspace.isAgentOwned {
+                                Image(systemName: "sparkles")
+                                    .font(.system(size: 10, weight: .semibold))
+                                    .foregroundStyle(.secondary)
+                                    .help(loc.agentSpaceBadge)
+                            }
                             Image(systemName: "chevron.down")
                                 .font(.system(size: 8, weight: .bold))
                                 .foregroundStyle(.secondary)
@@ -129,9 +144,22 @@ struct AppRail: View {
                     } label: {
                         Label(loc.newWorkspace, systemImage: "square.stack.3d.up.badge.a")
                     }
+                    Button {
+                        model.addAgentWorkspace()
+                        onWorkspaceSwitched()
+                    } label: {
+                        Label(loc.newAgentWorkspace, systemImage: "sparkles")
+                    }
                     Divider()
                     Button { beginRenameWorkspace(model.activeWorkspace) } label: {
                         Label(loc.rename, systemImage: "pencil")
+                    }
+                    if model.activeWorkspace.isAgentOwned {
+                        Button {
+                            model.takeOverWorkspace(model.activeWorkspaceID)
+                        } label: {
+                            Label(loc.takeOverWorkspace, systemImage: "hand.tap")
+                        }
                     }
                     if model.workspaces.count > 1 {
                         Button(role: .destructive) {
@@ -159,7 +187,8 @@ struct AppRail: View {
     }
 
     private func displayName(_ workspace: Workspace) -> String {
-        workspace.name.isEmpty ? loc.defaultWorkspace : workspace.name
+        if !workspace.name.isEmpty { return workspace.name }
+        return workspace.isAgentOwned ? loc.defaultAgentWorkspace : loc.defaultWorkspace
     }
 
     private func beginRenameWorkspace(_ workspace: Workspace) {

@@ -542,6 +542,44 @@ final class AppModel {
         for tabID in removedIDs { onRemove?(tabID) }
     }
 
+    // MARK: - Agent spaces
+
+    /// Create a workspace for an AI agent to work in, seeded with one blank
+    /// tab, and make it active. `agentOwner` labels the agent tool (e.g.
+    /// "Claude Code"); empty means unidentified. The user can take the space
+    /// over at any time — see `takeOverWorkspace(_:)`.
+    @discardableResult
+    func addAgentWorkspace(owner agentName: String = "", name: String = "") -> Workspace {
+        let provider = searchEngine()
+        let tab = WebApp(
+            title: provider.displayName,
+            urlString: provider.homepageURL.absoluteString
+        )
+        let workspace = Workspace(
+            name: name,
+            tabs: [tab],
+            ownership: .agent,
+            agentOwner: agentName.trimmingCharacters(in: .whitespaces)
+        )
+        workspaces.append(workspace)
+        activeWorkspaceID = workspace.id
+        recordSelection(tab.id)
+        persist()
+        return workspace
+    }
+
+    /// The user takes an agent workspace over: it becomes a normal user space
+    /// and keeps its tabs, groups and session. One-way on purpose — an agent
+    /// that needs a fresh isolated area creates a new space instead of
+    /// silently re-owning one the user is looking at.
+    func takeOverWorkspace(_ id: UUID) {
+        guard let index = workspaces.firstIndex(where: { $0.id == id }),
+              workspaces[index].isAgentOwned else { return }
+        workspaces[index].ownership = .user
+        workspaces[index].agentOwner = ""
+        persist()
+    }
+
     // MARK: - Persistence and helpers
 
     func persist() {

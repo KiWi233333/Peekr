@@ -1,5 +1,17 @@
 import Foundation
 
+/// Who owns a space, mirroring the ego-lite task-space model. A `user` space
+/// is the person's daily browsing; an `agent` space is a task area an AI agent
+/// works in; `agentDelegatedToUser` marks a space the agent handed to the user
+/// (e.g. to log in) that still belongs to the agent's task. The user can take
+/// an agent space over at any time (one-way — it never silently reverts).
+/// Raw value is persisted; decode tolerantly so it can evolve.
+enum WorkspaceOwnership: String, Codable, Hashable {
+    case user
+    case agent
+    case agentDelegatedToUser
+}
+
 /// Edge-style tab-group colours. The raw value is persisted so future visual
 /// changes never invalidate a user's sidebar data.
 enum TabGroupColor: String, Codable, CaseIterable, Hashable {
@@ -82,6 +94,11 @@ struct Workspace: Identifiable, Codable, Hashable {
     var groups: [TabGroup]
     var sidebarItems: [SidebarItem]
     var selectedTabID: WebApp.ID?
+    /// `agent` spaces were created for (or by) an AI agent and stay labelled in
+    /// the rail until the user takes them over. Empty `agentOwner` means the
+    /// agent never identified itself.
+    var ownership: WorkspaceOwnership = .user
+    var agentOwner: String = ""
 
     init(
         id: UUID = UUID(),
@@ -90,7 +107,9 @@ struct Workspace: Identifiable, Codable, Hashable {
         tabs: [WebApp] = [],
         groups: [TabGroup] = [],
         sidebarItems: [SidebarItem]? = nil,
-        selectedTabID: WebApp.ID? = nil
+        selectedTabID: WebApp.ID? = nil,
+        ownership: WorkspaceOwnership = .user,
+        agentOwner: String = ""
     ) {
         self.id = id
         self.name = name
@@ -99,11 +118,14 @@ struct Workspace: Identifiable, Codable, Hashable {
         self.groups = groups
         self.sidebarItems = sidebarItems ?? tabs.map { .tab($0.id) }
         self.selectedTabID = selectedTabID ?? tabs.first?.id
+        self.ownership = ownership
+        self.agentOwner = agentOwner
         normalizeSidebar()
     }
 
     private enum CodingKeys: String, CodingKey {
         case id, name, symbol, tabs, groups, sidebarItems, selectedTabID
+        case ownership, agentOwner
     }
 
     // Tolerant decode performs the v1 flat-list → v2 hierarchy migration in
@@ -119,6 +141,9 @@ struct Workspace: Identifiable, Codable, Hashable {
             ?? tabs.map { .tab($0.id) }
         selectedTabID = try c.decodeIfPresent(UUID.self, forKey: .selectedTabID)
             ?? tabs.first?.id
+        ownership = (try? c.decodeIfPresent(WorkspaceOwnership.self, forKey: .ownership))
+            .flatMap { $0 } ?? .user
+        agentOwner = try c.decodeIfPresent(String.self, forKey: .agentOwner) ?? ""
         normalizeSidebar()
     }
 
@@ -163,6 +188,10 @@ struct Workspace: Identifiable, Codable, Hashable {
             selectedTabID = orderedTabIDs.first
         }
     }
+
+    /// True for both agent states — a delegated space is still the agent's
+    /// task area until the user explicitly takes it over.
+    var isAgentOwned: Bool { ownership != .user }
 
     var orderedTabIDs: [WebApp.ID] {
         var result: [WebApp.ID] = []

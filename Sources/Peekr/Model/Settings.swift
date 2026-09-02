@@ -74,6 +74,10 @@ struct SettingsData: Codable, Equatable {
     var bookmarkSync: BookmarkSyncInterval = .off
     var webEngine: WebEngineKind = .system
     var searchEngine: SearchEngine = .google
+    /// Off by default: the DevTools port lets any local process attach, so it
+    /// only exists when the user opts in to agent automation.
+    var agentAccessEnabled: Bool = false
+    var agentDebugPort: Int = 9223
 
     init() {}
 
@@ -98,6 +102,8 @@ struct SettingsData: Codable, Equatable {
         bookmarkSync = v(.bookmarkSync, .off)
         webEngine = v(.webEngine, .system)
         searchEngine = v(.searchEngine, .google)
+        agentAccessEnabled = v(.agentAccessEnabled, false)
+        agentDebugPort = v(.agentDebugPort, 9223)
     }
 }
 
@@ -121,6 +127,8 @@ final class Settings {
     var bookmarkSync: BookmarkSyncInterval
     var webEngine: WebEngineKind
     var searchEngine: SearchEngine
+    var agentAccessEnabled: Bool
+    var agentDebugPort: Int
 
     private let store: SettingsStore
 
@@ -142,6 +150,8 @@ final class Settings {
         bookmarkSync = d.bookmarkSync
         webEngine = d.webEngine
         searchEngine = d.searchEngine
+        agentAccessEnabled = d.agentAccessEnabled
+        agentDebugPort = d.agentDebugPort
     }
 
     var snapshot: SettingsData {
@@ -153,6 +163,7 @@ final class Settings {
         s.autoHideMode = autoHideMode; s.language = language
         s.bookmarkSync = bookmarkSync; s.webEngine = webEngine
         s.searchEngine = searchEngine
+        s.agentAccessEnabled = agentAccessEnabled; s.agentDebugPort = agentDebugPort
         return s
     }
 

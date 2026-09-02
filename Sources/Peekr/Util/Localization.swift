@@ -156,6 +156,10 @@ struct Localized {
     var expandSidebar: String { t("Expand Sidebar", "展开侧栏") }
     var newWorkspace: String { t("New Workspace", "新建工作区") }
     var defaultWorkspace: String { t("Workspace", "工作区") }
+    var newAgentWorkspace: String { t("New Agent Space", "新建 Agent 工作区") }
+    var defaultAgentWorkspace: String { t("Agent Space", "Agent 工作区") }
+    var agentSpaceBadge: String { t("Agent-owned space", "Agent 专属工作区") }
+    var takeOverWorkspace: String { t("Take Over Space", "接管此工作区") }
     var resizeHint: String { t("Drag to resize", "拖动调整大小") }
 
     // Omnibox
@@ -319,6 +323,18 @@ struct Localized {
           "导入的书签现在可以在 Peekr 的书签面板中使用。")
     }
     func appsCount(_ n: Int) -> String { isChinese ? "\(n) 个应用" : "\(n) apps" }
+
+    // Agent access
+    var agentAccessSection: String { t("Agent Access", "Agent 接入") }
+    var agentAccessToggle: String { t("Allow AI agents to drive Chromium pages", "允许 AI Agent 驱动 Chromium 页面") }
+    var agentAccessPort: String { t("Debug port", "调试端口") }
+    var agentAccessHint: String {
+        t("Exposes Peekr's Chromium pages to local AI agents over the DevTools protocol (localhost only). Requires the Chromium engine and a relaunch. Any local process could attach while enabled — turn it on only when an agent needs it.",
+          "通过 DevTools 协议把 Peekr 的 Chromium 页面暴露给本机 AI Agent（仅 localhost）。需要 Chromium 内核，重启后生效。开启期间本机任意程序都可连接——只在需要时打开。")
+    }
+    var agentAccessRelaunchHint: String {
+        t("Takes effect after you quit and reopen Peekr.", "退出并重新打开 Peekr 后生效。")
+    }
 
     // About
     var tagline: String { t("A liquid-glass slide-over browser for macOS.", "macOS 上的液态玻璃侧滑浏览器。") }

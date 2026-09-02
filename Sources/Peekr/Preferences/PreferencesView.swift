@@ -326,6 +326,36 @@ private struct BrowserTab: View {
                 }
             }
 
+            Section(loc.agentAccessSection) {
+                Toggle(isOn: $settings.agentAccessEnabled) {
+                    Text(loc.agentAccessToggle)
+                }
+
+                if settings.agentAccessEnabled {
+                    HStack {
+                        Text(loc.agentAccessPort)
+                        Spacer()
+                        TextField(
+                            "",
+                            value: $settings.agentDebugPort,
+                            format: .number.grouping(.never)
+                        )
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 90)
+                        .multilineTextAlignment(.trailing)
+                    }
+                    Text(loc.agentAccessRelaunchHint)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                Text(loc.agentAccessHint)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
             Section(loc.bookmarks) {
                 Picker(loc.bookmarkSync, selection: $settings.bookmarkSync) {
                     ForEach(BookmarkSyncInterval.allCases) { interval in

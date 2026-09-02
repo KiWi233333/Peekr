@@ -103,6 +103,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Keep the login item in sync with the saved preference.
         LaunchAtLogin.set(settings.launchAtLogin)
 
+        // Agent access mirrors the CEF DevTools port decided at launch: the
+        // discovery file exists exactly while the port is listening.
+        if settings.agentAccessEnabled, (1...65535).contains(settings.agentDebugPort) {
+            AgentDiscovery.publish(port: settings.agentDebugPort)
+        } else {
+            AgentDiscovery.revoke()
+        }
+
         // Refresh imported bookmarks once now, then on the chosen interval.
         if settings.bookmarkSync != .off { bookmarks.syncFromBrowsers() }
         applyBookmarkSync()
