@@ -13,6 +13,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusBar: StatusBarController!
     private var prefs: PreferencesWindowController!
     private var browserImports: BrowserImportWindowController!
+    private var agentServer: AgentControlServer?
     private var bookmarkSyncTimer: Timer?
     private var activeWebEngine: WebEngineKind!
     private var isQuitPending = false
@@ -104,10 +105,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         LaunchAtLogin.set(settings.launchAtLogin)
 
         // Agent access mirrors the CEF DevTools port decided at launch: the
-        // discovery file exists exactly while the port is listening.
+        // discovery file exists exactly while the port is listening, and the
+        // control server (spaces/ownership) shares its lifetime.
         if settings.agentAccessEnabled, (1...65535).contains(settings.agentDebugPort) {
-            AgentDiscovery.publish(port: settings.agentDebugPort)
+            let debugPort = settings.agentDebugPort
+            let token = UUID().uuidString
+            let server = AgentControlServer(model: model, token: token)
+            agentServer = server
+            Task { @MainActor [weak self] in
+                do {
+                    let controlPort = try await server.start()
+                    AgentDiscovery.publish(
+                        port: debugPort,
+                        controlPort: controlPort,
+                        token: token
+                    )
+                } catch {
+                    // CDP-only fallback: discovery still works for page ops.
+                    FileHandle.standardError.write(
+                        Data("Peekr: agent control server failed to start: \(error)\n".utf8)
+                    )
+                    AgentDiscovery.publish(port: debugPort)
+                    self?.agentServer = nil
+                }
+            }
         } else {
+            agentServer?.stop()
+            agentServer = nil
             AgentDiscovery.revoke()
         }
 

@@ -580,6 +580,31 @@ final class AppModel {
         persist()
     }
 
+    /// The agent takes a user-owned (or handed-off) space over, e.g. after the
+    /// user says "continue". Deliberate on both sides: the CLI helper maps its
+    /// take-over flow here, and the rail badge flips with the ownership.
+    @discardableResult
+    func claimWorkspace(_ id: UUID, agentName: String = "") -> Workspace? {
+        guard let index = workspaces.firstIndex(where: { $0.id == id }) else { return nil }
+        workspaces[index].ownership = .agent
+        let trimmed = agentName.trimmingCharacters(in: .whitespaces)
+        if !trimmed.isEmpty { workspaces[index].agentOwner = trimmed }
+        persist()
+        return workspaces[index]
+    }
+
+    /// The agent hands control to the user (login, captcha, manual choice)
+    /// while keeping the space agent-owned, matching ego-lite's
+    /// `agentDelegatedToUser` state.
+    @discardableResult
+    func handOffWorkspace(_ id: UUID) -> Workspace? {
+        guard let index = workspaces.firstIndex(where: { $0.id == id }),
+              workspaces[index].isAgentOwned else { return nil }
+        workspaces[index].ownership = .agentDelegatedToUser
+        persist()
+        return workspaces[index]
+    }
+
     // MARK: - Persistence and helpers
 
     func persist() {

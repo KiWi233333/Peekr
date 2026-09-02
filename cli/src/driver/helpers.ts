@@ -58,8 +58,10 @@ export const helpers = {
   pageInfo: () => guarded(pageInfo),
 
   // Observation
-  snapshotText,
-  snapshotRaw,
+  snapshotText: (options?: { scope?: "only_within_viewport" | "full_page"; includeActionMarks?: boolean; includeStableLocator?: boolean }) =>
+    guarded(() => snapshotText(options)),
+  snapshotRaw: (options?: { scope?: "only_within_viewport" | "full_page"; includeActionMarks?: boolean; includeStableLocator?: boolean }) =>
+    guarded(() => snapshotRaw(options)),
   screenshot: (options?: { path?: string; fullPage?: boolean }) =>
     guarded(() => screenshot(options)),
 
