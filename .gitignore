@@ -11,3 +11,5 @@ DerivedData/
 
 # Local Claude Code skills (third-party, each with its own license)
 .claude/skills/
+node_modules/
+cli/dist/

@@ -1,0 +1,23 @@
+{
+  "name": "peekr-cli",
+  "version": "0.1.0",
+  "description": "Command-line harness that lets AI agents drive Peekr's Chromium pages over CDP — snapshot, locate, act.",
+  "type": "module",
+  "bin": {
+    "peekr": "./dist/peekr.js"
+  },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "npm run build && node --test \"test/*.test.mjs\""
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^22.15.29",
+    "esbuild": "^0.28.1",
+    "typescript": "^5.8.3"
+  }
+}
