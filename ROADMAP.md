@@ -49,6 +49,13 @@ positioned to win.
 
 Power-user stickiness the category keeps wishing for but nobody ships well.
 
+- 📋 **Agent access on the Chromium engine** — the committed direction: Peekr
+  becomes the slide-out browser AI agents drive. Spaces carry a three-state
+  ownership model (user / agent / delegated, modeled after ego-lite's task
+  spaces); the opt-in CDP endpoint plus `agent.json` discovery file let
+  CDP-speaking tools (Playwright, browser-use, custom CLIs) work in an agent
+  space while the user's own tabs stay theirs. Chromium-first by decision —
+  WebKit parity for agent features is out of scope.
 - 📋 **Custom CSS / JS injection per URL pattern** — userstyles/userscripts
   scoped by host. *Pain: requested for both SlidePad and MenubarX, unmet by both.*
 - 📋 **Content blocking** — built-in ad/cookie-banner blocking via WebKit content

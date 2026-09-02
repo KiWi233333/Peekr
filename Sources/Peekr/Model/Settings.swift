@@ -72,7 +72,10 @@ struct SettingsData: Codable, Equatable {
     var autoHideMode: AutoHideMode = .focusLoss
     var language: AppLanguage = .system
     var bookmarkSync: BookmarkSyncInterval = .off
-    var webEngine: WebEngineKind = .system
+    /// Chromium is the product's primary engine — the whole agent-access layer
+    /// (CDP, shared login state) is built on it. WebKit stays as a fallback
+    /// choice; only an explicitly persisted value overrides this default.
+    var webEngine: WebEngineKind = .chromium
     var searchEngine: SearchEngine = .google
     /// Off by default: the DevTools port lets any local process attach, so it
     /// only exists when the user opts in to agent automation.
@@ -100,7 +103,7 @@ struct SettingsData: Codable, Equatable {
         autoHideMode = v(.autoHideMode, .focusLoss)
         language = v(.language, .system)
         bookmarkSync = v(.bookmarkSync, .off)
-        webEngine = v(.webEngine, .system)
+        webEngine = v(.webEngine, .chromium)
         searchEngine = v(.searchEngine, .google)
         agentAccessEnabled = v(.agentAccessEnabled, false)
         agentDebugPort = v(.agentDebugPort, 9223)

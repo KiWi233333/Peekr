@@ -299,11 +299,13 @@ extension CefSwiftEngine: CefBrowserDelegate {
     }
 }
 
-/// Chromium uses CefSwift's persistent global profile. CefSwift 0.1.0 places
-/// named profiles two levels below CEF's root cache, but Chromium only accepts
-/// profile directories that are direct children of that root. Using the
-/// supported global context keeps logins persistent and browser creation
-/// reliable until the upstream named-profile layout is corrected.
+/// Every Chromium tab shares CefSwift's persistent global profile — this is the
+/// chosen design, not a stopgap: agent and user pages inherit one another's
+/// logins inside the one browser (the ego-lite model Peekr builds on). A
+/// secondary constraint keeps it this way for now: CefSwift 0.1.0 places named
+/// profiles two levels below CEF's root cache, while Chromium only accepts
+/// profile directories that are direct children of that root, so per-space
+/// profiles wait on the upstream layout fix.
 @MainActor
 struct CefSwiftEngineFactory: WebEngineFactory {
     func makeEngine(for app: WebApp) -> WebEngine {

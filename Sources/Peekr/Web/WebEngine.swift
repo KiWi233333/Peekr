@@ -55,11 +55,12 @@ protocol WebEngineFactory {
     func makeEngine(for app: WebApp) -> WebEngine
 }
 
-/// The rendering backend the user picks in Preferences. `system` is the built-in
-/// WebKit engine; `chromium` is the CEF runtime bundled by CefSwift.
-/// Persisted in `SettingsData`, so it must stay a stable raw string.
+/// The rendering backend the user picks in Preferences. `chromium` is the CEF
+/// runtime bundled by CefSwift and the product's primary engine — agent access
+/// (CDP, shared login state) exists only here. `system` is the built-in WebKit
+/// fallback. Persisted in `SettingsData`, so raw values must stay stable.
 enum WebEngineKind: String, Codable, CaseIterable, Identifiable {
-    case system, chromium
+    case chromium, system
     var id: String { rawValue }
 
     /// Both backends ship in every supported Peekr bundle. CefSwift's bootstrap

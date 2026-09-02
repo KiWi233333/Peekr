@@ -253,8 +253,8 @@ struct Localized {
           "将 Cookie 导入 Peekr 的 Chromium Profile，或把 Chrome 书签复制到 Peekr。")
     }
     var webEngineHint: String {
-        t("Both engines are bundled. Switching recreates open pages. WebKit isolates site data per app; Chromium uses one persistent profile.",
-          "两种内核均已内置。切换时会重建已打开页面。WebKit 按应用隔离站点数据；Chromium 使用一个持久 Profile。")
+        t("Chromium is Peekr's primary engine and what Agent access builds on; WebKit stays as a lightweight fallback. Switching recreates open pages.",
+          "Chromium 是 Peekr 的主引擎，Agent 接入也基于它；WebKit 作为轻量备选。切换时会重建已打开页面。")
     }
     var switchEngineTitle: String { t("Switch web engine?", "切换浏览器内核？") }
     func switchEngineMessage(_ engine: String) -> String {
@@ -274,8 +274,8 @@ struct Localized {
             return t("Apple's built-in engine — fast, light, no download.",
                      "Apple 内置引擎——快、轻、无需下载。")
         case .chromium:
-            return t("Bundled Chromium via CefSwift/CEF for maximum site compatibility.",
-                     "通过 CefSwift/CEF 内置 Chromium，提供更完整的网站兼容性。")
+            return t("The primary engine — bundled Chromium via CefSwift/CEF; the pages Agent access drives.",
+                     "主引擎——通过 CefSwift/CEF 内置 Chromium，Agent 接入驱动的就是它的页面。")
         }
     }
 
@@ -329,8 +329,8 @@ struct Localized {
     var agentAccessToggle: String { t("Allow AI agents to drive Chromium pages", "允许 AI Agent 驱动 Chromium 页面") }
     var agentAccessPort: String { t("Debug port", "调试端口") }
     var agentAccessHint: String {
-        t("Exposes Peekr's Chromium pages to local AI agents over the DevTools protocol (localhost only). Requires the Chromium engine and a relaunch. Any local process could attach while enabled — turn it on only when an agent needs it.",
-          "通过 DevTools 协议把 Peekr 的 Chromium 页面暴露给本机 AI Agent（仅 localhost）。需要 Chromium 内核，重启后生效。开启期间本机任意程序都可连接——只在需要时打开。")
+        t("Exposes Peekr's Chromium pages to local AI agents over the DevTools protocol (localhost only). Built on the Chromium engine; takes effect after relaunch. Any local process could attach while enabled — turn it on only when an agent needs it.",
+          "通过 DevTools 协议把 Peekr 的 Chromium 页面暴露给本机 AI Agent（仅 localhost）。基于 Chromium 内核，重启后生效。开启期间本机任意程序都可连接——只在需要时打开。")
     }
     var agentAccessRelaunchHint: String {
         t("Takes effect after you quit and reopen Peekr.", "退出并重新打开 Peekr 后生效。")
