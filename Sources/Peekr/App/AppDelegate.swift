@@ -86,7 +86,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             icons: icons,
             onApply: { [weak self] effect in self?.applyPreference(effect) },
             onImportCookies: { [weak self] in self?.browserImports.showCookies() },
-            onImportBookmarks: { [weak self] in self?.importChromeBookmarks() }
+            onImportBookmarks: { [weak self] in self?.importChromeBookmarks() },
+            onInstallAgentCLI: { [weak self] in self?.installAgentCLI() }
         )
 
         statusBar = StatusBarController(
@@ -312,6 +313,49 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             title: loc.chromeBookmarksImportedTitle,
             message: loc.chromeBookmarksImportedMessage
         )
+    }
+
+    /// Register the bundled peekr harness on PATH (`~/.local/bin/peekr`) so
+    /// agent CLIs reach it without repo checkouts. Requires Node ≥ 22; the
+    /// result is surfaced because the target audience may be non-terminal users.
+    private func installAgentCLI() {
+        let loc = settings.strings
+        let binDir = NSHomeDirectory() + "/.local/bin"
+        let linkURL = URL(fileURLWithPath: binDir + "/peekr")
+
+        func bundledLauncher() -> URL? {
+            for candidate in [Bundle.main.bundleURL, URL(fileURLWithPath: "/Applications/Peekr.app")] {
+                let url = candidate
+                    .appendingPathComponent("Contents/Resources/peekr-cli/peekr", isDirectory: false)
+                if FileManager.default.isExecutableFile(atPath: url.path) { return url }
+            }
+            return nil
+        }
+
+        guard let launcher = bundledLauncher() else {
+            showImportAlert(
+                title: loc.cliInstallFailedTitle,
+                message: loc.cliInstallMissingBundle
+            )
+            return
+        }
+
+        do {
+            try FileManager.default.createDirectory(atPath: binDir, withIntermediateDirectories: true)
+            if FileManager.default.fileExists(atPath: linkURL.path) {
+                try FileManager.default.removeItem(at: linkURL)
+            }
+            try FileManager.default.createSymbolicLink(at: linkURL, withDestinationURL: launcher)
+            showImportAlert(
+                title: loc.cliInstallDoneTitle,
+                message: loc.cliInstallDoneMessage(linkURL.path)
+            )
+        } catch {
+            showImportAlert(
+                title: loc.cliInstallFailedTitle,
+                message: error.localizedDescription
+            )
+        }
     }
 
     private func showImportAlert(title: String, message: String) {

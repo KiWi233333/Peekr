@@ -7,12 +7,11 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
-import { listTargetsHttp } from "../cdp.js";
-import { loadDiscovery } from "../discovery.js";
 import { ErrorCodes, PeekrError } from "../errors.js";
 import { refToken, resolveRef } from "../ref-map.js";
 import { resetRefs, state, type RefInfo } from "../state.js";
-import { currentSocket, ensureCurrentPage, pageInfo, socketFor } from "./nav.js";
+import { currentSocket, ensureCurrentPage, pageInfo } from "./nav.js";
+import { collectFrameInfos, walkFrameElements } from "./frames.js";
 import type { TargetSocket } from "../cdp.js";
 
 export interface SnapshotOptions {
@@ -85,24 +84,35 @@ export async function snapshotRaw(options: SnapshotOptions = {}): Promise<Snapsh
   const info = await pageInfo().catch(() => undefined);
   renderer.render(tree.nodes, mainFrame, "");
 
-  // Cross-origin frames live in their own processes/targets; merge their
-  // trees as sibling groups. Single-frame failure degrades to a placeholder
-  // so one bad embed cannot kill the whole snapshot.
-  const discovery = loadDiscovery();
-  const frameTargets = (await listTargetsHttp(discovery.port)).filter(
-    (target) => target.type === "iframe" && target.targetId !== targetId,
-  );
-  for (const frame of frameTargets) {
-    const label = frame.url ? `[iframe src=${frame.url}]` : "[iframe]";
+  // Iframe content: CEF exposes no OOPIF targets and folds no child-frame
+  // content into the page AX tree, so same-origin frames are walked with an
+  // injected contentDocument walker, and cross-origin frames degrade to an
+  // explicit placeholder. One broken embed never kills the snapshot.
+  const frames = await collectFrameInfos(socket).catch(() => []);
+  for (const frame of frames) {
+    const indent = "  ".repeat(frame.depth);
+    if (!frame.accessible) {
+      renderer.lines.push(
+        `${indent}[iframe src=${frame.src}] [iframe: cross-origin — content unavailable]`,
+      );
+      continue;
+    }
+    renderer.lines.push(`${indent}[iframe src=${frame.src}]`);
     try {
-      const frameSocket = await socketFor(frame.targetId, frame.webSocketDebuggerUrl);
-      await frameSocket.try("Accessibility.enable");
-      const frameTree = await frameSocket.send<{ nodes: AxNode[] }>("Accessibility.getFullAXTree");
-      const frameContext = await describeFrame(frameSocket, scope);
-      renderer.lines.push(label);
-      renderer.render(frameTree.nodes, frameContext, "  ");
+      const elements = await walkFrameElements(socket, frame.chain);
+      for (const element of elements) {
+        const ref = renderer.nextRefFor(element.role, element.name, frame.chain, element.selector);
+        const parts = [
+          `${indent}  ${refToken(ref)} [${element.role}]`,
+          element.name ? JSON.stringify(element.name.slice(0, MAX_TEXT_LENGTH)) : undefined,
+          element.selector ? `loc=css:${element.selector}` : undefined,
+          element.href ? `url=${element.href}` : undefined,
+          element.value ? `value=${JSON.stringify(element.value)}` : undefined,
+        ];
+        renderer.lines.push(parts.filter(Boolean).join(" "));
+      }
     } catch (err) {
-      renderer.lines.push(`${label} [iframe: unavailable — ${(err as Error).message}]`);
+      renderer.lines.push(`${indent}  [iframe: unavailable — ${(err as Error).message}]`);
     }
   }
 
@@ -194,6 +204,19 @@ export class SnapshotRenderer {
   /** Test + debug hook: the internal pending line count. */
   get lineCount(): number {
     return this.lines.length;
+  }
+
+  /** Register a frame-walked element as a ref and return its number. */
+  nextRefFor(role: string, name: string, chain: number[], selector: string): number {
+    const ref = this.nextRef++;
+    this.refs.push({
+      ref,
+      role,
+      name,
+      locator: selector ? `css:${selector}` : undefined,
+      frame: { chain, selector },
+    });
+    return ref;
   }
 
   render(nodes: AxNode[], frame: FrameContext, baseIndent: string): void {
@@ -301,16 +324,13 @@ export class SnapshotRenderer {
       this.lines.push(`${indent}[${role}] ${JSON.stringify(name.slice(0, MAX_TEXT_LENGTH))}`);
     } else if (role === "image" && name) {
       this.lines.push(`${indent}[image] ${JSON.stringify(name.slice(0, MAX_TEXT_LENGTH))}`);
-    } else if (role === "iframe" || role === "embeddedobject") {
-      const src = this.prop(node, "url");
-      this.lines.push(`${indent}[iframe src=${src ?? "about:blank"}]`);
     }
 
     for (const childId of node.childIds ?? []) {
       const child = byId.get(childId);
       if (child) {
         const childIsText = child.role?.value === "staticText";
-        this.walk(child, byId, frame, role === "iframe" || role === "embeddedobject" ? depth + 1 : depth, baseIndent, childIsText ? undefined : name || parentName);
+        this.walk(child, byId, frame, depth, baseIndent, childIsText ? undefined : name || parentName);
       }
     }
   }

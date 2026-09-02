@@ -77,6 +77,30 @@ test -f "$CEF_DIST/CREDITS.html" || { echo "Chromium credits missing from $CEF_D
 cp "$CEF_DIST/LICENSE.txt" "$APP/Contents/Resources/Chromium-LICENSE.txt"
 cp "$CEF_DIST/CREDITS.html" "$APP/Contents/Resources/Chromium-CREDITS.html"
 
+# Ship the peekr-cli agent harness: the single-file JS runtime plus a launcher,
+# and the skill files install.sh registers with agent CLIs. A build machine
+# without npm degrades to "no CLI in bundle" instead of failing the product.
+if [ ! -f cli/dist/peekr.js ]; then
+  (cd cli && npm run build >/dev/null 2>&1) || true
+fi
+if [ -f cli/dist/peekr.js ]; then
+  CLI_DIR="$APP/Contents/Resources/peekr-cli"
+  mkdir -p "$CLI_DIR"
+  cp cli/dist/peekr.js "$CLI_DIR/peekr.js"
+  cat > "$CLI_DIR/peekr" <<'LAUNCHER'
+#!/bin/sh
+# Bundled peekr harness launcher; requires Node >= 22 on PATH.
+exec /usr/bin/env node "$(dirname "$0")/peekr.js" "$@"
+LAUNCHER
+  chmod +x "$CLI_DIR/peekr"
+  if [ -d skills/peekr-cli ]; then
+    mkdir -p "$APP/Contents/Resources/peekr-skills"
+    cp -R skills/peekr-cli "$APP/Contents/Resources/peekr-skills/"
+  fi
+else
+  echo "peekr-cli bundle skipped (npm or cli/dist unavailable)" >&2
+fi
+
 # Peekr exposes only English and Chinese UI. CEF's redistribution README allows
 # shipping only configured locales; prune the other locale packs before the
 # framework receives its final signature.

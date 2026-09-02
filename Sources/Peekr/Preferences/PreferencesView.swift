@@ -16,6 +16,7 @@ struct PreferencesView: View {
     var onApply: (PreferenceEffect) -> Void
     var onImportCookies: () -> Void
     var onImportBookmarks: () -> Void
+    var onInstallAgentCLI: () -> Void
 
     @State private var persistTask: Task<Void, Never>?
 
@@ -28,7 +29,8 @@ struct PreferencesView: View {
             BrowserTab(
                 settings: settings,
                 onImportCookies: onImportCookies,
-                onImportBookmarks: onImportBookmarks
+                onImportBookmarks: onImportBookmarks,
+                onInstallAgentCLI: onInstallAgentCLI
             )
             .tabItem { Label(loc.browser, systemImage: "globe") }
             AppsTab(model: model, settings: settings, icons: icons)
@@ -253,6 +255,7 @@ private struct BrowserTab: View {
     @Bindable var settings: Settings
     var onImportCookies: () -> Void
     var onImportBookmarks: () -> Void
+    var onInstallAgentCLI: () -> Void
 
     @State private var pendingEngine: WebEngineKind?
 
@@ -348,6 +351,11 @@ private struct BrowserTab: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
+                    HStack {
+                        Label(loc.agentAccessInstallCLI, systemImage: "terminal")
+                        Spacer()
+                        Button(loc.installAction, action: onInstallAgentCLI)
+                    }
                 }
 
                 Text(loc.agentAccessHint)

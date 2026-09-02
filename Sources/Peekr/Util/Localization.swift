@@ -335,6 +335,18 @@ struct Localized {
     var agentAccessRelaunchHint: String {
         t("Takes effect after you quit and reopen Peekr.", "退出并重新打开 Peekr 后生效。")
     }
+    var agentAccessInstallCLI: String { t("Command line tool for AI agents", "面向 AI Agent 的命令行工具") }
+    var installAction: String { t("Install…", "安装…") }
+    var cliInstallDoneTitle: String { t("Command line tool installed", "命令行工具已安装") }
+    func cliInstallDoneMessage(_ path: String) -> String {
+        t("The `peekr` command is now available at \(path). AI agents can run `peekr doctor` to connect.",
+          "`peekr` 命令已安装到 \(path)。AI Agent 运行 `peekr doctor` 即可连接。")
+    }
+    var cliInstallFailedTitle: String { t("Command line tool not installed", "命令行工具未安装") }
+    var cliInstallMissingBundle: String {
+        t("The peekr harness was not found in the app bundle. Reinstall Peekr or build it with npm available.",
+          "应用包内没有找到 peekr 工具。请重新安装 Peekr，或在装有 npm 的环境重新构建。")
+    }
 
     // About
     var tagline: String { t("A liquid-glass slide-over browser for macOS.", "macOS 上的液态玻璃侧滑浏览器。") }

@@ -37,6 +37,14 @@ export async function typeText(text: string): Promise<void> {
 /** Focus the element, select its content, then insert text as real input. */
 export async function fillInput(target: ClickTarget, text: string): Promise<void> {
   const resolved = await resolveTarget(target);
+  if (resolved.frame) {
+    // In-frame elements: focus via the page context, then type through the
+    // trusted input pipeline.
+    const { focusFrameElement } = await import("./frames.js");
+    await focusFrameElement(resolved.socket, resolved.frame.chain, resolved.frame.selector);
+    await resolved.socket.send("Input.insertText", { text });
+    return;
+  }
   if (!resolved.objectId) {
     throw Object.assign(new Error("fillInput needs an element target, not bare coordinates"), { code: "PEEKR_ACTION_FAILED" });
   }

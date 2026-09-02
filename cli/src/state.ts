@@ -16,6 +16,8 @@ export interface RefInfo {
   name: string;
   /** Owning target id for OOPIF refs; undefined = the current page itself. */
   frameTargetId?: string;
+  /** Same-origin frame chain (data-peekr-frame ids) + in-frame selector. */
+  frame?: { chain: number[]; selector: string };
   href?: string;
 }
 

@@ -11,6 +11,7 @@ final class PreferencesWindowController {
     private let onApply: (PreferenceEffect) -> Void
     private let onImportCookies: () -> Void
     private let onImportBookmarks: () -> Void
+    private let onInstallAgentCLI: () -> Void
     private var window: NSWindow?
 
     init(
@@ -19,7 +20,8 @@ final class PreferencesWindowController {
         icons: IconStore,
         onApply: @escaping (PreferenceEffect) -> Void,
         onImportCookies: @escaping () -> Void,
-        onImportBookmarks: @escaping () -> Void
+        onImportBookmarks: @escaping () -> Void,
+        onInstallAgentCLI: @escaping () -> Void
     ) {
         self.model = model
         self.settings = settings
@@ -27,6 +29,7 @@ final class PreferencesWindowController {
         self.onApply = onApply
         self.onImportCookies = onImportCookies
         self.onImportBookmarks = onImportBookmarks
+        self.onInstallAgentCLI = onInstallAgentCLI
     }
 
     func show() {
@@ -37,7 +40,8 @@ final class PreferencesWindowController {
                 icons: icons,
                 onApply: onApply,
                 onImportCookies: onImportCookies,
-                onImportBookmarks: onImportBookmarks
+                onImportBookmarks: onImportBookmarks,
+                onInstallAgentCLI: onInstallAgentCLI
             )
             let window = NSWindow(
                 contentRect: NSRect(x: 0, y: 0, width: 480, height: 540),

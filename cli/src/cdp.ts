@@ -18,7 +18,7 @@ export interface CdpTarget {
 
 type Pending = {
   method: string;
-  resolve: (value: unknown) => void;
+  resolve: (value: any) => void;
   reject: (err: Error) => void;
   timer: NodeJS.Timeout;
 };

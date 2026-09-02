@@ -7,12 +7,15 @@ import { ErrorCodes, PeekrError } from "../errors.js";
 import { isRefToken, resolveRef } from "../ref-map.js";
 import { state } from "../state.js";
 import { currentSocket, socketFor } from "./nav.js";
+import { ARIA_HELPERS_JS, resolveFramePoint } from "./frames.js";
 
 export interface ResolvedElement {
   socket: TargetSocket;
   objectId?: string;
   x: number;
   y: number;
+  /** Present when the element lives inside a same-origin iframe. */
+  frame?: { chain: number[]; selector: string };
 }
 
 interface RectPoint {
@@ -57,16 +60,25 @@ async function findByRole(socket: TargetSocket, role: string, name?: string): Pr
       expression: `(() => {
         const wantedRole = ${JSON.stringify(role)};
         const wantedName = ${nameLiteral};
-        for (const el of document.querySelectorAll("*")) {
-          let roleValue = "";
-          let nameValue = "";
-          try { roleValue = el.computedRole || "" } catch {}
-          if (roleValue !== wantedRole) continue;
-          if (wantedName !== null) {
-            try { nameValue = el.computedAccessibleName || "" } catch {}
-            if (nameValue !== wantedName) continue;
+        ${ARIA_HELPERS_JS}
+        const roots = [];
+        const collect = (doc) => {
+          roots.push(doc);
+          for (const el of doc.querySelectorAll("*")) {
+            if (el.shadowRoot) roots.push(el.shadowRoot);
           }
-          return el;
+          for (const frame of doc.querySelectorAll("iframe,frame")) {
+            try { if (frame.contentDocument && frame.contentDocument.body) collect(frame.contentDocument); } catch {}
+          }
+        };
+        collect(document);
+        for (const root of roots) {
+          for (const el of root.querySelectorAll("a[href], button, input, textarea, select, [contenteditable=true], [role], img")) {
+            const roleValue = roleOf(el);
+            if (roleValue !== wantedRole) continue;
+            if (wantedName !== null && nameOf(el, roleValue) !== wantedName) continue;
+            return el;
+          }
         }
         return null;
       })()`,
@@ -123,12 +135,51 @@ async function findBySelector(socket: TargetSocket, selector: string): Promise<s
   const css = selector.startsWith("css:") ? selector.slice(4) : selector;
   const result = await socket.send<any>(
     "Runtime.evaluate",
-    { expression: `document.querySelector(${JSON.stringify(css)})`, returnByValue: false },
+    {
+      expression: `(() => {
+        const sel = ${JSON.stringify(css)};
+        const direct = document.querySelector(sel);
+        if (direct) return direct;
+        const roots = ${ALL_ROOTS_JS};
+        for (const root of roots) {
+          const hit = root.querySelector(sel);
+          if (hit) return hit;
+        }
+        return null;
+      })()`,
+      returnByValue: false,
+    },
   );
   const objectId = result?.result?.objectId;
   if (!objectId) throw new PeekrError(ErrorCodes.actionFailed, `No element matches ${selector}.`);
   return objectId;
 }
+
+/** JS snippet: every search root — the document plus open shadow roots. */
+const ALL_ROOTS_JS = `(() => {
+  const roots = [document];
+  for (let i = 0; i < roots.length; i++) {
+    for (const el of roots[i].querySelectorAll("*")) {
+      if (el.shadowRoot) roots.push(el.shadowRoot);
+    }
+  }
+  return roots;
+})()`;
+
+/** JS snippet: search roots plus every accessible iframe document (recursive). */
+const ALL_ROOTS_WITH_FRAMES_JS = `(() => {
+  const roots = [document];
+  const collect = (doc) => {
+    for (const el of doc.querySelectorAll("*")) {
+      if (el.shadowRoot) roots.push(el.shadowRoot);
+    }
+    for (const frame of doc.querySelectorAll("iframe,frame")) {
+      try { if (frame.contentDocument && frame.contentDocument.body) collect(frame.contentDocument); } catch {}
+    }
+  };
+  collect(document);
+  return roots;
+})();`;
 
 async function objectIdToCenter(socket: TargetSocket, objectId: string): Promise<ResolvedElement> {
   const point = await centerOf(socket, objectId);
@@ -154,6 +205,10 @@ export async function resolveTarget(
     const socket = info.frameTargetId
       ? await socketFor(info.frameTargetId)
       : await currentSocket();
+    if (info.frame) {
+      const point = await resolveFramePoint(socket, info.frame.chain, info.frame.selector);
+      return { socket, ...point, frame: info.frame };
+    }
     if (info.backendDOMNodeId) {
       const objectId = await objectIdFromBackendNode(socket, info.backendDOMNodeId);
       const point = await centerOf(socket, objectId);
