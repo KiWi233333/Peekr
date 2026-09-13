@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "skills": {
+    "swift-code-review": {
+      "source": "existential-birds/beagle",
+      "sourceType": "github",
+      "skillPath": "plugins/beagle-ios/skills/swift-code-review/SKILL.md",
+      "computedHash": "7ffd17b0da1c75fb5b75b53c35192e94090d07f39763fc6217a20ef9534d9eed"
+    },
+    "swift-development": {
+      "source": "rshankras/claude-code-apple-skills",
+      "sourceType": "github",
+      "skillPath": "skills/swift/SKILL.md",
+      "computedHash": "fce5dbf7cf9555fdf1ea27da6832f246f52ed63f28dba37b5f63e7b88b64ec35"
+    },
+    "swiftui-view-refactor": {
+      "source": "dimillian/skills",
+      "sourceType": "github",
+      "skillPath": "swiftui-view-refactor/SKILL.md",
+      "computedHash": "eefd3e1e72a17ca627f8e50fce173efafaa23eb66515f562f4b5fca88325cb33"
+    }
+  }
+}
