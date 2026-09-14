@@ -55,15 +55,15 @@ Power-user stickiness the category keeps wishing for but nobody ships well.
   spaces); the opt-in CDP endpoint plus `agent.json` discovery file let
   CDP-speaking tools (Playwright, browser-use, custom CLIs) work in an agent
   space while the user's own tabs stay theirs. Chromium-first by decision —
-  WebKit parity for agent features is out of scope.
+  Agent features target the bundled Chromium runtime only.
 - 📋 **Custom CSS / JS injection per URL pattern** — userstyles/userscripts
   scoped by host. *Pain: requested for both SlidePad and MenubarX, unmet by both.*
-- 📋 **Content blocking** — built-in ad/cookie-banner blocking via WebKit content
+- 📋 **Content blocking** — built-in ad/cookie-banner blocking via Chromium request and DOM policies
   rules. *Pain: a recurring MenubarX request.*
 - 📋 **App quick-switcher** — an Arc-style fuzzy switcher on top of the existing
   `⌘1`–`⌘9`. *Pain: SlidePad users asked for a better quick switcher.*
 - 🔬 **Multiple accounts per app** — more than one isolated session for the same
-  site, building on the existing per-app `WKWebsiteDataStore`.
+  site, building on Chromium profile partitioning.
 
 ## Later — `v0.5.0+`
 

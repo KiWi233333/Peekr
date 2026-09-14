@@ -3,7 +3,7 @@ import XCTest
 @testable import Peekr
 
 @MainActor
-final class WebViewManagerEngineSwitchTests: XCTestCase {
+final class WebViewManagerLifecycleTests: XCTestCase {
     private final class FakeEngine: WebEngine {
         let hostView = NSView()
         var navState = NavState()
@@ -32,32 +32,6 @@ final class WebViewManagerEngineSwitchTests: XCTestCase {
             engines.append(engine)
             return engine
         }
-    }
-
-    func testReplacingFactoryClosesCachedEngineAndRecreatesActiveTab() async {
-        let storeURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("peekr-manager-\(UUID().uuidString).json")
-        let model = AppModel(store: AppStore(fileURL: storeURL))
-        let oldFactory = FakeFactory()
-        let newFactory = FakeFactory()
-        let manager = WebViewManager(
-            model: model,
-            factory: oldFactory,
-            badges: BadgeStore(),
-            icons: IconStore()
-        )
-        let activeID = model.apps[0].id
-        manager.activate(activeID)
-        let oldView = manager.view(for: activeID)
-
-        manager.replaceFactory(newFactory)
-        await Task.yield()
-
-        XCTAssertEqual(oldFactory.engines.count, 1)
-        XCTAssertEqual(oldFactory.engines[0].closeCount, 1)
-        XCTAssertEqual(newFactory.engines.count, 1)
-        XCTAssertEqual(manager.state.currentID, activeID)
-        XCTAssertFalse(manager.view(for: activeID) === oldView)
     }
 
     func testCloseAllForceClosesEveryCachedEngineAndClearsSelection() {

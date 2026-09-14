@@ -2,7 +2,7 @@ import Foundation
 
 /// One tab's hibernation-relevant state, as the policy sees it. Pure data: the
 /// `WebViewManager` fills these in from its live engines, so the policy itself
-/// never touches AppKit/WebKit and stays unit-testable.
+/// never touches AppKit or the embedded browser runtime and stays unit-testable.
 struct HibernationCandidate {
     let id: UUID
     /// When the tab was last the foreground page — the idle clock starts here.

@@ -6,7 +6,6 @@ enum PreferenceEffect {
     case launchAtLogin
     case language
     case bookmarkSync
-    case webEngine
 }
 
 struct PreferencesView: View {
@@ -51,7 +50,6 @@ struct PreferencesView: View {
         }
         .onChange(of: settings.language) { _, _ in onApply(.language) }
         .onChange(of: settings.bookmarkSync) { _, _ in onApply(.bookmarkSync) }
-        .onChange(of: settings.webEngine) { _, _ in onApply(.webEngine) }
         .onDisappear {
             persistTask?.cancel()
             settings.persist()
@@ -257,24 +255,7 @@ private struct BrowserTab: View {
     var onImportBookmarks: () -> Void
     var onInstallAgentCLI: () -> Void
 
-    @State private var pendingEngine: WebEngineKind?
-
     private var loc: Localized { settings.strings }
-    private var engineSelection: Binding<WebEngineKind> {
-        Binding(
-            get: { settings.webEngine },
-            set: { newValue in
-                guard newValue != settings.webEngine else { return }
-                pendingEngine = newValue
-            }
-        )
-    }
-    private var showsEngineConfirmation: Binding<Bool> {
-        Binding(
-            get: { pendingEngine != nil },
-            set: { if !$0 { pendingEngine = nil } }
-        )
-    }
 
     var body: some View {
         Form {
@@ -287,25 +268,6 @@ private struct BrowserTab: View {
                 .pickerStyle(.menu)
 
                 Text(loc.searchEngineHint)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-
-            Section(loc.webEngineSection) {
-                Picker("", selection: engineSelection) {
-                    ForEach(WebEngineKind.allCases) { kind in
-                        Text(loc.engineName(kind)).tag(kind)
-                    }
-                }
-                .labelsHidden()
-                .pickerStyle(.radioGroup)
-
-                Text(loc.engineDetail(settings.webEngine))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                Text(loc.webEngineHint)
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -389,21 +351,6 @@ private struct BrowserTab: View {
             }
         }
         .formStyle(.grouped)
-        .alert(
-            loc.switchEngineTitle,
-            isPresented: showsEngineConfirmation,
-            presenting: pendingEngine
-        ) { engine in
-            Button(loc.cancel, role: .cancel) {
-                pendingEngine = nil
-            }
-            Button(loc.switchEngine) {
-                settings.webEngine = engine
-                pendingEngine = nil
-            }
-        } message: { engine in
-            Text(loc.switchEngineMessage(loc.engineName(engine)))
-        }
     }
 }
 

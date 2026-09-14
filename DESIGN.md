@@ -4,7 +4,7 @@ version: "1.0"
 platform:
   os: [macOS]
   minimumDeployment: "14.0"
-  toolkit: [SwiftUI, AppKit, WKWebView, CEF]
+  toolkit: [SwiftUI, AppKit, CEF/Chromium]
   appearance: [light, dark]
   toolchain: "Swift tools 5.10; macOS 26 APIs require compiler 6.2+"
 ---
@@ -87,7 +87,7 @@ Apple Human Interface Guidelines 是平台行为基线；本文件是 Peekr 对�
 
 - `makePanelBackdrop`、`PointerCursorRegion`、窗口事件和菜单命令是明确的 AppKit 边界；不要把 AppKit 对象泄漏到普通 SwiftUI 子视图的状态层。
 - macOS 26 / Xcode 26 专用 API 必须同时具备编译期和运行时保护；macOS 14+ 在旧 SDK 上仍应构建，并回退到系统材质。
-- WebKit/CEF 是内容渲染面。浏览器会话、导航状态和窗口生命周期由对应服务管理，视觉视图不直接承担持久化或导航业务逻辑。
+- CEF/Chromium 是内容渲染面。浏览器会话、导航状态和窗口生命周期由对应服务管理，视觉视图不直接承担持久化或导航业务逻辑。
 
 ## 验收清单
 

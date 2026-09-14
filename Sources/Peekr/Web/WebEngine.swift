@@ -1,8 +1,7 @@
 import AppKit
 
 /// A snapshot of one page's navigation state, mirrored into `BrowserState`.
-/// Engine-agnostic on purpose: WebKit reports it from KVO behind the `WebEngine`
-/// seam, so no backend-specific types leak past the engine boundary.
+/// Engine-agnostic on purpose: backend-specific types never leak past this seam.
 struct NavState: Equatable {
     var canGoBack = false
     var canGoForward = false
@@ -14,8 +13,7 @@ struct NavState: Equatable {
 
 /// One live web page for a dock app. The rendering backend lives entirely behind
 /// this protocol, so `WebViewManager` and the whole panel/UI layer never touch
-/// `WKWebView` directly. The seam keeps the UI backend-agnostic; adding a second
-/// backend would mean a new conformer plus a factory — nothing above this changes.
+/// directly. The seam keeps the UI independent from CEF implementation details.
 @MainActor
 protocol WebEngine: AnyObject {
     /// The AppKit view `WebContainer` mounts into the panel.
@@ -33,8 +31,8 @@ protocol WebEngine: AnyObject {
     func reload()
     func stopLoading()
     /// Release backend resources immediately when a tab is discarded or the
-    /// selected engine changes. WebKit needs no special shutdown; CEF must
-    /// explicitly close its browser before the runtime can terminate.
+    /// selected tab is discarded. CEF must explicitly close its browser before
+    /// the runtime can terminate.
     func close()
 
     /// The page's declared favicon `<link>` URLs read from the *live* DOM (already
@@ -47,36 +45,9 @@ extension WebEngine {
     func close() {}
 }
 
-/// Builds a `WebEngine` per dock app. The concrete factory owns the backend's
-/// setup (e.g. WebKit's per-app persistent data-store isolation), which is the
-/// single seam a second backend would swap.
+/// Builds a Chromium `WebEngine` per dock app. Keeping this small seam makes
+/// lifecycle tests independent from the native CEF runtime.
 @MainActor
 protocol WebEngineFactory {
     func makeEngine(for app: WebApp) -> WebEngine
-}
-
-/// The rendering backend the user picks in Preferences. `chromium` is the CEF
-/// runtime bundled by CefSwift and the product's primary engine — agent access
-/// (CDP, shared login state) exists only here. `system` is the built-in WebKit
-/// fallback. Persisted in `SettingsData`, so raw values must stay stable.
-enum WebEngineKind: String, Codable, CaseIterable, Identifiable {
-    case chromium, system
-    var id: String { rawValue }
-
-    /// Both backends ship in every supported Peekr bundle. CefSwift's bootstrap
-    /// fails loudly at launch if its framework/helpers are missing, so Chromium
-    /// never appears selectable while silently falling back to WebKit.
-    var isAvailable: Bool { true }
-
-    /// The concrete factory. Chromium is a direct CefSwift implementation: no
-    /// runtime download, dlopen shim, or WebKit fallback.
-    @MainActor
-    func makeFactory() -> WebEngineFactory {
-        switch self {
-        case .system:
-            return WebKitEngineFactory()
-        case .chromium:
-            return CefSwiftEngineFactory()
-        }
-    }
 }

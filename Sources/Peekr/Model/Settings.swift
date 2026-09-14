@@ -72,10 +72,6 @@ struct SettingsData: Codable, Equatable {
     var autoHideMode: AutoHideMode = .focusLoss
     var language: AppLanguage = .system
     var bookmarkSync: BookmarkSyncInterval = .off
-    /// Chromium is the product's primary engine — the whole agent-access layer
-    /// (CDP, shared login state) is built on it. WebKit stays as a fallback
-    /// choice; only an explicitly persisted value overrides this default.
-    var webEngine: WebEngineKind = .chromium
     var searchEngine: SearchEngine = .google
     /// Off by default: the DevTools port lets any local process attach, so it
     /// only exists when the user opts in to agent automation.
@@ -103,7 +99,6 @@ struct SettingsData: Codable, Equatable {
         autoHideMode = v(.autoHideMode, .focusLoss)
         language = v(.language, .system)
         bookmarkSync = v(.bookmarkSync, .off)
-        webEngine = v(.webEngine, .chromium)
         searchEngine = v(.searchEngine, .google)
         agentAccessEnabled = v(.agentAccessEnabled, false)
         agentDebugPort = v(.agentDebugPort, 9223)
@@ -128,7 +123,6 @@ final class Settings {
     var autoHideMode: AutoHideMode
     var language: AppLanguage
     var bookmarkSync: BookmarkSyncInterval
-    var webEngine: WebEngineKind
     var searchEngine: SearchEngine
     var agentAccessEnabled: Bool
     var agentDebugPort: Int
@@ -151,7 +145,6 @@ final class Settings {
         autoHideMode = d.autoHideMode
         language = d.language
         bookmarkSync = d.bookmarkSync
-        webEngine = d.webEngine
         searchEngine = d.searchEngine
         agentAccessEnabled = d.agentAccessEnabled
         agentDebugPort = d.agentDebugPort
@@ -164,7 +157,7 @@ final class Settings {
         s.launchAtLogin = launchAtLogin; s.followCursor = followCursor
         s.lastScreenNumber = lastScreenNumber; s.autoHide = autoHide
         s.autoHideMode = autoHideMode; s.language = language
-        s.bookmarkSync = bookmarkSync; s.webEngine = webEngine
+        s.bookmarkSync = bookmarkSync
         s.searchEngine = searchEngine
         s.agentAccessEnabled = agentAccessEnabled; s.agentDebugPort = agentDebugPort
         return s

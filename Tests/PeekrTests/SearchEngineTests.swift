@@ -11,6 +11,12 @@ final class SearchEngineTests: XCTestCase {
             from: Data(#"{"webEngine":"system"}"#.utf8)
         )
         XCTAssertEqual(legacy.searchEngine, .google)
+
+        let encoded = try JSONEncoder().encode(legacy)
+        let encodedObject = try XCTUnwrap(
+            try JSONSerialization.jsonObject(with: encoded) as? [String: Any]
+        )
+        XCTAssertNil(encodedObject["webEngine"])
     }
 
     func testEverySearchEngineBuildsItsOwnHomepageAndQueryURL() throws {

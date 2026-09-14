@@ -16,7 +16,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var agentServer: AgentControlServer?
     private var agentTargetSync: AgentTargetSync?
     private var bookmarkSyncTimer: Timer?
-    private var activeWebEngine: WebEngineKind!
     private var isQuitPending = false
 
     func applicationWillFinishLaunching(_ notification: Notification) {
@@ -41,16 +40,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         icons.warm(model.apps)
         badges = BadgeStore()
 
-        #if DEBUG
-        let smokeUsesChromium =
-            ProcessInfo.processInfo.environment["PEEKR_SMOKE_SHOW_PANEL"] == "1"
-        activeWebEngine = smokeUsesChromium ? .chromium : settings.webEngine
-        #else
-        activeWebEngine = settings.webEngine
-        #endif
         manager = WebViewManager(
             model: model,
-            factory: activeWebEngine.makeFactory(),
+            factory: CefSwiftEngineFactory(),
             badges: badges,
             icons: icons,
             searchEngine: currentSearchEngine
@@ -246,10 +238,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             prefs.refreshTitle()
         case .bookmarkSync:
             applyBookmarkSync()
-        case .webEngine:
-            guard activeWebEngine != settings.webEngine else { return }
-            activeWebEngine = settings.webEngine
-            manager.replaceFactory(activeWebEngine.makeFactory())
         }
     }
 

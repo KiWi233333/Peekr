@@ -246,37 +246,10 @@ struct Localized {
         t("Address-bar searches and new tabs use this engine. Existing tabs are not changed.",
           "地址栏搜索和新建标签页会使用此引擎；已有标签页不会被更改。")
     }
-    var webEngineSection: String { t("Web Engine", "浏览器内核") }
     var chromeDataSection: String { t("Chrome Data", "Chrome 数据") }
     var chromeDataHint: String {
         t("Import cookies into Peekr's Chromium profile or copy Chrome bookmarks into Peekr.",
           "将 Cookie 导入 Peekr 的 Chromium Profile，或把 Chrome 书签复制到 Peekr。")
-    }
-    var webEngineHint: String {
-        t("Chromium is Peekr's primary engine and what Agent access builds on; WebKit stays as a lightweight fallback. Switching recreates open pages.",
-          "Chromium 是 Peekr 的主引擎，Agent 接入也基于它；WebKit 作为轻量备选。切换时会重建已打开页面。")
-    }
-    var switchEngineTitle: String { t("Switch web engine?", "切换浏览器内核？") }
-    func switchEngineMessage(_ engine: String) -> String {
-        t("Switch to \(engine)? Open pages will be recreated and unsaved page state may be lost.",
-          "切换到 \(engine)？已打开页面将被重建，页面中未保存的状态可能丢失。")
-    }
-    var switchEngine: String { t("Switch Engine", "切换内核") }
-    func engineName(_ kind: WebEngineKind) -> String {
-        switch kind {
-        case .system: return t("System · WebKit", "系统内核 · WebKit")
-        case .chromium: return t("Chromium", "Chromium 内核")
-        }
-    }
-    func engineDetail(_ kind: WebEngineKind) -> String {
-        switch kind {
-        case .system:
-            return t("Apple's built-in engine — fast, light, no download.",
-                     "Apple 内置引擎——快、轻、无需下载。")
-        case .chromium:
-            return t("The primary engine — bundled Chromium via CefSwift/CEF; the pages Agent access drives.",
-                     "主引擎——通过 CefSwift/CEF 内置 Chromium，Agent 接入驱动的就是它的页面。")
-        }
     }
 
     var defaultSize: String { t("Default (screen ratio)", "默认（屏幕比例）") }

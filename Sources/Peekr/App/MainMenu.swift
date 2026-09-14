@@ -6,7 +6,7 @@ import AppKit
 /// its own — but the main menu is still what AppKit consults to route the
 /// standard editing key equivalents (⌘X/⌘C/⌘V/⌘A/⌘Z) to the first responder.
 /// Without an Edit menu those shortcuts are dead in *every* text field: the
-/// omnibox's field editor and the WKWebView's inputs alike. Because the slide
+/// omnibox's field editor and the embedded browser's inputs alike. Because the slide
 /// panel can become key (`canBecomeKey`), `sendEvent` walks this menu's
 /// `performKeyEquivalent` even though the app never activates, so editing
 /// shortcuts work without stealing focus from the frontmost app.

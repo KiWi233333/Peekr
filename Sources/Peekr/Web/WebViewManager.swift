@@ -65,28 +65,6 @@ final class WebViewManager {
         }
     }
 
-    /// Replace the rendering backend and recreate cached pages. The selected
-    /// tab is detached for one run-loop turn so `WebContainer` removes the old
-    /// native view before mounting the replacement.
-    func replaceFactory(_ newFactory: WebEngineFactory) {
-        factory = newFactory
-        let activeID = state.currentID
-        for engine in engines.values {
-            engine.close()
-            engine.hostView.removeFromSuperview()
-        }
-        engines.removeAll()
-        lastTitles.removeAll()
-        lastHosts.removeAll()
-        state.currentID = nil
-
-        guard let activeID else { return }
-        Task { @MainActor [weak self] in
-            guard let self, self.state.currentID == nil else { return }
-            self.activate(activeID)
-        }
-    }
-
     /// Force-close every cached page before CefSwift begins process-wide
     /// termination. This prevents a page's `beforeunload` handler from keeping
     /// the menu-bar app alive indefinitely after the user already confirmed quit.

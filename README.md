@@ -4,13 +4,13 @@
 
 # Peekr
 
-**A native slide-over browser for macOS, powered by WebKit or Chromium.**
+**A native slide-over browser for macOS, powered by bundled Chromium.**
 
 Move the pointer to a screen edge—or press a hotkey—and Peekr slides into view
 without stealing focus from your current app.
 
 [![Platform](https://img.shields.io/badge/platform-macOS%2014%2B-black?logo=apple&logoColor=white)](https://www.apple.com/macos/)
-[![Engines](https://img.shields.io/badge/engines-WebKit%20%2B%20Chromium-5C6BC0)](#install)
+[![Engine](https://img.shields.io/badge/engine-bundled%20Chromium-5C6BC0)](#install)
 [![Release](https://img.shields.io/github/v/release/KiWi233333/Peekr?include_prereleases&sort=semver)](https://github.com/KiWi233333/Peekr/releases)
 [![License](https://img.shields.io/github/license/KiWi233333/Peekr?color=blue)](LICENSE)
 
@@ -26,18 +26,18 @@ English · [简体中文](README.zh-CN.md)
 - **Fast access** — hover a screen edge or use the global hotkey (`⌃⌥Space`).
 - **Flexible layout** — six docking positions, resizing, pinning, and multi-display support.
 - **Browser essentials** — omnibox, navigation shortcuts, favicons, bookmarks, and tab import.
-- **Two engines** — use WebKit for a lightweight native experience or Chromium for site compatibility and Chrome cookie import.
-- **Persistent sessions** — per-app stores in WebKit and a shared persistent profile in Chromium.
+- **Bundled Chromium** — one rendering and automation backend for consistent site compatibility, CDP access and Chrome cookie import.
+- **Persistent sessions** — a shared persistent Chromium profile keeps login state available to Peekr apps.
 
 ## Install
 
 Requires macOS 14 or later.
 
-- **`v0.2.1` · WebKit + Chromium (recommended):** [Download DMG](https://github.com/KiWi233333/Peekr/releases/download/v0.2.1/Peekr-0.2.1.dmg)
-- **`v0.1.0` · WebKit only (Safari engine):** [Download DMG](https://github.com/KiWi233333/Peekr/releases/download/v0.1.0/Peekr-0.1.0.dmg)
+- **`v0.2.1` · Chromium + WebKit (历史版本):** [Download DMG](https://github.com/KiWi233333/Peekr/releases/download/v0.2.1/Peekr-0.2.1.dmg)
+- **`v0.1.0` · WebKit only (历史版本):** [Download DMG](https://github.com/KiWi233333/Peekr/releases/download/v0.1.0/Peekr-0.1.0.dmg)
 
-> `v0.2.1` is the latest release. `v0.1.0` is the last lightweight WebKit-only
-> build and does not include later features or fixes.
+> The current branch uses bundled Chromium only. The links above are historical releases
+> and do not include later features or fixes.
 
 ## Usage
 
@@ -57,7 +57,7 @@ git checkout v0.2.1
 make run
 ```
 
-Use `git checkout v0.1.0` before `make run` to build the WebKit-only edition.
+Use the current branch before `make run`; it builds the Chromium-only edition.
 Chromium source builds bundle the pinned CefSwift/CEF runtime and therefore run
 as a complete `.app`, not through `swift run`.
 
