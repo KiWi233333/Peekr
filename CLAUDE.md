@@ -38,11 +38,11 @@ make clean
 
 **用法**：视图加两行——属性 `@ObserveInjection private var inject`，`body` 末尾 `.enableInjection()`。已接入 `PanelRootView` / `NavigationBar` / `AppRail`；要在别的视图上启用照抄这两行即可。
 
-**前提**（热重载靠重新编译单个文件，编译命令只有 Xcode 会产出）：
-1. 装 [InjectionIII.app](https://github.com/johnno1962/InjectionIII)（Mac App Store 或 release 下载），打开它并 `Open Project` 选本仓库目录；
-2. 用 **Xcode 打开 `Package.swift` 跑**（⌘R），不要用 `swift run`——`make dev` 不会热重载，只是普通启动。
+**前提**：装 [InjectionIII.app](https://github.com/johnno1962/InjectionIII)，打开它并 `Open Project` 选本仓库目录（一次即可，之后自动恢复）。
 
-`make build` / `make run` 不受影响，CI 与发布链路照旧（Inject 静态链入、release 无副作用）。注意：启动期代码（`AppDelegate` 组合根、窗口/热键/`SlidePanel`）改了仍需重启，热重载只换 SwiftUI 视图。
+**启动**：`make inject`。它用 xcodebuild 编译并带 `EMIT_FRONTEND_COMMAND_LINES=YES`（Xcode 16.3+ 默认不往 build log 写 Swift 编译命令行，缺了注入会报 "Could not locate compile command"），再把 Xcode 构建的 binary 装进 DerivedData 的 .app 布局启动。不能走 Xcode ⌘R——裸可执行文件过不了 CEF 的 bundle 布局 CHECK；也不能用 `make dev` 的 swift-build binary——注入 dylib 按 Xcode 编译产物链接，符号对不上会 dlopen 失败。之后改 SwiftUI 视图直接保存，几秒到几十秒完成注入。
+
+注意：新增/删除源文件、改 `Package.swift` 或隔了太久，重跑一次 `make inject` 刷新编译产物与日志；启动期代码（`AppDelegate` 组合根、窗口/热键/`SlidePanel`）改了需重启 app。`make build` / `make run` / `make dev` 不受影响，CI 与发布链路照旧（Inject 静态链入、release 无副作用）。
 
 **环境要求**：macOS 14+ 可运行；真正的 Liquid Glass 需要 Xcode 26 编译，低版本自动降级为 `.ultraThinMaterial`（见下文）。
 
@@ -104,7 +104,7 @@ make clean
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **Peekr** (7670 symbols, 17888 relationships, 282 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **Peekr** (10843 symbols, 25850 relationships, 300 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > Index stale? Run `node .gitnexus/run.cjs analyze` from the project root — it auto-selects an available runner. No `.gitnexus/run.cjs` yet? `npx gitnexus analyze` (npm 11 crash → `npm i -g gitnexus`; #1939).
 
