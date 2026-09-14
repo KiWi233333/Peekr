@@ -81,6 +81,7 @@ struct ImportTabsSheet: View {
                         .keyboardShortcut(.defaultAction)
                         .buttonStyle(.borderedProminent)
                         .tint(.primary)
+                        .foregroundStyle(.background)
                         .disabled(selected.isEmpty)
                 } else if mode == .cookies {
                     Button(loc.importChromeCookies) {
@@ -89,6 +90,7 @@ struct ImportTabsSheet: View {
                     .keyboardShortcut(.defaultAction)
                     .buttonStyle(.borderedProminent)
                     .tint(.primary)
+                    .foregroundStyle(.background)
                     .disabled(
                         cookieImporting
                         || selectedProfile?.cookieDatabaseURL == nil
@@ -116,7 +118,9 @@ struct ImportTabsSheet: View {
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
             Button(loc.importScan) { scan() }
-                .buttonStyle(.borderedProminent).tint(.primary)
+                .buttonStyle(.borderedProminent)
+                .tint(.primary)
+                .foregroundStyle(.background)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }

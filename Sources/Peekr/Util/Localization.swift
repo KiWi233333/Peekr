@@ -135,6 +135,7 @@ struct Localized {
     var edit: String { t("Edit…", "编辑…") }
     var refreshIconAndTitle: String { t("Refresh Icon & Title", "刷新图标和标题") }
     var delete: String { t("Delete", "删除") }
+    var close: String { t("Close", "关闭") }
     var dragHint: String { t("Drag to move • release near an edge or corner to snap", "拖动移动 • 在边缘或角落松开自动吸附") }
     var newTab: String { t("New Tab", "新建标签") }
     var rename: String { t("Rename", "重命名") }
@@ -155,6 +156,8 @@ struct Localized {
     var collapseSidebar: String { t("Collapse Sidebar", "折叠侧栏") }
     var expandSidebar: String { t("Expand Sidebar", "展开侧栏") }
     var newWorkspace: String { t("New Workspace", "新建工作区") }
+    var spaces: String { t("Spaces", "工作区") }
+    var openSpaces: String { t("Open Spaces", "打开工作区") }
     var defaultWorkspace: String { t("Workspace", "工作区") }
     var newAgentWorkspace: String { t("New Agent Space", "新建 Agent 工作区") }
     var defaultAgentWorkspace: String { t("Agent Space", "Agent 工作区") }

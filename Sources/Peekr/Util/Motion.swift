@@ -16,6 +16,7 @@ enum Motion {
         static let dropdownOpen = 0.25
         static let panelLayout = 0.25
         static let panelSnap = 0.30
+        static let spacesMorph = 0.34
     }
 
     private static func standard(_ duration: TimeInterval) -> Animation {
@@ -31,6 +32,11 @@ enum Motion {
     )
 
     static let sidebarCollapse = standard(Duration.sidebarCollapse)
+    static let sidebarResize = Animation.spring(
+        response: 0.26,
+        dampingFraction: 0.94,
+        blendDuration: 0.02
+    )
     static let sidebarDropTarget = Animation.easeOut(duration: Duration.dropTarget)
     static let sidebarStyle = Animation.easeInOut(duration: Duration.sidebarStyle)
     static let controlFeedback = Animation.easeOut(duration: Duration.controlFeedback)
@@ -39,6 +45,7 @@ enum Motion {
     static let dropdownClose = standard(Duration.dropdownClose)
     static let badgePop = Animation.spring(response: 0.42, dampingFraction: 0.62)
     static let tileSelection = Animation.spring(response: 0.28, dampingFraction: 0.72)
+    static let spacesMorph = standard(Duration.spacesMorph)
 
     static var reduceMotion: Bool {
         NSWorkspace.shared.accessibilityDisplayShouldReduceMotion

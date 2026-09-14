@@ -23,6 +23,7 @@ final class PanelController {
 
     private(set) var isVisible = false
     private var autoHideSuspended = false
+    private var tabRailFocused = false
     private var activeScreen: NSScreen?
 
     private var moveMonitorGlobal: Any?
@@ -75,6 +76,7 @@ final class PanelController {
             onMoveChanged: { [weak self] t in self?.moveChanged(t) },
             onMoveEnded: { [weak self] in self?.moveEnded() },
             onModalChange: { [weak self] open in self?.autoHideSuspended = open },
+            onTabFocusChange: { [weak self] focused in self?.tabRailFocused = focused },
             onResizeBegan: { [weak self] in self?.resizeBegan() },
             onResizeChanged: { [weak self] edges in self?.resizeChanged(edges) },
             onResizeEnded: { [weak self] in self?.resizeEnded() }
@@ -107,6 +109,7 @@ final class PanelController {
     func hide() {
         guard isVisible else { return }
         isVisible = false
+        tabRailFocused = false
         onVisibilityChange?(false)
         removeMonitors()
 
@@ -285,6 +288,8 @@ final class PanelController {
                 manager.state.focusOmniboxToken += 1
             }
         case "w":
+            guard tabRailFocused else { hide(); return true }
+            tabRailFocused = false
             guard let id = model.selectedID else { hide(); return true }
             model.removeApp(id)
             if let nextID = model.selectedID {

@@ -306,6 +306,7 @@ private struct BrowserTab: View {
                             format: .number.grouping(.never)
                         )
                         .textFieldStyle(.roundedBorder)
+                        .focusEffectDisabled()
                         .frame(width: 90)
                         .multilineTextAlignment(.trailing)
                     }

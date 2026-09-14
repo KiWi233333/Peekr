@@ -1,4 +1,5 @@
 import Foundation
+import SwiftUI
 import XCTest
 @testable import Peekr
 
@@ -244,6 +245,37 @@ final class TabGroupModelTests: XCTestCase {
         XCTAssertEqual(model.activeWorkspace.sidebarItems.map(\.referenceID), [second.id, first.id])
         XCTAssertEqual(model.group(first.id)?.tabIDs, [tabs[0].id, tabs[1].id])
         XCTAssertEqual(model.group(second.id)?.tabIDs, [tabs[2].id, tabs[3].id])
+    }
+
+    func testShadowTintLiftsGroupColorLightnessInHSL() throws {
+        let group = TabGroup(name: "标签组", color: .blue)
+
+        let base = try hslComponents(group.tint)
+        let shadow = try hslComponents(group.shadowTint)
+
+        XCTAssertEqual(shadow.hue, base.hue, accuracy: 0.02)
+        XCTAssertGreaterThan(shadow.lightness, base.lightness)
+        XCTAssertEqual(shadow.saturation, base.saturation, accuracy: 0.02)
+    }
+
+    private func hslComponents(_ color: Color) throws -> (hue: CGFloat, saturation: CGFloat, lightness: CGFloat) {
+        let rgb = try XCTUnwrap(NSColor(color).usingColorSpace(.sRGB))
+        var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+        rgb.getRed(&r, green: &g, blue: &b, alpha: &a)
+        let maxC = max(r, g, b), minC = min(r, g, b)
+        let lightness = (maxC + minC) / 2
+        let delta = maxC - minC
+        var hue: CGFloat = 0, saturation: CGFloat = 0
+        if delta > 0 {
+            saturation = lightness > 0.5 ? delta / (2 - maxC - minC) : delta / (maxC + minC)
+            switch maxC {
+            case r: hue = (g - b) / delta + (g < b ? 6 : 0)
+            case g: hue = (b - r) / delta + 2
+            default: hue = (r - g) / delta + 4
+            }
+            hue /= 6
+        }
+        return (hue, saturation, lightness)
     }
 
     private func makeModel(

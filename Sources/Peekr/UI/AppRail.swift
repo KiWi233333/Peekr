@@ -9,11 +9,14 @@ struct AppRail: View {
     let settings: Settings
     let icons: IconStore
     let badges: BadgeStore
+    let width: CGFloat
     var onSelect: (UUID) -> Void
     var onNewTab: (TabGroup.ID?) -> Void
     var onEdit: (WebApp) -> Void
     var onWorkspaceSwitched: () -> Void
+    var onOpenSpaces: () -> Void
     var onReopenClosedTab: () -> Void
+    var onTabFocusChange: (Bool) -> Void
     var onCollapse: () -> Void
 
     @State private var dropTarget: String?
@@ -30,22 +33,235 @@ struct AppRail: View {
     @Namespace private var sidebarMotionNamespace
 
     private var loc: Localized { settings.strings }
+    /// Keep the compact presentation stable while the divider is dragged. The
+    /// stage still follows the pointer continuously; only the content layout
+    /// changes once the rail is close enough to the icon-only anchor.
+    private var showsIconOnlyLayout: Bool {
+        width < (SidebarStage.iconOnly.width + SidebarStage.normal.width) / 2
+    }
 
     var body: some View {
-        VStack(spacing: 0) {
-            workspaceHeader
-            Divider().overlay(.primary.opacity(0.14)).padding(.horizontal, 12)
-            tabTree
+        Group {
+            if showsIconOnlyLayout {
+                compactRail
+            } else {
+                expandedRail
+            }
         }
         .padding(.top, 10)
         .padding(.bottom, 9)
-        .frame(width: 360)
+        .frame(width: width)
         .frame(maxHeight: .infinity)
         // Preserve AppKit's adaptive appearance. Liquid Glass can switch from
         // light to dark based on the content underneath it, so forcing a dark
         // scheme or painting a uniform tint here breaks both contrast and depth.
         .foregroundStyle(.primary)
         .enableInjection()
+    }
+
+    private var expandedRail: some View {
+        VStack(spacing: 0) {
+            workspaceHeader
+            Divider().overlay(.primary.opacity(0.14)).padding(.horizontal, 12)
+            tabTree
+        }
+    }
+
+    /// A narrow vertical-tab rail modelled after Chrome's icon-only state. It
+    /// keeps the workspace, group and tab actions available while dropping all
+    /// labels so 64 px remains useful rather than becoming a dead collapse
+    /// target.
+    private var compactRail: some View {
+        VStack(spacing: 0) {
+            compactHeader
+            Divider().overlay(.primary.opacity(0.14)).padding(.horizontal, 12)
+            compactTabTree
+        }
+        .transition(.opacity)
+    }
+
+    private var compactHeader: some View {
+        VStack(spacing: 6) {
+            Button(action: onCollapse) {
+                Image(systemName: settings.anchor.railOnLeft ? "sidebar.left" : "sidebar.right")
+                    .font(.system(size: 15, weight: .semibold))
+                    .frame(width: 32, height: 28)
+            }
+            .buttonStyle(IconButtonStyle())
+            .foregroundStyle(.secondary)
+            .help(loc.collapseSidebar)
+            .accessibilityLabel(loc.collapseSidebar)
+
+            Button(action: onOpenSpaces) {
+                Image(systemName: "square.grid.2x2")
+                    .font(.system(size: 14, weight: .semibold))
+                    .frame(width: 32, height: 28)
+            }
+            .buttonStyle(IconButtonStyle())
+            .foregroundStyle(.secondary)
+            .help(loc.openSpaces)
+            .accessibilityLabel(loc.openSpaces)
+
+            Menu { compactHeaderActions } label: {
+                Image(systemName: "ellipsis")
+                    .font(.system(size: 13, weight: .semibold))
+                    .frame(width: 32, height: 28)
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .help(loc.spaces)
+        }
+        .padding(.horizontal, 16)
+        .padding(.bottom, 10)
+    }
+
+    @ViewBuilder
+    private var compactHeaderActions: some View {
+        Button { model.addGroup(name: loc.tabGroup, color: .blue) } label: {
+            Label(loc.newTabGroup, systemImage: "rectangle.3.group")
+        }
+        Button {
+            model.addWorkspace()
+            onWorkspaceSwitched()
+        } label: {
+            Label(loc.newWorkspace, systemImage: "square.stack.3d.up.badge.a")
+        }
+        Button {
+            model.addAgentWorkspace()
+            onWorkspaceSwitched()
+        } label: {
+            Label(loc.newAgentWorkspace, systemImage: "sparkles")
+        }
+        Divider()
+        Button { beginRenameWorkspace(model.activeWorkspace) } label: {
+            Label(loc.rename, systemImage: "pencil")
+        }
+        if model.workspaces.count > 1 {
+            Button(role: .destructive) {
+                model.removeWorkspace(model.activeWorkspaceID)
+                onWorkspaceSwitched()
+            } label: {
+                Label(loc.delete, systemImage: "trash")
+            }
+        }
+    }
+
+    private var compactTabTree: some View {
+        let snapshot = RailSnapshot(workspace: model.activeWorkspace)
+
+        return ScrollView {
+            LazyVStack(spacing: 6) {
+                ForEach(snapshot.workspace.sidebarItems) { item in
+                    compactSidebarItem(item, snapshot: snapshot)
+                }
+                compactAddTabButton
+                    .padding(.top, 4)
+            }
+            .padding(12)
+            .frame(maxWidth: .infinity, alignment: .top)
+        }
+    }
+
+    @ViewBuilder
+    private func compactSidebarItem(_ item: SidebarItem, snapshot: RailSnapshot) -> some View {
+        switch item.kind {
+        case .tab:
+            if let app = snapshot.tabsByID[item.referenceID] {
+                compactTabRow(app)
+            }
+        case .group:
+            if let group = snapshot.groupsByID[item.referenceID] {
+                compactGroupSection(group, tabsByID: snapshot.tabsByID)
+            }
+        }
+    }
+
+    private func compactGroupSection(_ group: TabGroup, tabsByID: [WebApp.ID: WebApp]) -> some View {
+        VStack(spacing: 4) {
+            Button { toggleGroup(group.id) } label: {
+                Image(systemName: group.isCollapsed ? "chevron.down" : "chevron.up")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(.black.opacity(0.68))
+                    .frame(width: 40, height: 28)
+                    .background(group.tint, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+            }
+            .buttonStyle(.plain)
+            .help(group.name)
+            .accessibilityLabel(group.name)
+            .accessibilityValue(group.isCollapsed ? loc.expandGroup : loc.collapseGroup)
+            .contextMenu { groupActions(group) }
+
+            if !group.isCollapsed {
+                VStack(spacing: 4) {
+                    ForEach(group.tabIDs, id: \.self) { id in
+                        if let app = tabsByID[id] { compactTabRow(app) }
+                    }
+                }
+                .padding(.leading, 1)
+                .transition(reduceMotion ? .identity : .move(edge: .top).combined(with: .opacity))
+            }
+        }
+        .animation(reduceMotion ? nil : Motion.sidebarCollapse, value: group.isCollapsed)
+    }
+
+    private func compactTabRow(_ app: WebApp) -> some View {
+        let selected = app.id == model.selectedID
+        let icon = icons.image(for: app)
+
+        return Button {
+            onTabFocusChange(true)
+            onSelect(app.id)
+        } label: {
+            FaviconView(app: app, icon: icon, size: 27)
+                .overlay(alignment: .topTrailing) {
+                    if let unread = badges.count(for: app.id) {
+                        UnreadBadge(count: unread)
+                            .scaleEffect(0.78)
+                            .offset(x: 5, y: -5)
+                    }
+                }
+                .frame(width: 40, height: 34)
+                .background(
+                    RoundedRectangle(cornerRadius: 9, style: .continuous)
+                        .fill(.primary.opacity(selected ? 0.16 : 0))
+                )
+        }
+        .buttonStyle(.plain)
+        .help(app.displayName)
+        .accessibilityLabel(app.displayName)
+        .accessibilityAddTraits(selected ? .isSelected : [])
+        .contextMenu {
+            Button { onEdit(app) } label: { Label(loc.edit, systemImage: "pencil") }
+            Button { renamingTab = app.id } label: { Label(loc.rename, systemImage: "character.cursor.ibeam") }
+            Button {
+                if let copy = model.duplicateTab(app.id) { onSelect(copy.id) }
+            } label: { Label(loc.duplicateTab, systemImage: "plus.square.on.square") }
+            Divider()
+            Button(role: .destructive) { close(app) } label: {
+                Label(loc.closeTab, systemImage: "xmark")
+            }
+        }
+    }
+
+    private var compactAddTabButton: some View {
+        Button { onNewTab(nil) } label: {
+            Image(systemName: "plus")
+                .font(.system(size: 17, weight: .medium))
+                .foregroundStyle(.primary.opacity(0.82))
+                .frame(width: 40, height: 32)
+                .background(.primary.opacity(0.10), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .help(loc.newTab)
+        .contextMenu {
+            Button { onNewTab(nil) } label: { Label(loc.newTab, systemImage: "plus") }
+            if model.hasRecentlyClosedTabs {
+                Button(action: onReopenClosedTab) {
+                    Label(loc.reopenClosedTab, systemImage: "arrow.uturn.backward")
+                }
+            }
+        }
     }
 
     // MARK: - Spaces
@@ -71,67 +287,20 @@ struct AppRail: View {
                         .textFieldStyle(.plain)
                         .font(.system(size: 13.5, weight: .semibold))
                         .focused($workspaceFieldFocused)
+                        .shadcnFocusRing(workspaceFieldFocused, cornerRadius: 6)
                         .onSubmit(commitRenameWorkspace)
                         .onExitCommand { renamingWorkspace = nil }
-                } else {
-                    Menu {
-                        Picker(
-                            "",
-                            selection: Binding(
-                                get: { model.activeWorkspaceID },
-                                set: { id in
-                                    guard id != model.activeWorkspaceID else { return }
-                                    model.selectWorkspace(id)
-                                    onWorkspaceSwitched()
-                                }
-                            )
-                        ) {
-                        ForEach(model.workspaces) { workspace in
-                            Label(
-                                displayName(workspace),
-                                systemImage: workspace.isAgentOwned ? "sparkles" : workspace.symbol
-                            )
-                            .tag(workspace.id)
-                        }
-                    }
-                    .labelsHidden()
-                    .pickerStyle(.inline)
-                    Divider()
-                    Button {
-                        model.addWorkspace()
-                        onWorkspaceSwitched()
-                    } label: {
-                        Label(loc.newWorkspace, systemImage: "plus")
-                    }
-                    Button {
-                        model.addAgentWorkspace()
-                        onWorkspaceSwitched()
-                    } label: {
-                        Label(loc.newAgentWorkspace, systemImage: "sparkles")
-                    }
-                    } label: {
-                        HStack(spacing: 4) {
-                            Text(displayName(model.activeWorkspace))
-                                .font(.system(size: 13.5, weight: .semibold))
-                                .lineLimit(1)
-                            if model.activeWorkspace.isAgentOwned {
-                                Image(systemName: "sparkles")
-                                    .font(.system(size: 10, weight: .semibold))
-                                    .foregroundStyle(.secondary)
-                                    .help(loc.agentSpaceBadge)
-                            }
-                            Image(systemName: "chevron.down")
-                                .font(.system(size: 8, weight: .bold))
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                    .menuStyle(.borderlessButton)
-                    .menuIndicator(.hidden)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .onTapGesture(count: 2) { beginRenameWorkspace(model.activeWorkspace) }
                 }
-
                 Spacer(minLength: 4)
+                Button(action: onOpenSpaces) {
+                    Image(systemName: "square.grid.2x2")
+                        .font(.system(size: 14, weight: .semibold))
+                        .frame(width: 28, height: 28)
+                }
+                .buttonStyle(IconButtonStyle())
+                .foregroundStyle(.secondary)
+                .help(loc.openSpaces)
+                .accessibilityLabel(loc.openSpaces)
                 Menu {
                     Button {
                         model.addGroup(name: loc.tabGroup, color: .blue)
@@ -170,10 +339,9 @@ struct AppRail: View {
                         }
                     }
                 } label: {
-                    Image(systemName: "square.grid.2x2")
+                    Image(systemName: "ellipsis")
                         .font(.system(size: 13, weight: .semibold))
                         .frame(width: 26, height: 26)
-                        .background(.primary.opacity(0.08), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
                 }
                 .menuStyle(.borderlessButton)
                 .menuIndicator(.hidden)
@@ -184,11 +352,6 @@ struct AppRail: View {
         }
         .padding(.horizontal, 13)
         .padding(.bottom, 14)
-    }
-
-    private func displayName(_ workspace: Workspace) -> String {
-        if !workspace.name.isEmpty { return workspace.name }
-        return workspace.isAgentOwned ? loc.defaultAgentWorkspace : loc.defaultWorkspace
     }
 
     private func beginRenameWorkspace(_ workspace: Workspace) {
@@ -221,8 +384,7 @@ struct AppRail: View {
                 addTabButton
                     .padding(.top, 5)
             }
-            .padding(.horizontal, 11)
-            .padding(.vertical, 13)
+            .padding(12)
             .frame(maxWidth: .infinity, alignment: .top)
             .animation(
                 reduceMotion ? nil : Motion.sidebarReorder,
@@ -279,8 +441,7 @@ struct AppRail: View {
                                         .font(.system(size: 11.5, weight: .medium))
                                         .foregroundStyle(.secondary)
                                         .frame(maxWidth: .infinity, alignment: .leading)
-                                        .padding(.horizontal, 9)
-                                        .padding(.vertical, 7)
+                                        .padding(8)
                                 }
                                 .buttonStyle(.plain)
                             }
@@ -290,8 +451,7 @@ struct AppRail: View {
                             value: group.tabIDs
                         )
                     }
-                    .padding(.leading, 4)
-                    .padding(.top, 4)
+                    .padding(4)
                     .transition(
                         reduceMotion
                             ? .identity
@@ -318,6 +478,7 @@ struct AppRail: View {
                     .font(.system(size: 12.5, weight: .semibold))
                     .foregroundStyle(.black.opacity(0.84))
                     .focused($groupFieldFocused, equals: group.id)
+                    .noFocusRing()
                     .onSubmit { commitRenameGroup(group.id) }
                     .onExitCommand { renamingGroup = nil }
             } else {
@@ -350,8 +511,7 @@ struct AppRail: View {
             .buttonStyle(.plain)
             .help(group.isCollapsed ? loc.expandGroup : loc.collapseGroup)
         }
-        .padding(.leading, 8)
-        .padding(.trailing, 7)
+        .padding(.horizontal, 8)
         .frame(height: 26)
         .background(
             group.tint,
@@ -398,6 +558,7 @@ struct AppRail: View {
                     in: RoundedRectangle(cornerRadius: 10, style: .continuous)
                 )
         }
+        .pointerCursor(.openHand)
         .dropDestination(for: String.self) { items, location in
             guard let drag = items.first.flatMap(RailDrag.init) else { return false }
             withSidebarReorder {
@@ -484,11 +645,13 @@ struct AppRail: View {
             app: app,
             selected: app.id == model.selectedID,
             targeted: dropTarget == RailDrag.tab(app.id).encoded,
+            groupTint: group?.tint,
             icon: icon,
             isRenaming: renamingTab == app.id,
             unread: badges.count(for: app.id),
             closeLabel: loc.closeTab,
             onSelect: { if renamingTab == nil { onSelect(app.id) } },
+            onFocusChange: onTabFocusChange,
             onClose: { close(app) },
             onCommitRename: {
                 model.setAlias(app.id, to: $0.trimmingCharacters(in: .whitespacesAndNewlines))
@@ -509,7 +672,9 @@ struct AppRail: View {
             .padding(.horizontal, 10)
             .padding(.vertical, 7)
             .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+            .shadow(color: group?.shadowTint ?? .clear, radius: 6, y: 2)
         }
+        .pointerCursor(.openHand)
         .dropDestination(for: String.self) { items, location in
             guard let drag = items.first.flatMap(RailDrag.init) else { return false }
             handleDrop(drag, on: app, in: group, at: location)
@@ -758,6 +923,32 @@ extension TabGroupCustomColor {
 
 extension TabGroup {
     var tint: Color { customColor?.tint ?? color.tint }
+
+    /// Lightened HSL variant of the group tint: the elevation shadow cast by a
+    /// dragging tab preview is conducted from the group color.
+    var shadowTint: Color {
+        guard let rgb = NSColor(tint).usingColorSpace(.sRGB) else { return tint.opacity(0.5) }
+        var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+        rgb.getRed(&r, green: &g, blue: &b, alpha: &a)
+        let maxC = max(r, g, b), minC = min(r, g, b)
+        let lightness = (maxC + minC) / 2
+        let delta = maxC - minC
+        var hue: CGFloat = 0, saturation: CGFloat = 0
+        if delta > 0 {
+            saturation = lightness > 0.5 ? delta / (2 - maxC - minC) : delta / (maxC + minC)
+            switch maxC {
+            case r: hue = (g - b) / delta + (g < b ? 6 : 0)
+            case g: hue = (b - r) / delta + 2
+            default: hue = (r - g) / delta + 4
+            }
+            hue /= 6
+        }
+        let lifted = lightness + (1 - lightness) * 0.45
+        // SwiftUI's Color only takes HSB; convert the lifted HSL across.
+        let value = lifted + saturation * min(lifted, 1 - lifted)
+        let valueSaturation = value > 0 ? 2 * (1 - lifted / value) : 0
+        return Color(hue: Double(hue), saturation: Double(valueSaturation), brightness: Double(value)).opacity(0.55)
+    }
 }
 
 /// Browser tab row with favicon, unread state and a close affordance that
@@ -766,11 +957,13 @@ private struct BrowserTabRow: View {
     let app: WebApp
     let selected: Bool
     let targeted: Bool
+    let groupTint: Color?
     let icon: NSImage?
     let isRenaming: Bool
     let unread: Int?
     let closeLabel: String
     var onSelect: () -> Void
+    var onFocusChange: (Bool) -> Void
     var onClose: () -> Void
     var onCommitRename: (String) -> Void
     var onCancelRename: () -> Void
@@ -778,6 +971,7 @@ private struct BrowserTabRow: View {
     @State private var hovering = false
     @State private var draft = ""
     @FocusState private var focused: Bool
+    @FocusState private var rowFocused: Bool
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
@@ -796,6 +990,7 @@ private struct BrowserTabRow: View {
                     .textFieldStyle(.plain)
                     .font(.system(size: 12.5))
                     .focused($focused)
+                    .shadcnFocusRing(focused, cornerRadius: 6)
                     .onSubmit { onCommitRename(draft) }
                     .onExitCommand(perform: onCancelRename)
                     .onAppear { draft = app.displayName; focused = true }
@@ -824,21 +1019,36 @@ private struct BrowserTabRow: View {
                 value: hovering || selected
             )
         }
-        .padding(.horizontal, 9)
+        .padding(6)
         .frame(height: 32)
         .background(
             RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(.primary.opacity(targeted ? 0.18 : (selected ? 0.12 : (hovering ? 0.07 : 0))))
+                .fill(
+                    targeted
+                        ? (groupTint?.opacity(0.18) ?? .primary.opacity(0.18))
+                        : (selected
+                            ? .primary.opacity(0.12)
+                            : (hovering
+                                ? (groupTint?.opacity(0.16) ?? .primary.opacity(0.07))
+                                : .clear))
+                )
         )
         .overlay {
             if targeted {
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .strokeBorder(.primary.opacity(0.58), lineWidth: 1.5)
+                    .strokeBorder(groupTint ?? .primary.opacity(0.58), lineWidth: 1.5 )
             }
         }
         .contentShape(Rectangle())
+        .focusable()
+        .focused($rowFocused)
+        .noFocusRing()
+        .onChange(of: rowFocused) { _, value in onFocusChange(value) }
         .onHover { hovering = $0 }
-        .onTapGesture(perform: onSelect)
+        .onTapGesture {
+            rowFocused = true
+            onSelect()
+        }
     }
 }
 

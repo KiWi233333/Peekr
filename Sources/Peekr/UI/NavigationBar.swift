@@ -87,9 +87,6 @@ struct NavigationBar: View {
 
     private var bar: some View {
         HStack(spacing: 6) {
-            if showsSidebarToggle, sidebarOnLeft {
-                sidebarToggle
-            }
             grip
             navButton("chevron.backward", enabled: state.canGoBack) { manager.goBack() }
             navButton("chevron.forward", enabled: state.canGoForward) { manager.goForward() }
@@ -97,7 +94,7 @@ struct NavigationBar: View {
             omnibox
             navButton("bookmark", enabled: true) { onBookmarks() }
             navButton("safari", enabled: !state.urlString.isEmpty) { openExternally() }
-            if showsSidebarToggle, !sidebarOnLeft {
+            if showsSidebarToggle {
                 sidebarToggle
             }
         }
@@ -140,6 +137,7 @@ struct NavigationBar: View {
                     }
                     .onEnded { _ in isDragging = false; onMoveEnded() }
             )
+            .pointerCursor(isDragging ? .closedHand : .openHand)
             .help(settings.strings.dragHint)
     }
 
@@ -173,7 +171,8 @@ struct NavigationBar: View {
             .padding(.horizontal, 10)
             .frame(height: 26)
             .frame(maxWidth: .infinity)
-            .background(.black.opacity(0.06), in: Capsule())
+            .background(.black.opacity(0.06), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .shadcnFocusRing(focused, cornerRadius: 8)
     }
 
     @ViewBuilder

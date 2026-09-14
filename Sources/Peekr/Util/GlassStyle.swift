@@ -22,8 +22,8 @@ enum Theme {
     static let hairline = Color.primary.opacity(0.12)
 
     static let railWidth: CGFloat = 64
-    /// Left tab sidebar (icon + name list), wider than the old icon-only rail.
-    static let sidebarWidth: CGFloat = 208
+    /// Default left tab sidebar (icon + name list). The icon-only stage is 64 px.
+    static let sidebarWidth: CGFloat = 220
     static let tile: CGFloat = 44
     static let iconCorner: CGFloat = 10
     static let panelCorner: CGFloat = 18

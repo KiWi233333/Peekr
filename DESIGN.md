@@ -152,19 +152,19 @@ Apple Human Interface Guidelines 是平台行为基线；本文件是 Peekr 对�
 - TextField 和快捷键录入保持原生 I-beam、选区、插入和键盘焦点行为。
 - AppKit 原生 context menu 保持系统箭头和菜单反馈，不在菜单容器上叠加自定义手型。
 - 禁用状态由控件自身的 disabled 样式和系统指针表达，不用额外的透明覆盖层吞掉事件。
-- 自定义 focus 使用黑色、2 px、连续圆角描边，关闭系统蓝色矩形 focus effect；输入框、标签行和重命名控件必须保持圆角一致。
+- 窗口内不绘制可见 focus ring，统一关闭系统蓝色矩形 focus effect；只有无背景色的输入框（omnibox、重命名字段）保留 shadcn 式低透明度阴影聚焦边缘。
 
 ## 当前控件审计
 
 | 区域 | 文件 | 结论 |
 | --- | --- | --- |
 | 面板边缘和角落缩放 | `UI/PanelRootView.swift` | 已使用 AppKit 缩放指针；静止时不显示宽条 |
-| 侧栏分隔条 | `UI/PanelRootView.swift` | 已贴着浏览器内容边缘，命中 8 px、布局占位 1 px，静止细线 / 悬停胶囊 |
+| 侧栏分隔条 | `UI/PanelRootView.swift` | 已贴着浏览器内容边缘，命中 8 px、布局不占位，静止细线 / 悬停胶囊 |
 | 面板空白区域移动窗口 | `UI/PanelRootView.swift` | 已补充 `openHand` / `closedHand`；控件自身优先接收点击 |
 | 导航栏移动 grip | `UI/NavigationBar.swift` | 已补充 `openHand` / `closedHand` |
 | 标签页组、标签页拖动 | `UI/AppRail.swift` | 已补充悬停 `openHand`；系统拖放负责按住后的拖动反馈 |
 | 标签栏 spacing / padding | `UI/AppRail.swift` | 外层 12 px、分组 4 px、行内 6–8 px；固定高度控件的轴向 padding 保留明确例外 |
-| 标签行、输入框和候选项 focus | `UI/AppRail.swift`、`UI/NavigationBar.swift`、`UI/TabGroupContextMenu.swift` | 使用黑色连续圆角 focus ring，去除默认蓝色矩形效果 |
+| 标签行、输入框和候选项 focus | `UI/AppRail.swift`、`UI/NavigationBar.swift`、`UI/TabGroupContextMenu.swift` | 不绘制可见 focus ring，去除默认蓝色矩形效果；无背景输入框保留浅色阴影聚焦边缘 |
 | 侧栏折叠、空间、刷新、书签等操作 | `UI/AppRail.swift`、`UI/NavigationBar.swift` | 保留原生箭头，不伪装为链接 |
 | omnibox、重命名、偏好设置和导入表单 | `UI/NavigationBar.swift`、`UI/PreferencesView.swift`、`UI/*Sheet.swift` | 保留原生文本插入符和表单控件行为 |
 | 空间概览、菜单和上下文菜单 | `UI/SpacesOverview.swift`、`UI/AppRail.swift` | 使用原生菜单 / 按钮指针语义 |
@@ -176,6 +176,6 @@ Apple Human Interface Guidelines 是平台行为基线；本文件是 Peekr 对�
 - [ ] 自定义拖动 / 缩放区域拥有窄命中区、可见的悬停反馈、`help` 和无障碍名称。
 - [ ] 光标层不拦截点击、拖放、键盘焦点或 context menu。
 - [ ] 默认 padding 四边一致；任何单轴 padding 都有明确布局原因。
-- [ ] focus ring 使用黑色圆角描边，不出现默认蓝色矩形框或直角边。
+- [ ] 不出现默认蓝色矩形 focus ring；有背景控件无聚焦描边，无背景输入框仅保留浅色阴影聚焦边缘。
 - [ ] 拖动时实时状态不使用会造成滞后的隐式动画；释放后的吸附动画单独验证。
 - [ ] 同时用鼠标、触控板和键盘检查；指针不应成为唯一的操作提示。

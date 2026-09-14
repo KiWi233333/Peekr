@@ -64,6 +64,7 @@ struct EditAppSheet: View {
                     .keyboardShortcut(.defaultAction)
                     .buttonStyle(.borderedProminent)
                     .tint(.primary)
+                    .foregroundStyle(.background)
                     .disabled(urlString.trimmingCharacters(in: .whitespaces).isEmpty)
             }
         }
@@ -104,6 +105,7 @@ struct EditAppSheet: View {
                 .font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
             TextField(loc.iconLibraryHint, text: $librarySlug)
                 .textFieldStyle(.roundedBorder)
+                .focusEffectDisabled()
                 .onSubmit(fetchLibraryIcon)
             Button(action: fetchLibraryIcon) {
                 if libraryLoading {

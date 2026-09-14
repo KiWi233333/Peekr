@@ -16,6 +16,7 @@ struct PanelRootView: View {
     var onMoveChanged: (CGSize) -> Void
     var onMoveEnded: () -> Void
     var onModalChange: (Bool) -> Void
+    var onTabFocusChange: (Bool) -> Void
     var onResizeBegan: () -> Void
     var onResizeChanged: ([PanelResizeEdge]) -> Void
     var onResizeEnded: () -> Void
@@ -23,6 +24,19 @@ struct PanelRootView: View {
     @State private var editTarget: EditTarget?
     @State private var bookmarksOpen = false
     @State private var isRailCollapsed = false
+    @State private var sidebarStage: SidebarStage = .normal
+    @State private var sidebarDragStart: CGFloat?
+    @State private var liveSidebarWidth: CGFloat?
+    @State private var spacesOpen = false
+    @State private var workspacePreviewService = WorkspacePreviewService()
+    @State private var spacesPhase: SpacesPhase = .closed
+    @State private var morphImage: NSImage?
+    @State private var morphProgress: Double = 0
+    @State private var morphFrom: CGRect = .zero
+    @State private var morphTo: CGRect = .zero
+    @State private var morphTargetID: UUID?
+    @State private var webCardFrame: CGRect = .zero
+    @State private var cardFrames: [UUID: CGRect] = [:]
     @State private var moving = false
     @ObserveInjection private var inject
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -31,13 +45,20 @@ struct PanelRootView: View {
     static func placeholder(model: AppModel, settings: Settings, manager: WebViewManager, icons: IconStore, badges: BadgeStore, bookmarks: BookmarksModel) -> PanelRootView {
         PanelRootView(
             model: model, settings: settings, manager: manager, icons: icons, badges: badges, bookmarks: bookmarks,
-            onMoveBegan: {}, onMoveChanged: { _ in }, onMoveEnded: {}, onModalChange: { _ in },
+            onMoveBegan: {}, onMoveChanged: { _ in }, onMoveEnded: {}, onModalChange: { _ in }, onTabFocusChange: { _ in },
             onResizeBegan: {}, onResizeChanged: { _ in }, onResizeEnded: {}
         )
     }
 
     private var isModalOpen: Bool { editTarget != nil || bookmarksOpen }
     private var anchor: PanelAnchor { settings.anchor }
+
+    /// Shared-element transition stages between the browser layer and the
+    /// Spaces overview (Astro view-transition style: snapshot flies web card ↔
+    /// Space card while the two layers crossfade underneath).
+    private enum SpacesPhase {
+        case closed, morphIn, open, morphOut
+    }
 
     private var moveGesture: some Gesture {
         DragGesture(minimumDistance: 4)
@@ -51,11 +72,12 @@ struct PanelRootView: View {
     var body: some View {
         ZStack {
             PanelBackground()
-            // The whole frosted background is a drag handle. Dragging just moves
-            // the window freely (no edge detection); snapping happens on release.
+            // Keep the browser layer mounted while the Spaces layer enters above
+            // it, just like Astro's old-document/new-document view transition.
             Color.clear
                 .contentShape(Rectangle())
                 .gesture(moveGesture)
+                .pointerCursor(moving ? .closedHand : .openHand)
             HStack(spacing: 0) {
                 if anchor.railOnLeft {
                     if !isRailCollapsed {
@@ -69,7 +91,67 @@ struct PanelRootView: View {
                     }
                 }
             }
+            // Hidden while the morph layer carries the browser's snapshot into
+            // the overview; it fades back in as the snapshot flies home so the
+            // landing crossfades into the live page.
+            .opacity(spacesPhase == .closed || spacesPhase == .morphOut ? 1 : 0)
+            .allowsHitTesting(spacesPhase == .closed)
+            .animation(reduceMotion ? nil : Motion.sidebarCollapse, value: spacesPhase == .closed || spacesPhase == .morphOut)
+            if spacesOpen {
+                SpacesOverview(
+                    model: model,
+                    settings: settings,
+                    icons: icons,
+                    previews: workspacePreviewService.previews,
+                    hiddenPreviewID: spacesPhase == .morphIn || spacesPhase == .morphOut ? morphTargetID : nil,
+                    onSelect: { id in
+                        model.selectWorkspace(id)
+                        if let selectedID = model.selectedID {
+                            manager.activate(selectedID)
+                            model.select(selectedID)
+                        }
+                        closeSpaces(to: id)
+                    },
+                    onNewWorkspace: {
+                        model.addWorkspace()
+                        if let selectedID = model.selectedID {
+                            manager.activate(selectedID)
+                            model.select(selectedID)
+                        }
+                        closeSpaces(to: nil)
+                    },
+                    onNewAgentWorkspace: {
+                        model.addAgentWorkspace()
+                        if let selectedID = model.selectedID {
+                            manager.activate(selectedID)
+                            model.select(selectedID)
+                        }
+                        closeSpaces(to: nil)
+                    },
+                    onClose: { closeSpaces(to: model.activeWorkspaceID) },
+                    onCardFrameChange: handleCardFrameChange
+                )
+                .opacity(spacesPhase == .morphOut ? 0 : 1)
+                .animation(reduceMotion ? nil : Motion.sidebarCollapse, value: spacesPhase)
+                .zIndex(2)
+            }
+            if (spacesPhase == .morphIn || spacesPhase == .morphOut),
+               morphTo.width > 1,
+               morphTo.height > 1,
+               let morphImage {
+                Image(nsImage: morphImage)
+                    .resizable()
+                    .modifier(SpacesMorphModifier(
+                        progress: morphProgress, from: morphFrom, to: morphTo,
+                        fromCorner: spacesPhase == .morphIn ? Theme.webCardCorner : SpacesMorph.cardPreviewCorner,
+                        toCorner: spacesPhase == .morphIn ? SpacesMorph.cardPreviewCorner : Theme.webCardCorner,
+                        fromOpacity: spacesPhase == .morphIn ? 1 : 0.9,
+                        toOpacity: spacesPhase == .morphIn ? 0.9 : 1
+                    ))
+                    .zIndex(3)
+            }
         }
+        .coordinateSpace(name: "panel")
         .clipShape(RoundedRectangle(cornerRadius: Theme.panelCorner, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: Theme.panelCorner, style: .continuous)
@@ -81,6 +163,7 @@ struct PanelRootView: View {
                          onBegan: onResizeBegan, onChanged: onResizeChanged, onEnded: onResizeEnded)
         }
         .ignoresSafeArea()
+        .animation(reduceMotion ? nil : Motion.sidebarCollapse, value: spacesOpen)
         .sheet(item: $editTarget) { target in
             EditAppSheet(target: target, model: model, settings: settings, icons: icons) { editTarget = nil }
         }
@@ -102,7 +185,7 @@ struct PanelRootView: View {
 
     private var rail: some View {
         AppRail(
-            model: model, settings: settings, icons: icons, badges: badges,
+            model: model, settings: settings, icons: icons, badges: badges, width: sidebarWidth,
             onSelect: { id in model.select(id); manager.activate(id) },
             onNewTab: { groupID in
                 let app = model.addBlankTab(toGroup: groupID)
@@ -119,22 +202,137 @@ struct PanelRootView: View {
                     manager.state.currentID = nil
                 }
             },
+            onOpenSpaces: openSpaces,
             onReopenClosedTab: {
                 if let app = model.reopenLastClosedTab() { manager.activate(app.id) }
             },
+            onTabFocusChange: onTabFocusChange,
             onCollapse: { isRailCollapsed = true }
         )
+    }
+
+    private var sidebarWidth: CGFloat {
+        liveSidebarWidth ?? sidebarStage.width
+    }
+
+    private func openSpaces() {
+        guard !spacesOpen else { return }
+        cardFrames.removeAll(keepingCapacity: true)
+        workspacePreviewService.start(model: model, manager: manager)
+        guard !reduceMotion,
+              let image = workspacePreviewService.previews[model.activeWorkspaceID],
+              webCardFrame.width > 1 else {
+            morphImage = nil
+            morphTargetID = nil
+            spacesPhase = .open
+            spacesOpen = true
+            return
+        }
+        morphImage = image
+        morphTargetID = model.activeWorkspaceID
+        morphFrom = webCardFrame
+        // Wait for the destination card's measured frame before rendering the
+        // flight. Starting from the browser frame would briefly paint a large
+        // page snapshot over the grid and cause the overflow seen on open.
+        morphTo = .zero
+        morphProgress = 0
+        spacesPhase = .morphIn
+        spacesOpen = true
+        // The flight starts once the grid reports the target card's frame. If
+        // that never arrives, drop the morph layer instead of covering the UI.
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(0.5))
+            guard spacesPhase == .morphIn, morphProgress == 0 else { return }
+            morphImage = nil
+            morphTargetID = nil
+            spacesPhase = .open
+        }
+    }
+
+    private func closeSpaces(to workspaceID: UUID?) {
+        workspacePreviewService.stop()
+        guard !reduceMotion,
+              let id = workspaceID,
+              let frame = cardFrames[id],
+              let image = workspacePreviewService.previews[id],
+              webCardFrame.width > 1 else {
+            morphImage = nil
+            morphTargetID = nil
+            spacesPhase = .closed
+            spacesOpen = false
+            return
+        }
+        morphImage = image
+        morphTargetID = id
+        morphFrom = frame
+        morphTo = webCardFrame
+        morphProgress = 0
+        spacesPhase = .morphOut
+        withAnimation(Motion.spacesMorph) {
+            morphProgress = 1
+        } completion: {
+            guard spacesPhase == .morphOut else { return }
+            spacesPhase = .closed
+            spacesOpen = false
+            morphProgress = 0
+            morphImage = nil
+            morphTargetID = nil
+        }
+    }
+
+    private func handleCardFrameChange(_ id: UUID, _ frame: CGRect) {
+        cardFrames[id] = frame
+        guard spacesPhase == .morphIn, id == morphTargetID, morphProgress == 0 else { return }
+        morphTo = frame
+        withAnimation(Motion.spacesMorph) {
+            morphProgress = 1
+        } completion: {
+            if spacesPhase == .morphIn {
+                spacesPhase = .open
+            }
+        }
+    }
+
+    private var sidebarResizeHandle: some View {
+        SidebarResizeHandle(
+            onBegan: {
+                sidebarDragStart = sidebarWidth
+            },
+            onChanged: { translation in
+                guard let start = sidebarDragStart else { return }
+                let direction: CGFloat = anchor.railOnLeft ? 1 : -1
+                liveSidebarWidth = SidebarStage.elasticWidth(start + translation * direction)
+            },
+            onEnded: {
+                guard let width = liveSidebarWidth else {
+                    sidebarDragStart = nil
+                    return
+                }
+                let next = SidebarStage.nearest(to: width)
+                withAnimation(reduceMotion ? nil : Motion.sidebarResize) {
+                    sidebarStage = next
+                    liveSidebarWidth = nil
+                }
+                sidebarDragStart = nil
+            }
+        )
+        .transition(.opacity)
     }
 
     private var webArea: some View {
         ZStack(alignment: .top) {
             WebContainer(manager: manager, currentID: manager.state.currentID)
+                .onGeometryChange(for: CGRect.self) { proxy in
+                    proxy.frame(in: .named("panel"))
+                } action: { frame in
+                    webCardFrame = frame
+                }
                 .clipShape(RoundedRectangle(cornerRadius: Theme.webCardCorner, style: .continuous))
                 .overlay {
                     RoundedRectangle(cornerRadius: Theme.webCardCorner, style: .continuous)
                         .stroke(Theme.hairline, lineWidth: 1)
                 }
-                .shadow(color: .black.opacity(0.16), radius: 10, y: 4)
+                .shadow(color: .black.opacity(0.045), radius: 10, y: 4)
                 // Top inset clears the floating omnibox and leaves a small gap
                 // between it and the web card.
                 .padding(.top, 54)
@@ -151,6 +349,12 @@ struct PanelRootView: View {
             )
             .padding(.horizontal, 12)
             .padding(.top, 8)
+        }
+        .overlay(alignment: anchor.railOnLeft ? .leading : .trailing) {
+            if !isRailCollapsed {
+                sidebarResizeHandle
+                    .offset(x: anchor.railOnLeft ? -4 : 4)
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
@@ -170,7 +374,7 @@ struct PanelBackground: View {
         } else {
             LinearGradient(
                 colors: [
-                    .primary.opacity(contrast == .increased ? 0.08 : 0.045),
+                    .primary.opacity(contrast == .increased ? 0.08 : 0.16),
                     .clear
                 ],
                 startPoint: .top,
@@ -303,6 +507,104 @@ private struct ResizeHandleView: NSViewRepresentable {
         view.onBegan = onBegan
         view.onChanged = onChanged
         view.onEnded = onEnded
+    }
+}
+
+/// Divider between the rail and page. The hit zone stays narrow and reserves
+/// almost no layout width; a quiet hairline marks the edge at rest and a short
+/// capsule appears on hover. AppKit owns the drag loop so width changes follow
+/// the pointer directly, then SwiftUI springs to the nearest stage on release.
+private struct SidebarResizeHandle: View {
+    var onBegan: () -> Void
+    var onChanged: (CGFloat) -> Void
+    var onEnded: () -> Void
+    @State private var hovering = false
+
+    private static let hitWidth: CGFloat = 8
+    var body: some View {
+        SidebarResizeNSView(onBegan: onBegan, onChanged: onChanged, onEnded: onEnded)
+            .frame(width: Self.hitWidth)
+            .overlay {
+                ZStack {
+                    Rectangle()
+                        .fill(.primary.opacity(hovering ? 0.28 : 0.12))
+                        .frame(width: 1, height: 56)
+                    Capsule(style: .continuous)
+                        .fill(.primary.opacity(0.60))
+                        .frame(width: 3, height: 44)
+                        .opacity(hovering ? 1 : 0)
+                }
+                    .allowsHitTesting(false)
+            }
+            .onHover { hovering = $0 }
+            .animation(.easeOut(duration: 0.12), value: hovering)
+            .help("Resize sidebar")
+    }
+}
+
+/// AppKit-backed divider drag. SwiftUI's DragGesture batches updates behind
+/// layout work; the event-tracking loop receives every mouse move and reports
+/// the screen-space delta without adding an animation to the live width.
+private struct SidebarResizeNSView: NSViewRepresentable {
+    var onBegan: () -> Void
+    var onChanged: (CGFloat) -> Void
+    var onEnded: () -> Void
+
+    func makeNSView(context: Context) -> SidebarResizeNSViewImpl {
+        SidebarResizeNSViewImpl()
+    }
+
+    func updateNSView(_ view: SidebarResizeNSViewImpl, context: Context) {
+        view.onBegan = onBegan
+        view.onChanged = onChanged
+        view.onEnded = onEnded
+    }
+}
+
+private final class SidebarResizeNSViewImpl: NSView {
+    var onBegan: () -> Void = {}
+    var onChanged: (CGFloat) -> Void = { _ in }
+    var onEnded: () -> Void = {}
+
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        trackingAreas.forEach(removeTrackingArea)
+        addTrackingArea(NSTrackingArea(
+            rect: bounds,
+            options: [.activeInActiveApp, .inVisibleRect, .cursorUpdate],
+            owner: self
+        ))
+    }
+
+    override func cursorUpdate(with event: NSEvent) {
+        NSCursor.resizeLeftRight.set()
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        let startX = screenX(for: event)
+        onBegan()
+        onChanged(0)
+
+        while let next = NSApp.nextEvent(
+            matching: [.leftMouseDragged, .leftMouseUp],
+            until: .distantFuture,
+            inMode: .eventTracking,
+            dequeue: true
+        ) {
+            if next.type == .leftMouseUp {
+                onChanged(screenX(for: next) - startX)
+                break
+            }
+            onChanged(screenX(for: next) - startX)
+        }
+        onEnded()
+    }
+
+    private func screenX(for event: NSEvent) -> CGFloat {
+        guard let window else { return NSEvent.mouseLocation.x }
+        return window.convertPoint(toScreen: event.locationInWindow).x
     }
 }
 

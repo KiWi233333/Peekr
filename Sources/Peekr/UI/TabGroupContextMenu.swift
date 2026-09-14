@@ -160,6 +160,7 @@ private struct TabGroupMenuEditor: View {
             TextField(strings.tabGroup, text: $name)
                 .textFieldStyle(.roundedBorder)
                 .focused($nameFocused)
+                .noFocusRing()
                 .onSubmit { onRename(name) }
                 .onChange(of: name) { _, newValue in onRename(newValue) }
 
