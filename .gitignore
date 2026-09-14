@@ -13,3 +13,6 @@ DerivedData/
 .claude/skills/
 node_modules/
 cli/dist/
+
+# Local ego lite reverse-engineering reference (binary, Skill, and pinned source)
+.reference/ego-lite/
