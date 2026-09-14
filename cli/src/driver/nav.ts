@@ -2,11 +2,37 @@
 // socket lifecycle, and URL loading. Mirrors ego-browser's nav.ts surface.
 
 import { BrowserSocket, listTargetsHttp, TargetSocket, type CdpTarget } from "../cdp.js";
-import { loadDiscovery } from "../discovery.js";
+import { discoveryFileURL, loadDiscovery } from "../discovery.js";
 import { ErrorCodes, PeekrError } from "../errors.js";
+import { PageLedgerStore, pageLedgerFileURL } from "../page-ledger.js";
 import { state } from "../state.js";
 
 const INTERNAL_URL_PREFIXES = ["devtools://", "chrome://", "wss://"];
+
+let ledger: PageLedgerStore | undefined;
+let ledgerSpaceId: string | undefined;
+
+function currentLedger(): PageLedgerStore | undefined {
+  const spaceId = state.space?.id;
+  if (!spaceId) {
+    ledger = undefined;
+    ledgerSpaceId = undefined;
+    return undefined;
+  }
+  if (!ledger || ledgerSpaceId !== spaceId) {
+    ledger = new PageLedgerStore(pageLedgerFileURL(discoveryFileURL()));
+    ledgerSpaceId = spaceId;
+  }
+  return ledger;
+}
+
+function nextPageLabel(store: PageLedgerStore): string {
+  const used = new Set(store.list(state.space?.id).map((entry) => entry.label));
+  for (let index = 1; ; index += 1) {
+    const label = `p${index}`;
+    if (!used.has(label)) return label;
+  }
+}
 
 function isPageTarget(target: CdpTarget): boolean {
   return target.type === "page" && !INTERNAL_URL_PREFIXES.some((prefix) => target.url.startsWith(prefix));
@@ -83,16 +109,21 @@ export interface TabInfo {
   title: string;
   url: string;
   active: boolean;
+  /** Stable Page label when the selected TaskSpace owns this target. */
+  label?: string;
 }
 
 export async function listTabs(): Promise<TabInfo[]> {
   const discovery = loadDiscovery();
   const targets = (await listTargetsHttp(discovery.port)).filter(isPageTarget);
+  const store = currentLedger();
+  const labels = new Map(store?.list(state.space?.id).map((entry) => [entry.targetId, entry.label]));
   return targets.map((target) => ({
     targetId: target.targetId,
     title: target.title,
     url: target.url,
     active: target.targetId === (state.preferredTargetId ?? targets[0]?.targetId),
+    ...(labels.get(target.targetId) ? { label: labels.get(target.targetId) } : {}),
   }));
 }
 
@@ -110,6 +141,7 @@ export async function switchTab(targetId: string): Promise<void> {
 export interface OpenOptions {
   wait?: boolean;
   timeout?: number;
+  label?: string;
 }
 
 /** Reuse the first tab whose URL starts with `url`; otherwise open a new one. */
@@ -118,6 +150,11 @@ export async function openOrReuseTab(url: string, options: OpenOptions = {}): Pr
   const existing = (await listTabs()).find((tab) => tab.url.startsWith(wanted));
   if (existing) {
     await switchTab(existing.targetId);
+    const store = currentLedger();
+    if (store && state.space && options.label && !store.resolve(state.space.id, options.label)) {
+      store.bind(state.space.id, options.label, existing.targetId, { url: existing.url, title: existing.title });
+      existing.label = options.label;
+    }
     return existing;
   }
   const browser = await ensureBrowserSocket();
@@ -126,10 +163,18 @@ export async function openOrReuseTab(url: string, options: OpenOptions = {}): Pr
   state.targetId = created.targetId;
   if (options.wait !== false) await waitForLoad({ timeout: options.timeout });
   const tabs = await listTabs();
-  return (
+  const result =
     tabs.find((tab) => tab.targetId === created.targetId)
-    ?? { targetId: created.targetId, title: "", url: wanted, active: true }
-  );
+    ?? { targetId: created.targetId, title: "", url: wanted, active: true };
+  const store = currentLedger();
+  if (store && state.space) {
+    const label = options.label ?? nextPageLabel(store);
+    if (!store.resolve(state.space.id, label)) {
+      store.bind(state.space.id, label, result.targetId, { url: result.url, title: result.title });
+      result.label = label;
+    }
+  }
+  return result;
 }
 
 export async function closeTab(targetId?: string): Promise<void> {
@@ -139,6 +184,11 @@ export async function closeTab(targetId?: string): Promise<void> {
   await browser.try("Target.closeTarget", { targetId: id });
   state.sockets.get(id)?.close();
   state.sockets.delete(id);
+  const store = currentLedger();
+  if (store && state.space) {
+    const entry = store.list(state.space.id).find((candidate) => candidate.targetId === id);
+    if (entry) store.unbind(state.space.id, entry.label);
+  }
   if (id === state.targetId) {
     state.targetId = null;
   }

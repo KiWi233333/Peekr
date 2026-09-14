@@ -38,7 +38,7 @@ export const helpers = {
 
   // Navigation / tabs
   listTabs: () => guarded(listTabs),
-  openOrReuseTab: (url: string, options?: { wait?: boolean; timeout?: number }) =>
+  openOrReuseTab: (url: string, options?: { wait?: boolean; timeout?: number; label?: string }) =>
     guarded(() => openOrReuseTab(url, options)),
   switchTab: (targetId: string) => guarded(() => switchTab(targetId)),
   closeTab: (targetId?: string) => guarded(() => closeTab(targetId)),
@@ -99,6 +99,7 @@ export const helpers = {
 
 // ego-trained agents get the familiar task-space names for free.
 const aliases: Record<string, unknown> = {
+  taskSpace: helpers.useOrCreateSpace,
   useOrCreateTaskSpace: helpers.useOrCreateSpace,
   listTaskSpaces: helpers.listSpaces,
   claimTaskSpace: helpers.claimSpace,

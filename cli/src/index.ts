@@ -15,7 +15,10 @@ import { helperNames, helpers, PeekrError, ErrorCodes } from "./driver/helpers.j
 import { discoveryFileURL, loadDiscovery } from "./discovery.js";
 import { listTargetsHttp } from "./cdp.js";
 import { listSpaces } from "./driver/spaces.js";
+import { runInstall } from "./install.js";
+import { skillFiles } from "./skill-assets.js";
 import { state } from "./state.js";
+import { PublicApiValidationError, renderApiHelp, withApiValidation } from "./public-api-schema.js";
 
 const USAGE = `peekr — drive Peekr's browser from any AI agent
 
@@ -27,7 +30,9 @@ Usage:
   EOF
 
   peekr doctor      check agent.json, CDP endpoint and control API
-  peekr help        this message
+  peekr install     register peekr on PATH and install the skill for agent CLIs
+                    [--target claude|codex|all] [--scope user|project] [--no-path]
+  peekr help [topic] show this message or an API topic
 
 Helpers (available as bare identifiers inside the heredoc):
   spaces    useOrCreateSpace listSpaces claimSpace handOffSpace
@@ -58,31 +63,76 @@ async function readStdin(): Promise<string> {
 
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
 
-async function runNodejs(): Promise<number> {
-  const source = await readStdin();
+const peekr = withApiValidation({ ...helpers } as Record<string, unknown>);
+const ego = Object.freeze({ helpers: peekr });
+
+async function runNodejs(sourceOverride?: string, jsonOutput = false): Promise<number> {
+  const source = sourceOverride ?? await readStdin();
   if (!source.trim()) {
-    process.stderr.write(USAGE);
+    process.stderr.write(`${USAGE}\n`);
+    return 2;
+  }
+  const output: string[] = [];
+  const roundHelpers = {
+    ...helpers,
+    cliLog: (value: unknown): void => {
+      output.push(`${typeof value === "string" ? value : JSON.stringify(value, null, 2)}\n`);
+    },
+  };
+  const validatedHelpers = withApiValidation(roundHelpers as Record<string, unknown>);
+  const roundPeekr = validatedHelpers;
+  const roundEgo = Object.freeze({ helpers: roundPeekr });
+  const roundConsole = {
+    log: (...values: unknown[]) => output.push(`${values.map((value) => typeof value === "string" ? value : JSON.stringify(value, null, 2)).join(" ")}\n`),
+    error: (...values: unknown[]) => process.stderr.write(`${values.join(" ")}\n`),
+    warn: (...values: unknown[]) => process.stderr.write(`${values.join(" ")}\n`),
+  };
+  let interrupted = false;
+  const onInterrupt = () => { interrupted = true; };
+  process.once("SIGINT", onInterrupt);
+  const names = [...helperNames(), "peekr", "ego", "console"];
+  const values = [
+    ...names.slice(0, -3).map((name) => validatedHelpers[name]),
+    roundPeekr,
+    roundEgo,
+    roundConsole,
+  ];
+  let run: (...args: unknown[]) => Promise<unknown>;
+  try {
+    run = new AsyncFunction(...names, source) as (...args: unknown[]) => Promise<unknown>;
+  } catch (err) {
+    process.removeListener("SIGINT", onInterrupt);
+    process.stderr.write(`${JSON.stringify({
+      ok: false,
+      code: "PEEKR_SCRIPT_SYNTAX_ERROR",
+      message: err instanceof Error ? err.message : String(err),
+      hard_stop: false,
+    }, null, 2)}\n`);
     return 1;
   }
-  const names = helperNames();
-  const values = names.map((name) => (helpers as Record<string, unknown>)[name]);
-  const run = new AsyncFunction(...names, source);
   try {
     await run(...values);
+    if (interrupted) {
+      process.stderr.write(JSON.stringify({ ok: false, code: "PEEKR_INTERRUPTED", message: "Script interrupted.", hard_stop: false }) + "\n");
+      return 130;
+    }
+    if (jsonOutput) process.stdout.write(JSON.stringify({ ok: true, output: output.join("") }) + "\n");
+    else process.stdout.write(output.join(""));
     return 0;
   } catch (err) {
     if (err instanceof PeekrError) {
-      console.log(JSON.stringify(err.toJSON(), null, 2));
+      process.stderr.write(`${JSON.stringify(err.toJSON(), null, 2)}\n`);
     } else {
-      console.log(JSON.stringify({
+      process.stderr.write(`${JSON.stringify({
         ok: false,
-        code: "PEEKR_ACTION_FAILED",
+        code: err instanceof PublicApiValidationError ? err.code : "PEEKR_ACTION_FAILED",
         message: err instanceof Error ? err.message : String(err),
         hard_stop: false,
-      }, null, 2));
+      }, null, 2)}\n`);
     }
     return 1;
   } finally {
+    process.removeListener("SIGINT", onInterrupt);
     for (const socket of state.sockets.values()) socket.close();
     state.browser?.close();
   }
@@ -115,18 +165,95 @@ async function runDoctor(): Promise<number> {
   return report.ok ? 0 : 1;
 }
 
-async function main(): Promise<number> {
-  const command = process.argv[2] ?? "help";
+function runOnboarding(): number {
+  process.stdout.write([
+    "Peekr Agent Access onboarding",
+    "1. Open Peekr → Preferences → Browser → Agent Access.",
+    "2. Enable Agent Access and relaunch Peekr.",
+    "3. Run `peekr doctor`, then pipe a script to `peekr`.",
+    "",
+  ].join("\n"));
+  return 0;
+}
+
+function runImport(args: string[]): number {
+  if (args[0] === "list") {
+    process.stdout.write(JSON.stringify({ ok: true, browsers: ["chrome"] }, null, 2) + "\n");
+    return 0;
+  }
+  const browserIndex = args.indexOf("--browser");
+  const browser = browserIndex >= 0 ? args[browserIndex + 1] : undefined;
+  if (!browser) {
+    process.stderr.write("Usage: peekr import list | peekr import --browser <browser> [--profile <name>]\n");
+    return 2;
+  }
+  if (browser !== "chrome") {
+    process.stderr.write(`Unsupported browser: ${browser}\n`);
+    return 2;
+  }
+  process.stdout.write(JSON.stringify({
+    ok: false,
+    code: "PEEKR_IMPORT_REQUIRES_DESKTOP",
+    message: "Chrome import is initiated from Peekr's desktop UI.",
+  }, null, 2) + "\n");
+  return 1;
+}
+
+function runUpgrade(): number {
+  process.stdout.write(JSON.stringify({
+    ok: false,
+    code: "PEEKR_UPGRADE_NOT_CONFIGURED",
+    message: "This checkout has no remote self-updater; install a newer Peekr bundle to upgrade.",
+  }, null, 2) + "\n");
+  return 1;
+}
+
+function parseNodejsSource(args: string[]): { source?: string; jsonOutput?: boolean; error?: string } {
+  const jsonOutput = args.includes("--json");
+  const normalized = args.filter((arg) => arg !== "--json");
+  if (normalized.length === 0) return { jsonOutput };
+  if (normalized[0] !== "-e" && normalized[0] !== "--eval") {
+    return { error: "Usage: peekr nodejs [-e <script>]" };
+  }
+  if (!normalized[1]) return { error: "Missing script after -e" };
+  if (normalized.length > 2) return { error: "Unexpected arguments after -e script" };
+  return { source: normalized[1], jsonOutput };
+}
+
+export async function main(argv: string[] = process.argv.slice(2)): Promise<number> {
+  if (argv[0] === "--json") return main(["nodejs", "--json", ...argv.slice(1)]);
+  const command = argv[0];
+  if (!command) {
+    return process.stdin.isTTY ? 0 : runNodejs();
+  }
   switch (command) {
-    case "nodejs":
-      return runNodejs();
+    case "nodejs": {
+      const parsed = parseNodejsSource(argv.slice(1));
+      if (parsed.error) {
+        process.stderr.write(`${parsed.error}\n`);
+        return 2;
+      }
+      return runNodejs(parsed.source, parsed.jsonOutput);
+    }
     case "doctor":
       return runDoctor();
+    case "install":
+      return runInstall(argv.slice(1));
     case "-v":
     case "--version":
       console.log(JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")).version);
       return 0;
-    case "help":
+    case "onboarding":
+      return runOnboarding();
+    case "import":
+      return runImport(argv.slice(1));
+    case "upgrade":
+      return runUpgrade();
+    case "help": {
+      const topic = argv[1];
+      process.stdout.write(topic ? renderApiHelp(topic) : USAGE);
+      return 0;
+    }
     case "--help":
     case "-h":
       process.stdout.write(USAGE);
@@ -138,10 +265,13 @@ async function main(): Promise<number> {
 }
 
 // Importable for tests; side effects (CLI run) only when executed directly.
-export { helperNames, helpers, PeekrError, ErrorCodes, discoveryFileURL, loadDiscovery, state };
+export { helperNames, helpers, peekr, ego, PeekrError, ErrorCodes, discoveryFileURL, loadDiscovery, state };
 export { buildLocator, SnapshotRenderer } from "./driver/observe.js";
 export { resetRefs } from "./state.js";
 export { resolveRef } from "./ref-map.js";
+export { skillFiles } from "./skill-assets.js";
+export { PUBLIC_API_SCHEMA, renderApiHelp, validateApiCall } from "./public-api-schema.js";
+export { PageLedgerStore, pageLedgerFileURL } from "./page-ledger.js";
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   process.exitCode = await main();
