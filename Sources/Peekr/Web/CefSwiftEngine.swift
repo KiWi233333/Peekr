@@ -8,6 +8,18 @@ import CefKit
 final class CefSwiftBrowserHostView: NSView {
     weak var engine: CefSwiftEngine?
 
+    // Windowed CEF's native child view does not expose AppKit's standard
+    // editing responder actions. Keep them on the parent host so the Edit
+    // menu can walk the responder chain just like a normal Chrome window.
+    @objc func copy(_ sender: Any?) { engine?.copySelection() }
+    @objc func cut(_ sender: Any?) { engine?.cutSelection() }
+    @objc func paste(_ sender: Any?) { engine?.paste() }
+    @objc func pasteAsPlainText(_ sender: Any?) { engine?.pasteAsPlainText() }
+    @objc func delete(_ sender: Any?) { engine?.deleteSelection() }
+    @objc override func selectAll(_ sender: Any?) { engine?.selectAll() }
+    @objc func undo(_ sender: Any?) { engine?.undo() }
+    @objc func redo(_ sender: Any?) { engine?.redo() }
+
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         if window != nil {
@@ -75,6 +87,17 @@ final class CefSwiftEngine: WebEngine {
     }
 
     func iconLinkURLs() async -> [URL] { faviconURLs }
+
+    // MARK: Editing responder actions
+
+    func copySelection() { browser?.copySelection() }
+    func cutSelection() { browser?.cutSelection() }
+    func paste() { browser?.paste() }
+    func pasteAsPlainText() { browser?.pasteAndMatchStyle() }
+    func deleteSelection() { browser?.deleteSelection() }
+    func selectAll() { browser?.selectAll() }
+    func undo() { browser?.undo() }
+    func redo() { browser?.redo() }
 
     /// Create the CEF browser exactly once, at the first point the native host
     /// is attached to a real window.
