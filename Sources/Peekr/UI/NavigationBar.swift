@@ -171,7 +171,7 @@ struct NavigationBar: View {
             .padding(.horizontal, 10)
             .frame(height: 26)
             .frame(maxWidth: .infinity)
-            .background(.black.opacity(0.06), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .background(.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
             .shadcnFocusRing(focused, cornerRadius: 8)
     }
 

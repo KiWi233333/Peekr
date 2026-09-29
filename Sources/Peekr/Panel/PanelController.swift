@@ -58,9 +58,9 @@ final class PanelController {
         hosting.autoresizingMask = [.width, .height]
         container.addSubview(hosting)
 
-        // `NSGlassEffectView` must own the content it treats. Keeping glass and
-        // SwiftUI as sibling views prevents AppKit from adapting foreground
-        // appearance and is specifically unsupported by Apple's guidance.
+        // The panel surface is an opaque, rounded content host. Liquid Glass is
+        // applied to functional chrome inside the panel, not the whole browser
+        // content layer, so the window edge has no extra glass rim.
         let panelSurface = makePanelBackdrop(
             contentView: container,
             cornerRadius: Theme.panelCorner
@@ -190,9 +190,9 @@ final class PanelController {
             delta: NSSize(width: dx, height: dy),
             within: screen.visibleFrame)
         liveResize = frame.size
-        // Suppress implicit layer animations during the live drag. The glass
-        // backdrop (NSGlassEffectView) animates its bounds by default, which
-        // makes the panel lag behind the cursor ("resistance") on every frame.
+        // Suppress implicit layer animations during the live drag. The rounded
+        // content host can animate its bounds by default, which makes the panel
+        // lag behind the cursor ("resistance") on every frame.
         // Disabling actions makes the resize track the cursor 1:1; the snap
         // animation on `animate(...)` still applies elsewhere.
         CATransaction.begin()

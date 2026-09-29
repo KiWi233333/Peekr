@@ -99,32 +99,16 @@ private struct FallbackGlassSurface<S: Shape>: View {
     }
 }
 
-/// The panel window's whole-background material and content container. Apple
-/// requires content to be assigned to `NSGlassEffectView.contentView` so the
-/// system can adapt both glass and foreground legibility together; placing a
-/// glass view behind its content as a sibling defeats those treatments.
+/// The panel window's rounded content host. The window surface stays opaque and
+/// theme-adaptive; Liquid Glass belongs to functional chrome such as the
+/// navigation bar, not to the entire browser content layer.
 @MainActor
 func makePanelBackdrop(contentView: NSView, cornerRadius: CGFloat) -> NSView {
-    #if compiler(>=6.2)
-    if #available(macOS 26.0, *) {
-        let glass = NSGlassEffectView()
-        glass.cornerRadius = cornerRadius
-        glass.contentView = contentView
-        return glass
-    }
-    #endif
-    let effect = NSVisualEffectView()
-    effect.frame = contentView.frame
-    effect.material = .sidebar
-    effect.blendingMode = .behindWindow
-    effect.state = .active
-    effect.wantsLayer = true
-    effect.layer?.cornerRadius = cornerRadius
-    effect.layer?.masksToBounds = true
-    contentView.frame = effect.bounds
-    contentView.autoresizingMask = [.width, .height]
-    effect.addSubview(contentView)
-    return effect
+    contentView.wantsLayer = true
+    contentView.layer?.backgroundColor = NSColor.clear.cgColor
+    contentView.layer?.cornerRadius = cornerRadius
+    contentView.layer?.masksToBounds = true
+    return contentView
 }
 
 /// Icon button with native hover/press feedback: a faint circular fill that

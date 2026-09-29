@@ -182,7 +182,7 @@ struct AppRail: View {
             Button { toggleGroup(group.id) } label: {
                 Image(systemName: group.isCollapsed ? "chevron.down" : "chevron.up")
                     .font(.system(size: 11, weight: .bold))
-                    .foregroundStyle(.black.opacity(0.68))
+                    .foregroundStyle(.primary.opacity(0.68))
                     .frame(width: 40, height: 28)
                     .background(group.tint, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
             }
@@ -476,7 +476,7 @@ struct AppRail: View {
                 TextField(loc.tabGroup, text: $groupDraft)
                     .textFieldStyle(.plain)
                     .font(.system(size: 12.5, weight: .semibold))
-                    .foregroundStyle(.black.opacity(0.84))
+                    .foregroundStyle(.primary.opacity(0.84))
                     .focused($groupFieldFocused, equals: group.id)
                     .noFocusRing()
                     .onSubmit { commitRenameGroup(group.id) }
@@ -484,7 +484,7 @@ struct AppRail: View {
             } else {
                 Text(group.name)
                     .font(.system(size: 12.5, weight: .semibold))
-                    .foregroundStyle(.black.opacity(0.84))
+                    .foregroundStyle(.primary.opacity(0.84))
                     .lineLimit(1)
                     .onTapGesture(count: 2) { beginRenameGroup(group) }
             }
@@ -500,7 +500,7 @@ struct AppRail: View {
             Button { toggleGroup(group.id) } label: {
                 Image(systemName: group.isCollapsed ? "chevron.down" : "chevron.up")
                     .font(.system(size: 10, weight: .bold))
-                    .foregroundStyle(.black.opacity(0.62))
+                    .foregroundStyle(.primary.opacity(0.62))
                     .frame(width: 18, height: 24)
                     .contentTransition(.symbolEffect(.replace))
                     .animation(
@@ -550,7 +550,7 @@ struct AppRail: View {
         .draggable(RailDrag.group(group.id).encoded) {
             Text(group.name)
                 .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(.black.opacity(0.84))
+                .foregroundStyle(.primary.opacity(0.84))
                 .padding(.horizontal, 14)
                 .padding(.vertical, 8)
                 .background(
