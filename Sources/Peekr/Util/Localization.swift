@@ -185,6 +185,8 @@ struct Localized {
     var profileName: String { t("Profile name", "Profile 名称") }
     var keepAwake: String { t("Keep Awake", "保持唤醒") }
     var allowSleep: String { t("Allow Sleep", "允许休眠") }
+    var sleepPage: String { t("Sleep Page", "休眠页面") }
+    var wakePage: String { t("Wake Page", "唤醒页面") }
     var spaces: String { t("Spaces", "工作区") }
     var openSpaces: String { t("Open Spaces", "打开工作区") }
     var defaultWorkspace: String { t("Workspace", "工作区") }

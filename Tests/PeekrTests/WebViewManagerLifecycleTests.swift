@@ -319,6 +319,14 @@ final class WebViewManagerLifecycleTests: XCTestCase {
         XCTAssertEqual(factory.engines[0].closeCount, 1)
         XCTAssertEqual(manager.state.pageLifecycle, .live)
 
+        // A successful reload must not reset the bounded automatic-recovery
+        // budget; otherwise repeated renderer crashes could loop forever.
+        factory.engines[1].publish(NavState(
+            isLoading: false,
+            url: failure.url,
+            title: "Recovered"
+        ))
+
         // A delayed callback from the closed engine cannot overwrite the
         // replacement engine's lifecycle or failure state.
         factory.engines[0].publish(NavState(url: failure.url, rendererFailure: rendererFailure))

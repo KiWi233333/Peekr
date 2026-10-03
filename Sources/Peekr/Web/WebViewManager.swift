@@ -159,6 +159,10 @@ final class WebViewManager {
         activate(id)
     }
 
+    func isAsleep(_ id: UUID) -> Bool {
+        runtimes[id]?.lifecycle == .asleep
+    }
+
     /// Deterministic lifecycle entry point used by tests and by the visibility
     /// timer. Memory-pressure sweeps may run while the panel is visible, but
     /// the ordinary idle sweep only runs while it is hidden.
@@ -547,7 +551,6 @@ final class WebViewManager {
     private func runtimeDidSettle(_ id: UUID) {
         guard var runtime = runtimes[id] else { return }
         runtime.lifecycle = .live
-        runtime.recoveryAttempts = 0
         runtimes[id] = runtime
         if state.currentID == id { state.pageLifecycle = .live }
     }

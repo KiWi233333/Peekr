@@ -71,10 +71,12 @@ final class CefSwiftEngine: WebEngine {
 
     var hostView: NSView { host }
     private(set) var navState: NavState
-    /// CefSwift 0.1.0 does not expose a reliable audible-media signal. Keep
-    /// this unknown until the adapter gains one; lifecycle policy then fails
-    /// closed instead of stopping background playback.
-    var activity: WebActivitySnapshot { WebActivitySnapshot(audio: .unknown) }
+    /// CefSwift 0.1.0 does not expose a reliable audible-media signal. An
+    /// explicitly muted page is nevertheless known to be silent; every
+    /// unmuted page remains protected as unknown instead of risking playback.
+    var activity: WebActivitySnapshot {
+        WebActivitySnapshot(audio: isAudioMuted ? .silent : .unknown)
+    }
     var onNavStateChange: ((NavState) -> Void)?
     var onDownloadChange: ((WebDownload) -> Void)?
 

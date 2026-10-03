@@ -204,6 +204,14 @@ struct PanelRootView: View {
                 if let app = model.reopenLastClosedTab() { manager.activate(app.id) }
             },
             onToggleMute: { manager.toggleMute($0) },
+            onToggleSleep: { id in
+                if manager.isAsleep(id) {
+                    manager.wake(id)
+                } else {
+                    _ = manager.sleep(id)
+                }
+            },
+            isAsleep: manager.isAsleep,
             onTabFocusChange: onTabFocusChange,
             onCollapse: { isRailCollapsed = true }
         )

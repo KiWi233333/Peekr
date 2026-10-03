@@ -17,6 +17,8 @@ struct AppRail: View {
     var onOpenSpaces: () -> Void
     var onReopenClosedTab: () -> Void
     var onToggleMute: (UUID) -> Void
+    var onToggleSleep: (UUID) -> Void
+    var isAsleep: (UUID) -> Bool
     var onTabFocusChange: (Bool) -> Void
     var onCollapse: () -> Void
 
@@ -271,6 +273,10 @@ struct AppRail: View {
             Button { model.toggleKeepAwake(app.id) } label: {
                 Label(app.keepAwake ? loc.allowSleep : loc.keepAwake,
                       systemImage: app.keepAwake ? "moon.zzz" : "moon.fill")
+            }
+            Button { onToggleSleep(app.id) } label: {
+                Label(isAsleep(app.id) ? loc.wakePage : loc.sleepPage,
+                      systemImage: isAsleep(app.id) ? "sun.max" : "moon.zzz")
             }
             Button {
                 if let copy = model.duplicateTab(app.id) { onSelect(copy.id) }
@@ -819,6 +825,10 @@ struct AppRail: View {
             Button { model.toggleKeepAwake(app.id) } label: {
                 Label(app.keepAwake ? loc.allowSleep : loc.keepAwake,
                       systemImage: app.keepAwake ? "moon.zzz" : "moon.fill")
+            }
+            Button { onToggleSleep(app.id) } label: {
+                Label(isAsleep(app.id) ? loc.wakePage : loc.sleepPage,
+                      systemImage: isAsleep(app.id) ? "sun.max" : "moon.zzz")
             }
             Button {
                 if let copy = model.duplicateTab(app.id) { onSelect(copy.id) }
