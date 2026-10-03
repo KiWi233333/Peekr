@@ -122,5 +122,5 @@ extension WebEngine {
 /// lifecycle tests independent from the native CEF runtime.
 @MainActor
 protocol WebEngineFactory {
-    func makeEngine(for app: WebApp) -> WebEngine
+    func makeEngine(for app: WebApp, profile: BrowserProfile) -> WebEngine
 }

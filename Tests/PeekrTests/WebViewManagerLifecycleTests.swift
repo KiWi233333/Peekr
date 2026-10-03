@@ -39,12 +39,44 @@ final class WebViewManagerLifecycleTests: XCTestCase {
 
     private final class FakeFactory: WebEngineFactory {
         private(set) var engines: [FakeEngine] = []
+        private(set) var profiles: [BrowserProfile] = []
 
-        func makeEngine(for app: WebApp) -> WebEngine {
+        func makeEngine(for app: WebApp, profile: BrowserProfile) -> WebEngine {
             let engine = FakeEngine()
             engines.append(engine)
+            profiles.append(profile)
             return engine
         }
+    }
+
+    func testEngineReceivesTheWorkspaceProfile() throws {
+        let storeURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("peekr-manager-profile-\(UUID().uuidString).json")
+        let profileURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("peekr-manager-profiles-\(UUID().uuidString).json")
+        defer {
+            try? FileManager.default.removeItem(at: storeURL)
+            try? FileManager.default.removeItem(at: profileURL)
+        }
+        let model = AppModel(
+            store: AppStore(fileURL: storeURL),
+            profileStore: ProfileStore(fileURL: profileURL)
+        )
+        let profile = try XCTUnwrap(model.createProfile(name: "Work"))
+        let workspaceID = model.activeWorkspaceID
+        XCTAssertTrue(model.rebindWorkspace(workspaceID, to: profile.id))
+
+        let factory = FakeFactory()
+        let manager = WebViewManager(
+            model: model,
+            factory: factory,
+            badges: BadgeStore(),
+            icons: IconStore()
+        )
+        manager.activate(model.apps[0].id)
+
+        XCTAssertEqual(factory.profiles.map(\.id), [profile.id])
+        XCTAssertEqual(factory.profiles.first?.storageKey, profile.storageKey)
     }
 
     func testCloseAllForceClosesEveryCachedEngineAndClearsSelection() {

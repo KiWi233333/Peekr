@@ -588,26 +588,48 @@ extension CefSwiftEngine: CefBrowserDelegate {
     }
 }
 
-/// Every Chromium tab shares CefSwift's persistent global profile — this is the
-/// chosen design, not a stopgap: agent and user pages inherit one another's
-/// logins inside the one browser (the ego-lite model Peekr builds on). A
-/// secondary constraint keeps it this way for now: CefSwift 0.1.0 places named
-/// profiles two levels below CEF's root cache, while Chromium only accepts
-/// profile directories that are direct children of that root, so per-space
-/// profiles wait on the upstream layout fix.
+/// Resolves one native CEF request context per domain Profile. The default
+/// Profile deliberately reuses CEF's global context so existing
+/// `Chromium/Default` data remains in place; named Profiles use immutable,
+/// filesystem-safe storage keys.
 @MainActor
-struct CefSwiftEngineFactory: WebEngineFactory {
+final class CefSwiftEngineFactory: WebEngineFactory {
+    private var profiles: [BrowserProfile.ID: CefProfile] = [:]
+
     /// Routes a page's new-tab request into Peekr's tab model. Wired by the
     /// composition root once the `WebViewManager` exists.
     var onOpenNewTab: ((URL, Bool) -> Void)?
     var strings: () -> Localized = { Localized(isChinese: false) }
     var searchEngine: () -> SearchEngine = { .google }
 
-    func makeEngine(for app: WebApp) -> WebEngine {
-        let engine = CefSwiftEngine(url: app.url, profile: .default, isAudioMuted: app.isMuted)
+    init(
+        onOpenNewTab: ((URL, Bool) -> Void)? = nil,
+        strings: @escaping () -> Localized = { Localized(isChinese: false) },
+        searchEngine: @escaping () -> SearchEngine = { .google }
+    ) {
+        self.onOpenNewTab = onOpenNewTab
+        self.strings = strings
+        self.searchEngine = searchEngine
+    }
+
+    func makeEngine(for app: WebApp, profile: BrowserProfile) -> WebEngine {
+        let engine = CefSwiftEngine(
+            url: app.url,
+            profile: cefProfile(for: profile),
+            isAudioMuted: app.isMuted
+        )
         engine.onOpenNewTab = onOpenNewTab
         engine.strings = strings
         engine.searchEngine = searchEngine
         return engine
+    }
+
+    private func cefProfile(for profile: BrowserProfile) -> CefProfile {
+        if let cached = profiles[profile.id] { return cached }
+        let resolved = profile.isDefault
+            ? CefProfile.default
+            : CefProfile.persistent(name: profile.storageKey)
+        profiles[profile.id] = resolved
+        return resolved
     }
 }

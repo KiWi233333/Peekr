@@ -251,7 +251,7 @@ final class WebViewManager {
 
     private func engine(for app: WebApp) -> WebEngine {
         if let existing = engines[app.id] { return existing }
-        let engine = factory.makeEngine(for: app)
+        let engine = factory.makeEngine(for: app, profile: model.profile(forTab: app.id))
         let id = app.id
         lastTitles[id] = app.title
         lastHosts[id] = IconStore.normalizedHost(app.host)

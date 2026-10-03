@@ -7,7 +7,10 @@ import XCTest
 final class CefSwiftEngineTests: XCTestCase {
     private func makeEngine(url: URL? = URL(string: "https://example.com")) -> CefSwiftEngine {
         let app = WebApp(title: "Example", urlString: url?.absoluteString ?? "")
-        return CefSwiftEngineFactory().makeEngine(for: app) as! CefSwiftEngine
+        return CefSwiftEngineFactory().makeEngine(
+            for: app,
+            profile: .defaultProfile
+        ) as! CefSwiftEngine
     }
 
     func testFactoryBuildsNativeCefSwiftEngineWithoutCreatingBrowserEarly() {

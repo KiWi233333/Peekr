@@ -584,6 +584,15 @@ final class AppModel {
         profiles.first { $0.id == id }
     }
 
+    func profile(forTab tabID: WebApp.ID) -> BrowserProfile {
+        guard let workspace = workspaces.first(where: { workspace in
+            workspace.tabs.contains { $0.id == tabID }
+        }) else {
+            return defaultProfile
+        }
+        return profile(workspace.profileID) ?? defaultProfile
+    }
+
     @discardableResult
     func createProfile(name: String) -> BrowserProfile? {
         guard let profile = profileStore.create(name: name) else { return nil }
