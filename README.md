@@ -116,8 +116,9 @@ swift test
 
 `make dev` builds the CEF Debug bundle, builds the Xcode Debug product, opens
 InjectionIII with this repository, and launches the injection-ready app. The
-terminal follows Chromium's log; `Ctrl+C` stops log output while Peekr keeps
-running. Save an injectable SwiftUI view to reload it through InjectionIII.
+terminal follows Chromium's log; `Ctrl+C` stops log output and closes the
+development Peekr process. Save an injectable SwiftUI view to reload it
+through InjectionIII.
 `make inject` repeats the Xcode build and app relaunch without rebuilding CEF.
 Startup code, package changes, and newly added files still require a restart.
 

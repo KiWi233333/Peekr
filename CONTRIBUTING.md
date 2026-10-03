@@ -22,7 +22,7 @@ runtime.
 > run as a bare `swift run` executable. `make dev` and `make run` both assemble
 > a real `.app`; use `make dev` for a debug bundle and `make run` for release.
 > `make dev` follows the Chromium log after launching the InjectionIII-ready
-> Debug app. Ctrl+C stops the log follower while Peekr keeps running.
+> Debug app. Ctrl+C stops the log follower and closes the development Peekr process.
 > `make inject` repeats the Xcode Debug build and app relaunch without rebuilding CEF.
 
 The bundle build prepares the pinned CEF runtime. Agent CLI packaging also

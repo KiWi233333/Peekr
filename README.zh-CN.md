@@ -107,7 +107,7 @@ swift test
 
 `make dev` 会准备 CEF Debug 应用包，用 xcodebuild 构建注入用 Debug 产物，
 打开 InjectionIII 和当前仓库，然后启动热更新版本。终端会持续跟踪 Chromium
-的 `debug.log`，按 `Ctrl+C` 只停止日志输出，应用仍会运行。修改已接入注入的
+的 `debug.log`，按 `Ctrl+C` 会停止日志输出并关闭开发中的 Peekr 进程。修改已接入的
 SwiftUI 视图并保存即可热更新；启动流程、Package.swift 和新增文件仍需重启。
 `make inject` 可以跳过 CEF 打包，重新构建并启动注入用 App。
 

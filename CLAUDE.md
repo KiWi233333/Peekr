@@ -24,7 +24,7 @@ cd cli && npm run typecheck && npm test  # CLI 改动时
 make clean
 ```
 
-`make dev` 构建完整的 CEF Debug `.app`，然后通过 Xcode 和 InjectionIII 启动可注入版本；终端继续执行 `tail -F` 跟踪 Chromium 日志，`Ctrl+C` 只停止日志输出，应用继续运行。`make run` 构建 Release `.app`，不启用热更新。所有页面共享 `CefProfile.default` 的持久 Chromium Profile，Spaces 仅隔离标签组织和 Agent 归属，不隔离 Cookie 或登录态。
+`make dev` 构建完整的 CEF Debug `.app`，然后通过 Xcode 和 InjectionIII 启动可注入版本；终端继续执行 `tail -F` 跟踪 Chromium 日志，`Ctrl+C` 会停止日志输出并关闭开发中的 Peekr 进程。`make run` 构建 Release `.app`，不启用热更新。所有页面共享 `CefProfile.default` 的持久 Chromium Profile，Spaces 仅隔离标签组织和 Agent 归属，不隔离 Cookie 或登录态。
 
 ### 热更新（Hot Reload）
 
