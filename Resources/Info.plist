@@ -37,6 +37,8 @@
     <string>NSApplication</string>
 	<key>NSAppleEventsUsageDescription</key>
 	<string>Peekr reads the tabs currently open in your browsers so you can add them as web apps.</string>
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>Peekr lets websites use nearby Bluetooth devices only after you approve their permission request.</string>
 	<key>NSCameraUsageDescription</key>
 	<string>Peekr lets websites use the camera only after you approve their permission request.</string>
 	<key>NSMicrophoneUsageDescription</key>

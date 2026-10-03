@@ -51,7 +51,7 @@ if [ -f Resources/AppIcon.icns ]; then
 fi
 
 # Ship CEF's BSD license with the product.
-CEF_LICENSE="$(find .build/checkouts -path '*/Sources/CCef/LICENSE.CEF.txt' -print -quit)"
+CEF_LICENSE="Vendor/CefSwift/Sources/CCef/LICENSE.CEF.txt"
 if [ -n "$CEF_LICENSE" ]; then
   cp "$CEF_LICENSE" "$APP/Contents/Resources/CEF-LICENSE.txt"
 fi
@@ -62,7 +62,7 @@ fi
 if [ -f CEF_VERSION.json ]; then
   CEF_MANIFEST="CEF_VERSION.json"
 else
-  CEF_MANIFEST="$(find .build/checkouts -path '*/CefSwift/CEF_VERSION.json' -print -quit)"
+  CEF_MANIFEST="Vendor/CefSwift/CEF_VERSION.json"
 fi
 test -n "$CEF_MANIFEST" || { echo "CEF manifest missing after bundle." >&2; exit 1; }
 CEF_VERSION="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["cef"])' "$CEF_MANIFEST")"
@@ -145,6 +145,23 @@ else
   BASE=(--force --sign -)
 fi
 
+# Chromium's macOS Touch ID WebAuthn backend requires the app identifier
+# prefix on its two keychain groups. Keep the checked-in entitlement portable
+# and resolve the prefix from the selected signing identity at bundle time.
+APP_ENT_RESOLVED=""
+if [ -n "$IDENTITY" ]; then
+  TEAM_ID="$(printf '%s' "$IDENTITY" | sed -n 's/.*(\([A-Z0-9][A-Z0-9]*\))$/\1/p')"
+  if [ -n "$TEAM_ID" ]; then
+    APP_ENT_RESOLVED="$(mktemp "${TMPDIR:-/tmp}/peekr-app-entitlements.XXXXXX")"
+    cp "$APP_ENT" "$APP_ENT_RESOLVED"
+    /usr/bin/plutil -replace keychain-access-groups -xml \
+      "<array><string>${TEAM_ID}.org.chromium.Chromium.webauthn</string><string>${TEAM_ID}.org.chromium.Chromium.webauthn-uvk</string></array>" \
+      "$APP_ENT_RESOLVED"
+  else
+    echo "Warning: could not derive a team ID from signing identity; Touch ID WebAuthn will remain unavailable." >&2
+  fi
+fi
+
 # Only hardened, identity-signed bundles can satisfy Chromium's validation
 # category checks. The app reads this before CefInitialize and otherwise passes
 # no_sandbox=1 for reliable local/ad-hoc development.
@@ -187,7 +204,7 @@ for helper in "$APP"/Contents/Frameworks/Peekr\ Helper*.app; do
   [ -d "$helper" ] || continue
   # Media capture happens in Chromium helper processes. Mirror the main app's
   # TCC usage strings before the helpers receive their final signature.
-  for usage_key in NSCameraUsageDescription NSMicrophoneUsageDescription NSLocationUsageDescription NSScreenCaptureUsageDescription; do
+  for usage_key in NSBluetoothAlwaysUsageDescription NSCameraUsageDescription NSMicrophoneUsageDescription NSLocationUsageDescription NSScreenCaptureUsageDescription; do
     usage_value="$(/usr/bin/plutil -extract "$usage_key" raw "$APP/Contents/Info.plist")"
     /usr/bin/plutil -replace "$usage_key" -string "$usage_value" "$helper/Contents/Info.plist"
   done
@@ -198,8 +215,8 @@ for helper in "$APP"/Contents/Frameworks/Peekr\ Helper*.app; do
   fi
 done
 
-if [ "${PEEKR_HARDENED:-0}" = "1" ] && [ -n "$IDENTITY" ]; then
-  sign_one "$APP" "$APP_ENT"
+if [ -n "$APP_ENT_RESOLVED" ]; then
+  sign_one "$APP" "$APP_ENT_RESOLVED"
 else
   sign_one "$APP"
 fi

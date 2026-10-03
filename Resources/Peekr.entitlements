@@ -12,5 +12,15 @@
     -->
     <key>com.apple.security.automation.apple-events</key>
     <true/>
+    <!--
+      CEF's unbranded Chromium build stores macOS Touch ID WebAuthn
+      credentials in these groups. bundle.sh resolves AppIdentifierPrefix to
+      the team ID of the selected signing identity before codesigning.
+    -->
+    <key>keychain-access-groups</key>
+    <array>
+        <string>$(AppIdentifierPrefix)org.chromium.Chromium.webauthn</string>
+        <string>$(AppIdentifierPrefix)org.chromium.Chromium.webauthn-uvk</string>
+    </array>
 </dict>
 </plist>

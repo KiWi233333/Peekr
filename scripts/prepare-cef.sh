@@ -1,7 +1,7 @@
 #!/bin/bash
 # Stage Peekr's custom CEF artifact in the cache expected by CefSwift's plugin.
 # The plugin still performs its own SHA-1 validation; this script adds SHA-256,
-# source control, and cache provenance without forking CefSwift.
+# source control, and cache provenance for the pinned CefSwift package.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
