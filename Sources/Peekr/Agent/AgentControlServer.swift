@@ -22,6 +22,7 @@ final class AgentControlServer {
     private var listener: NWListener?
     private let queue = DispatchQueue(label: "Peekr.AgentControlServer")
     private(set) var port: Int?
+    var pages: AgentTargetSync?
 
     /// One request at a time is fine for a CLI harness; simplicity wins.
     init(model: AppModel, token: String) {
@@ -114,6 +115,9 @@ final class AgentControlServer {
         }
 
         let segments = request.path.split(separator: "/").map(String.init)
+        if segments.count >= 3, segments[0] == "spaces", segments[2] == "tabs" || segments[2] == "finish" {
+            return await pageRoute(request, segments)
+        }
         switch (request.method, segments.count) {
         case ("GET", 1) where segments[0] == "spaces":
             return .json(status: "200 OK", payload: ["ok": true, "spaces": model.workspaces.map(Self.spacePayload)])
@@ -121,7 +125,10 @@ final class AgentControlServer {
             let name = (request.jsonObject()?["name"] as? String) ?? ""
             let owner = (request.jsonObject()?["owner"] as? String) ?? ""
             let space = model.addAgentWorkspace(owner: owner, name: name)
-            return .json(status: "201 Created", payload: ["ok": true, "space": Self.spacePayload(space)])
+            // CLI spaces start empty; UI-created tabs remain explicitly unmanaged.
+            for tab in space.tabs { model.removeApp(tab.id) }
+            let current = model.workspaces.first(where: { $0.id == space.id }) ?? space
+            return .json(status: "201 Created", payload: ["ok": true, "space": Self.spacePayload(current)])
         case (_, 2) where segments[0] == "spaces":
             // /spaces/:id — read one space or close it (DELETE).
             return spaceRoute(request, segments[1], action: "")
@@ -130,6 +137,38 @@ final class AgentControlServer {
             return spaceRoute(request, segments[1], action: segments[2])
         default:
             return Self.error("404 Not Found", code: "PEEKR_ACTION_FAILED", message: "Unknown route \(request.method) \(request.path).")
+        }
+    }
+
+    private func pageRoute(_ request: HTTPRequest, _ segments: [String]) async -> HTTPResponse {
+        guard let id = UUID(uuidString: segments[1]), let pages else {
+            return Self.error("409 Conflict", code: "PEEKR_BRIDGE_REQUIRED", message: "Native page bridge unavailable.")
+        }
+        do {
+            let body = request.jsonObject() ?? [:]
+            var result: [String: Any] = ["ok": true]
+            switch (request.method, segments.count, segments[2]) {
+            case ("GET", 3, "tabs"):
+                result["tabs"] = try await pages.tabs(in: id)
+            case ("POST", 3, "tabs"):
+                result["tab"] = try await pages.createTab(in: id, url: body["url"] as? String ?? "")
+            case ("DELETE", 4, "tabs"):
+                try await pages.closeTab(in: id, targetID: segments[3])
+            case ("POST", 5, "tabs") where segments[4] == "activate":
+                try await pages.activateTab(in: id, targetID: segments[3])
+            case ("POST", 3, "finish"):
+                guard let keep = body["keep"] as? [String] else {
+                    throw AgentBridgeError(code: "PEEKR_INVALID_ARGUMENT", message: "finish requires a keep target array.")
+                }
+                result["closed"] = try await pages.finish(id, keep: keep)
+            default:
+                return Self.error("404 Not Found", code: "PEEKR_ACTION_FAILED", message: "Unknown page route.")
+            }
+            return .json(status: "200 OK", payload: result)
+        } catch let error as AgentBridgeError {
+            return Self.error("409 Conflict", code: error.code, message: error.message)
+        } catch {
+            return Self.error("503 Service Unavailable", code: "PEEKR_CDP_UNAVAILABLE", message: "Target operation failed; result may be unknown. Do not replay automatically.")
         }
     }
 
@@ -185,11 +224,21 @@ final class AgentControlServer {
             return .json(status: "200 OK", payload: ["ok": true, "space": Self.spacePayload(updated)])
 
         case ("POST", "complete"):
+            guard workspace.ownership == .agent else {
+                return Self.error("409 Conflict", code: "PEEKR_SPACE_USER_IN_CONTROL", message: "The user controls this space.")
+            }
             let keep = request.jsonObject()?["keep"] as? Bool ?? false
+            guard keep || workspace.tabs.isEmpty else {
+                return Self.error("409 Conflict", code: "PEEKR_TARGET_NOT_OWNED", message: "Use /finish to preserve unmanaged tabs.")
+            }
             if !keep { model.removeWorkspace(id) }
+            else { model.takeOverWorkspace(id) }
             return .json(status: "200 OK", payload: ["ok": true])
 
         case ("DELETE", ""):
+            guard workspace.ownership == .agent, workspace.tabs.isEmpty else {
+                return Self.error("409 Conflict", code: "PEEKR_TARGET_NOT_OWNED", message: "Only an empty agent space can be deleted; use /finish.")
+            }
             let hadTabs = !workspace.tabs.isEmpty
             model.removeWorkspace(id)
             return .json(status: "200 OK", payload: ["ok": true, "closed": hadTabs])

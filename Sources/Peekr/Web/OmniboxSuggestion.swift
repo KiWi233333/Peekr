@@ -2,7 +2,7 @@ import Foundation
 
 /// One row in the omnibox autocomplete dropdown.
 struct OmniboxSuggestion: Identifiable, Hashable {
-    enum Kind: String, Hashable { case search, openURL, tab, bookmark }
+    enum Kind: String, Hashable { case search, openURL, tab, bookmark, history }
     let kind: Kind
     let primary: String
     let secondary: String?
@@ -14,32 +14,65 @@ struct OmniboxSuggestion: Identifiable, Hashable {
     var id: String { "\(kind.rawValue)|\(target.lowercased())" }
 }
 
-/// Builds omnibox suggestions Chrome-style: a top "search / open" action, then
-/// matching open tabs and bookmarks (instant, local), plus the selected
-/// provider's search completions (async network).
+/// Builds omnibox suggestions Chrome-style: matching open tabs first, then
+/// recent history, the current search / open action and other local matches,
+/// plus the selected provider's search completions (async network).
 enum OmniboxSuggestions {
     /// Instant, local suggestions for `query`.
-    static func local(for query: String, tabs: [WebApp], bookmarks: [BookmarkNode], searchLabel: String) -> [OmniboxSuggestion] {
+    static func local(
+        for query: String,
+        tabs: [WebApp],
+        bookmarks: [BookmarkNode],
+        history: [HistoryEntry] = [],
+        currentTabID: WebApp.ID? = nil,
+        searchLabel: String
+    ) -> [OmniboxSuggestion] {
         let q = query.trimmingCharacters(in: .whitespaces)
         guard !q.isEmpty else { return [] }
         let lower = q.lowercased()
         var out: [OmniboxSuggestion] = []
 
-        // Top action — mirrors WebViewManager.url(fromOmnibox:)'s intent.
-        let looksLikeURL = lower.hasPrefix("http") || (!q.contains(" ") && q.contains("."))
-        out.append(looksLikeURL
-            ? OmniboxSuggestion(kind: .openURL, primary: q, secondary: nil, target: q)
-            : OmniboxSuggestion(kind: .search, primary: q, secondary: searchLabel, target: q))
+        // Chrome keeps the current page and other matching open tabs above the
+        // search action. Preserve the model's tab order after the active tab so
+        // repeated queries do not reshuffle the remaining candidates.
+        let matchingTabs = tabs.enumerated()
+            .filter { matches(lower, $0.element.alias, $0.element.title, $0.element.urlString) }
+            .sorted { lhs, rhs in
+                let lhsIsCurrent = lhs.element.id == currentTabID
+                let rhsIsCurrent = rhs.element.id == currentTabID
+                if lhsIsCurrent != rhsIsCurrent { return lhsIsCurrent }
+                return lhs.offset < rhs.offset
+            }
+            .prefix(4)
 
-        // Matching open tabs (across workspaces).
-        for tab in tabs where matches(lower, tab.alias, tab.title, tab.urlString) {
+        for tab in matchingTabs.map(\.element) {
             out.append(OmniboxSuggestion(
                 kind: .tab,
                 primary: tab.displayName,
                 secondary: URL(string: tab.urlString)?.displayHost ?? tab.urlString,
                 target: tab.urlString))
-            if out.count >= 4 { break }
         }
+
+        // Recent pages take precedence over the provider search action. This
+        // makes Enter open the first matching history entry, like Chrome,
+        // instead of immediately searching the typed keyword.
+        var historyHits = 0
+        for entry in history where matches(lower, entry.title, entry.urlString) {
+            out.append(OmniboxSuggestion(
+                kind: .history,
+                primary: entry.title.isEmpty ? entry.urlString : entry.title,
+                secondary: URL(string: entry.urlString)?.displayHost ?? entry.urlString,
+                target: entry.urlString))
+            historyHits += 1
+            if historyHits >= 4 { break }
+        }
+
+        // The typed action follows matching history. It remains the fallback
+        // when there is no local page to open.
+        let looksLikeURL = lower.hasPrefix("http") || (!q.contains(" ") && q.contains("."))
+        out.append(looksLikeURL
+            ? OmniboxSuggestion(kind: .openURL, primary: q, secondary: nil, target: q)
+            : OmniboxSuggestion(kind: .search, primary: q, secondary: searchLabel, target: q))
 
         // Matching bookmarks.
         var bookmarkHits = 0

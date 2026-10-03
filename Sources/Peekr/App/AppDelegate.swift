@@ -42,7 +42,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         manager = WebViewManager(
             model: model,
-            factory: CefSwiftEngineFactory(),
+            factory: CefSwiftEngineFactory(
+                onOpenNewTab: { [weak self] url, foreground in
+                    self?.manager.openInNewTab(urlString: url.absoluteString, foreground: foreground)
+                },
+                strings: { [weak self] in self?.settings.strings ?? Localized(isChinese: false) },
+                searchEngine: currentSearchEngine
+            ),
             badges: badges,
             icons: icons,
             searchEngine: currentSearchEngine
@@ -109,6 +115,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // Mirror agent-created Chromium pages into the rail so user and
             // agent see one browser.
             let sync = AgentTargetSync(model: model, port: debugPort)
+            server.pages = sync
+            sync.prepareNativeTab = { [weak self] id in self?.manager.prepareAgentTab(id) }
+            sync.loadNativeTab = { [weak self] id, url in self?.manager.loadAgentTab(id, url: url) }
+            sync.activateNativeTab = { [weak self] workspaceID, tabID in
+                self?.model.selectWorkspace(workspaceID)
+                self?.model.select(tabID)
+                self?.manager.activate(tabID)
+                self?.panel.show()
+            }
             agentTargetSync = sync
             sync.start()
             Task { @MainActor [weak self] in

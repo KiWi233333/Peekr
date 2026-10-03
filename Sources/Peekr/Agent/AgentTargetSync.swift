@@ -1,225 +1,257 @@
 import Foundation
 
-/// Mirrors agent-created Chromium pages into Peekr's model so the rail shows
-/// what the agent is doing — the ego-lite property that the agent's tabs are
-/// first-class browser citizens. While an agent space is active, page targets
-/// appearing on the CDP endpoint that nobody tracks yet get bound to (or added
-/// as) tabs of that space; targets that disappear remove their rail tab, and
-/// rail tabs the user deleted close their Chromium target. Both layers stay
-/// one browser.
-///
-/// Identity is CDP `targetId` ↔ `WebApp.id`, kept in memory only: target ids
-/// do not survive a relaunch, and every launch re-seeds the mapping from the
-/// first `/json/list` snapshot (everything already on screen at tick one is
-/// treated as app-owned).
-extension Notification.Name {
-    /// Posted by `WebViewManager` when it builds an engine for a tab — the one
-    /// moment a CDP target is guaranteed to appear for that known tab.
-    static let peekrTabEngineActivated = Notification.Name("peekrTabEngineActivated")
-}
-
+/// The native registry is authoritative: only targets created through this bridge
+/// belong to an agent. UI selection, URLs and target-list ordering never imply ownership.
 @MainActor
 final class AgentTargetSync {
+    private struct Binding {
+        let workspaceID: UUID
+        let tabID: UUID
+    }
     private let model: AppModel
-    private let port: Int
+    private let transport: any AgentTargetTransport
+    private var tracked: [String: Binding] = [:]
     private var timer: Timer?
-    private var tracked: [String: UUID] = [:]
-    private var seen: Set<String> = []
-    /// Rail tabs whose engine (and therefore CDP target) is about to appear,
-    /// in creation order — the deterministic binding queue.
-    private var pendingBindings: [UUID] = []
-    private var engineObserver: NSObjectProtocol?
     private var tickTask: Task<Void, Never>?
+    private var busy = false
+    private var operationRevision: UInt = 0
+    private var stopped = false
+    let tabLimit: Int
+    var prepareNativeTab: ((UUID) -> Void)?
+    var loadNativeTab: ((UUID, URL) -> Void)?
+    var activateNativeTab: ((UUID, UUID) -> Void)?
 
-    init(model: AppModel, port: Int) {
+    init(model: AppModel, port: Int, transport: (any AgentTargetTransport)? = nil, tabLimit: Int = 8) {
         self.model = model
-        self.port = port
+        self.transport = transport ?? AgentCDPClient(port: port)
+        self.tabLimit = max(1, tabLimit)
     }
 
     func start() {
         guard timer == nil else { return }
-        engineObserver = NotificationCenter.default.addObserver(
-            forName: .peekrTabEngineActivated, object: nil, queue: .main
-        ) { [weak self] note in
-            guard let self, let tabID = note.userInfo?["tabID"] as? UUID else { return }
-            MainActor.assumeIsolated { self.pendingBindings.append(tabID) }
-        }
+        stopped = false
         timer = Timer.scheduledTimer(withTimeInterval: 1.5, repeats: true) { [weak self] _ in
-            guard let self else { return }
-            self.tickTask?.cancel()
-            self.tickTask = Task { @MainActor [weak self] in
-                await self?.tick()
+            Task { @MainActor [weak self] in
+                guard let self, self.tickTask == nil else { return }
+                self.tickTask = Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    await self.tick()
+                    self.tickTask = nil
+                }
             }
         }
     }
 
     func stop() {
+        stopped = true
+        operationRevision &+= 1
         timer?.invalidate()
         timer = nil
         tickTask?.cancel()
         tickTask = nil
-        if let engineObserver { NotificationCenter.default.removeObserver(engineObserver) }
-        engineObserver = nil
-        pendingBindings.removeAll()
         tracked.removeAll()
-        seen.removeAll()
     }
 
-    // MARK: - Tick
+    func assertControl(_ id: UUID) throws {
+        try Task.checkCancellation()
+        guard !stopped else {
+            throw AgentBridgeError(code: "PEEKR_SPACE_INACTIVE", message: "The native bridge stopped.")
+        }
+        guard let space = model.workspaces.first(where: { $0.id == id }) else {
+            throw AgentBridgeError(code: "PEEKR_SPACE_INACTIVE", message: "Space no longer exists.")
+        }
+        guard space.ownership == .agent else {
+            throw AgentBridgeError(code: "PEEKR_SPACE_USER_IN_CONTROL", message: "The user controls this space.")
+        }
+    }
 
+    private func enter(_ id: UUID) throws {
+        try assertControl(id)
+        guard !busy else {
+            throw AgentBridgeError(code: "PEEKR_BROWSER_BUSY", message: "A target operation is in flight.")
+        }
+        busy = true
+        operationRevision &+= 1
+    }
+
+    private func isCurrent(_ binding: Binding) -> Bool {
+        model.workspaces.first(where: { $0.id == binding.workspaceID })?
+            .tabs.contains(where: { $0.id == binding.tabID }) == true
+    }
+
+    private func pruneTransferredTargets() {
+        tracked = tracked.filter { isCurrent($0.value) || model.tab($0.value.tabID) == nil }
+    }
+
+    func tabs(in id: UUID) async throws -> [[String: Any]] {
+        try enter(id)
+        defer { busy = false }
+        let targets = try await transport.targets()
+        try assertControl(id)
+        return targets.compactMap { target in
+            guard let targetID = target["id"] as? String,
+                let binding = tracked[targetID], binding.workspaceID == id,
+                isCurrent(binding)
+            else { return nil }
+            return [
+                "targetId": targetID, "tabId": binding.tabID.uuidString,
+                "origin": "agent", "url": target["url"] as? String ?? "",
+                "title": target["title"] as? String ?? "",
+            ]
+        }
+    }
+
+    func createTab(in id: UUID, url: String) async throws -> [String: Any] {
+        try enter(id)
+        defer { busy = false }
+        pruneTransferredTargets()
+        guard tracked.values.filter({ $0.workspaceID == id }).count < tabLimit else {
+            throw AgentBridgeError(
+                code: "PEEKR_TAB_LIMIT",
+                message: "This space allows \(tabLimit) managed pages. Close a scratch page first.")
+        }
+        guard let parsed = URL(string: url), ["http", "https"].contains(parsed.scheme?.lowercased() ?? ""),
+            parsed.host != nil
+        else {
+            throw AgentBridgeError(code: "PEEKR_INVALID_ARGUMENT", message: "Tabs require an HTTP(S) URL.")
+        }
+        if prepareNativeTab != nil { return try await createNativeTab(in: id, url: parsed) }
+        let result = try await transport.command("Target.createTarget", ["url": url])
+        guard let targetID = result["targetId"] as? String else {
+            throw AgentBridgeError(
+                code: "PEEKR_ACTION_FAILED", message: "Creation returned no target ID; do not replay.")
+        }
+        do { try assertControl(id) } catch {
+            _ = try? await transport.command("Target.closeTarget", ["targetId": targetID])
+            throw error
+        }
+        guard let tab = model.addApp(title: url, urlString: url, toWorkspace: id) else {
+            _ = try? await transport.command("Target.closeTarget", ["targetId": targetID])
+            throw AgentBridgeError(code: "PEEKR_SPACE_INACTIVE", message: "Space closed during creation.")
+        }
+        tracked[targetID] = Binding(workspaceID: id, tabID: tab.id)
+        return ["targetId": targetID, "tabId": tab.id.uuidString, "origin": "agent", "url": url, "title": ""]
+    }
+
+    private func createNativeTab(in id: UUID, url: URL) async throws -> [String: Any] {
+        let markerID = "peekr-\(UUID().uuidString)"
+        let marker = "data:text/html,%3Ctitle%3E\(markerID)%3C/title%3E"
+        guard let tab = model.addApp(title: "", urlString: marker, toWorkspace: id) else {
+            throw AgentBridgeError(code: "PEEKR_SPACE_INACTIVE", message: "Space closed.")
+        }
+        prepareNativeTab?(tab.id)
+        do {
+            let deadline = Date().addingTimeInterval(5)
+            repeat {
+                let targets = try await transport.targets()
+                try assertControl(id)
+                guard isCurrent(Binding(workspaceID: id, tabID: tab.id)) else {
+                    throw AgentBridgeError(
+                        code: "PEEKR_TARGET_NOT_OWNED", message: "Native tab left the space during creation.")
+                }
+                if let targetID = targets.first(where: { $0["title"] as? String == markerID })?["id"] as? String {
+                    tracked[targetID] = Binding(workspaceID: id, tabID: tab.id)
+                    loadNativeTab?(tab.id, url)
+                    return [
+                        "targetId": targetID, "tabId": tab.id.uuidString, "origin": "agent", "url": url.absoluteString,
+                        "title": "",
+                    ]
+                }
+                try await Task.sleep(for: .milliseconds(50))
+            } while Date() < deadline
+            throw AgentBridgeError(code: "PEEKR_CDP_UNAVAILABLE", message: "Native page target did not become ready.")
+        } catch {
+            if isCurrent(Binding(workspaceID: id, tabID: tab.id)) { model.removeApp(tab.id) }
+            throw error
+        }
+    }
+
+    func closeTab(in id: UUID, targetID: String) async throws {
+        try enter(id)
+        defer { busy = false }
+        try await closeManagedTarget(in: id, targetID: targetID)
+    }
+
+    private func closeManagedTarget(in id: UUID, targetID: String) async throws {
+        try assertControl(id)
+        guard let binding = tracked[targetID], binding.workspaceID == id, isCurrent(binding) else {
+            throw AgentBridgeError(code: "PEEKR_TARGET_NOT_OWNED", message: "Target does not belong to this space.")
+        }
+        let result = try await transport.command("Target.closeTarget", ["targetId": targetID])
+        guard result["success"] as? Bool == true else {
+            throw AgentBridgeError(code: "PEEKR_ACTION_FAILED", message: "Target did not confirm close.")
+        }
+        tracked.removeValue(forKey: targetID)
+        if isCurrent(binding) { model.removeApp(binding.tabID) }
+    }
+
+    func activateTab(in id: UUID, targetID: String) async throws {
+        try enter(id)
+        defer { busy = false }
+        guard let binding = tracked[targetID], binding.workspaceID == id, isCurrent(binding) else {
+            throw AgentBridgeError(code: "PEEKR_TARGET_NOT_OWNED", message: "Target does not belong to this space.")
+        }
+        _ = try await transport.command("Target.activateTarget", ["targetId": targetID])
+        try assertControl(id)
+        guard isCurrent(binding) else {
+            throw AgentBridgeError(code: "PEEKR_TARGET_NOT_OWNED", message: "Tab left this space during activation.")
+        }
+        activateNativeTab?(id, binding.tabID)
+    }
+
+    /// Completion preserves every user/unmanaged tab. Kept agent tabs become user-owned.
+    func finish(_ id: UUID, keep: [String]) async throws -> Bool {
+        try enter(id)
+        defer { busy = false }
+        pruneTransferredTargets()
+        let owned = Set(tracked.filter { $0.value.workspaceID == id }.map(\.key))
+        guard Set(keep).isSubset(of: owned) else {
+            throw AgentBridgeError(code: "PEEKR_TARGET_NOT_OWNED", message: "Unknown retained target.")
+        }
+        for target in owned.subtracting(keep).sorted() { try await closeManagedTarget(in: id, targetID: target) }
+        try assertControl(id)
+        let empty = model.workspaces.first(where: { $0.id == id })?.tabs.isEmpty == true
+        if empty { model.removeWorkspace(id) } else { model.takeOverWorkspace(id) }
+        for target in owned { tracked.removeValue(forKey: target) }
+        return empty
+    }
+
+    /// A failed discovery request is not an empty browser: preserve tabs on transport failures.
     private func tick() async {
-        let targets = (try? await fetchTargets()) ?? []
-        let liveIDs = Set(targets.map(\.targetId))
-
-        // Rail tabs the user deleted → close their Chromium target.
-        for (targetId, tabID) in tracked where model.tab(tabID) == nil {
-            tracked.removeValue(forKey: targetId)
-            closeTarget(targetId)
+        guard !busy, !stopped else { return }
+        let revision = operationRevision
+        guard let targets = try? await transport.targets(), !Task.isCancelled,
+            !busy, revision == operationRevision
+        else { return }
+        busy = true
+        defer { busy = false }
+        let liveIDs = Set(targets.compactMap { $0["id"] as? String })
+        for (targetID, binding) in tracked {
+            guard !stopped, !Task.isCancelled else { return }
+            if model.tab(binding.tabID) != nil, !isCurrent(binding) {
+                tracked.removeValue(forKey: targetID)
+                continue
+            }
+            if model.tab(binding.tabID) == nil {
+                if (try? await transport.command("Target.closeTarget", ["targetId": targetID])) != nil {
+                    tracked.removeValue(forKey: targetID)
+                }
+            } else if !liveIDs.contains(targetID) {
+                tracked.removeValue(forKey: targetID)
+                model.removeApp(binding.tabID)
+            }
         }
-        // Chromium targets that disappeared → remove their rail tab.
-        for (targetId, tabID) in tracked where !liveIDs.contains(targetId) {
-            tracked.removeValue(forKey: targetId)
-            if model.tab(tabID) != nil { model.removeApp(tabID) }
-        }
-        // New targets: while an agent space is active they belong to it —
-        // bind to an existing untracked tab when one matches, else add.
-        let agentActive = model.activeWorkspace.isAgentOwned
-        for target in targets where !seen.contains(target.targetId) {
-            seen.insert(target.targetId)
-            if agentActive { bindOrAdd(target) }
-        }
-        // Tracked tabs follow the agent's navigation (title + URL).
         for target in targets {
-            guard let tabID = tracked[target.targetId], var app = model.tab(tabID) else { continue }
-            var changed = false
-            let title = target.title ?? ""
-            if !title.isEmpty, title != app.title {
+            guard let targetID = target["id"] as? String, let binding = tracked[targetID],
+                isCurrent(binding), var app = model.tab(binding.tabID)
+            else { continue }
+            let previous = app
+            if let url = target["url"] as? String, !url.isEmpty, url != "about:blank" { app.urlString = url }
+            if let title = target["title"] as? String, !title.isEmpty {
                 app.title = BadgeParser.strippingCount(fromTitle: title)
-                changed = true
             }
-            if let url = target.url, url != "about:blank", url != app.urlString {
-                app.urlString = url
-                changed = true
-            }
-            if changed { model.update(app) }
+            if app != previous { model.update(app) }
         }
     }
 
-    private func bindOrAdd(_ target: TargetSnapshot) {
-        let workspace = model.activeWorkspace
-        let trackedTabIDs = Set(tracked.values)
-
-        // 1) The app just created this tab's engine — bind by expectation.
-        while !pendingBindings.isEmpty {
-            let pendingID = pendingBindings.removeFirst()
-            guard model.tab(pendingID) != nil,
-                  !trackedTabIDs.contains(pendingID),
-                  workspace.tabs.contains(where: { $0.id == pendingID }) else { continue }
-            tracked[target.targetId] = pendingID
-            adopt(target, into: pendingID)
-            return
-        }
-        // 2) Engine recreation (backend switch): same page, fresh target id.
-        if let match = workspace.tabs.first(where: {
-            !trackedTabIDs.contains($0.id) && Self.samePage($0.urlString, target.url ?? "")
-        }) {
-            tracked[target.targetId] = match.id
-            adopt(target, into: match.id)
-            return
-        }
-        // 3) A genuinely new agent page → mirror it into the rail.
-        if let app = model.addApp(
-            title: target.title ?? target.url ?? "New Tab",
-            urlString: target.url ?? "about:blank",
-            toWorkspace: workspace.id
-        ) {
-            tracked[target.targetId] = app.id
-        }
-    }
-
-    private func adopt(_ target: TargetSnapshot, into tabID: UUID) {
-        guard var app = model.tab(tabID) else { return }
-        var changed = false
-        if let title = target.title, !title.isEmpty, title != app.title {
-            app.title = BadgeParser.strippingCount(fromTitle: title)
-            changed = true
-        }
-        if let url = target.url, url != "about:blank", url != app.urlString {
-            app.urlString = url
-            changed = true
-        }
-        if changed { model.update(app) }
-    }
-
-    /// Page identity: exact URL, tolerating a trailing slash. Redirected
-    /// start pages are absorbed by the single-untracked-tab fallback instead
-    /// of URL heuristics, which would mis-bind sibling tabs on one site.
-    static func samePage(_ a: String, _ b: String) -> Bool {
-        guard !a.isEmpty, !b.isEmpty else { return false }
-        return a == b || a == b + "/" || b == a + "/"
-    }
-
-    // MARK: - CDP access
-
-    private struct TargetSnapshot: Decodable {
-        let targetId: String
-        let type: String
-        let title: String?
-        let url: String?
-
-        init(targetId: String, type: String, title: String?, url: String?) {
-            self.targetId = targetId
-            self.type = type
-            self.title = title
-            self.url = url
-        }
-
-        init(from decoder: Decoder) throws {
-            let container = try decoder.container(keyedBy: CodingKeys.self)
-            // The HTTP endpoint names the id field `id` (CLI cdp.ts normalizes
-            // the same quirk).
-            targetId = try container.decode(String.self, forKey: .id)
-            type = try container.decode(String.self, forKey: .type)
-            title = try? container.decodeIfPresent(String.self, forKey: .title)
-            url = try? container.decodeIfPresent(String.self, forKey: .url)
-        }
-
-        enum CodingKeys: String, CodingKey { case id, type, title, url }
-    }
-
-    private func fetchTargets() async throws -> [TargetSnapshot] {
-        let url = URL(string: "http://127.0.0.1:\(port)/json/list")!
-        let (data, _) = try await URLSession.shared.data(from: url)
-        let all = try JSONDecoder().decode([TargetSnapshot].self, from: data)
-        return all.filter { target in
-            guard target.type == "page" else { return false }
-            guard let raw = target.url else { return false }
-            return !raw.hasPrefix("devtools://") && !raw.hasPrefix("chrome://")
-        }
-    }
-
-    /// Close one Chromium target. Close is rare, so each call opens a short
-    /// browser-level socket instead of keeping one alive for the app lifetime.
-    private func closeTarget(_ targetId: String) {
-        Task { [port] in
-            guard
-                let versionURL = URL(string: "http://127.0.0.1:\(port)/json/version"),
-                let (data, _) = try? await URLSession.shared.data(from: versionURL),
-                let version = try? JSONDecoder().decode(BrowserVersion.self, from: data),
-                let wsURL = URL(string: version.webSocketDebuggerUrl)
-            else { return }
-            let socket = URLSession.shared.webSocketTask(with: wsURL)
-            socket.resume()
-            let payload = """
-            {"id":1,"method":"Target.closeTarget","params":{"targetId":"\(targetId)"}}
-            """
-            try? await socket.send(.string(payload))
-            try? await Task.sleep(for: .milliseconds(300))
-            socket.cancel(with: .normalClosure, reason: nil)
-        }
-    }
-
-    private struct BrowserVersion: Decodable {
-        let webSocketDebuggerUrl: String
-    }
 }

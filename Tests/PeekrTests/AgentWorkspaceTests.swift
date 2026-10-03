@@ -157,10 +157,4 @@ final class AgentWorkspaceTests: XCTestCase {
         XCTAssertNil(model.addApp(title: "x", urlString: "https://a.b", toWorkspace: UUID()))
     }
 
-    func testSamePageIdentityRules() {
-        XCTAssertTrue(AgentTargetSync.samePage("https://example.com", "https://example.com"))
-        XCTAssertTrue(AgentTargetSync.samePage("https://example.com", "https://example.com/"))
-        XCTAssertFalse(AgentTargetSync.samePage("https://example.com/a", "https://example.com/b"))
-        XCTAssertFalse(AgentTargetSync.samePage("", "https://example.com"))
-    }
 }

@@ -34,8 +34,10 @@ final class WebAppIdentityTests: XCTestCase {
     func testAliasRoundTrips() throws {
         var app = WebApp(title: "GitHub", urlString: "https://github.com")
         app.alias = "Work"
+        app.isPinned = true
         let decoded = try JSONDecoder().decode(WebApp.self, from: JSONEncoder().encode(app))
         XCTAssertEqual(decoded.alias, "Work")
+        XCTAssertTrue(decoded.isPinned)
     }
 
     func testTolerantDecodeDefaultsAliasToEmpty() throws {
@@ -44,5 +46,6 @@ final class WebAppIdentityTests: XCTestCase {
         """.utf8)
         let decoded = try JSONDecoder().decode(WebApp.self, from: json)
         XCTAssertEqual(decoded.alias, "")
+        XCTAssertFalse(decoded.isPinned)
     }
 }
