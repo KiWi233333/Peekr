@@ -33,4 +33,8 @@ final class DownloadStore {
     func clearFinished() {
         records.removeAll { $0.state != .downloading }
     }
+
+    func remove(id: UInt32) {
+        records.removeAll { $0.id == id }
+    }
 }

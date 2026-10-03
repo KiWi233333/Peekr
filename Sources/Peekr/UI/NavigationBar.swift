@@ -55,6 +55,24 @@ struct NavigationBar: View {
             reduceMotion ? nil : (showSuggestions ? Motion.dropdownOpen : Motion.dropdownClose),
             value: showSuggestions
         )
+        .overlay(alignment: .topTrailing) {
+            if downloadsOpen {
+                DownloadCenter(
+                    downloads: manager.downloads,
+                    settings: settings,
+                    onCancel: manager.cancelDownload,
+                    onRemove: manager.downloads.remove
+                )
+                .offset(y: 48)
+                .transition(
+                    reduceMotion
+                        ? .opacity
+                        : .scale(scale: 0.96, anchor: .topTrailing).combined(with: .opacity)
+                )
+                .zIndex(1)
+            }
+        }
+        .animation(reduceMotion ? nil : Motion.dropdownOpen, value: downloadsOpen)
         .onAppear { syncText() }
         .onChange(of: focused) { _, isFocused in
             // The native field restores the full URL on focus. Blur closes the dropdown
@@ -176,13 +194,6 @@ struct NavigationBar: View {
         .foregroundStyle(.primary)
         .help(settings.strings.downloads)
         .accessibilityLabel(settings.strings.downloads)
-        .popover(isPresented: $downloadsOpen, arrowEdge: .bottom) {
-            DownloadCenter(
-                downloads: downloads,
-                settings: settings,
-                onCancel: manager.cancelDownload
-            )
-        }
     }
 
     private var omnibox: some View {
@@ -380,129 +391,5 @@ struct NavigationBar: View {
         suggestTask?.cancel()
         suggestions = []
         selectedIndex = nil
-    }
-}
-
-private struct DownloadCenter: View {
-    let downloads: DownloadStore
-    let settings: Settings
-    let onCancel: (UInt32) -> Void
-
-    private var loc: Localized { settings.strings }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack {
-                Text(loc.downloads)
-                    .font(.headline)
-                Spacer()
-                if downloads.hasFinishedDownloads {
-                    Button(loc.clearCompletedDownloads) {
-                        downloads.clearFinished()
-                    }
-                    .buttonStyle(.plain)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                }
-            }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 12)
-
-            Divider()
-
-            if downloads.records.isEmpty {
-                Text(loc.noDownloads)
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, minHeight: 86)
-            } else {
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 2) {
-                        ForEach(downloads.records) { download in
-                            DownloadRow(download: download, settings: settings) {
-                                onCancel(download.id)
-                            }
-                        }
-                    }
-                    .padding(8)
-                }
-                .frame(maxHeight: 330)
-            }
-        }
-        .frame(width: 360)
-    }
-}
-
-private struct DownloadRow: View {
-    let download: WebDownload
-    let settings: Settings
-    let onCancel: () -> Void
-
-    private var loc: Localized { settings.strings }
-
-    var body: some View {
-        HStack(alignment: .top, spacing: 10) {
-            Image(systemName: iconName)
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(download.state == .canceled ? .secondary : .primary)
-                .frame(width: 22, height: 22)
-
-            VStack(alignment: .leading, spacing: 4) {
-                Text(download.fileName)
-                    .font(.system(size: 12.5, weight: .medium))
-                    .lineLimit(1)
-                HStack(spacing: 7) {
-                    Text(statusText)
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                    if download.state == .downloading {
-                        Button(loc.cancelDownload, action: onCancel)
-                            .buttonStyle(.plain)
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-                if let progress = download.progress, download.state == .downloading {
-                    ProgressView(value: progress)
-                        .progressViewStyle(.linear)
-                }
-                if download.state == .completed, let location = download.location {
-                    HStack(spacing: 10) {
-                        Button(loc.openDownloadedFile) {
-                            NSWorkspace.shared.open(location)
-                        }
-                        .buttonStyle(.plain)
-                        Button(loc.showDownloadedFile) {
-                            NSWorkspace.shared.activateFileViewerSelecting([location])
-                        }
-                        .buttonStyle(.plain)
-                    }
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                }
-            }
-            Spacer(minLength: 0)
-        }
-        .padding(.horizontal, 7)
-        .padding(.vertical, 7)
-        .background(.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-    }
-
-    private var iconName: String {
-        switch download.state {
-        case .downloading: return "arrow.down.circle"
-        case .completed: return "checkmark.circle"
-        case .canceled: return "xmark.circle"
-        case .failed: return "exclamationmark.circle"
-        }
-    }
-
-    private var statusText: String {
-        switch download.state {
-        case .downloading: return loc.downloadInProgress
-        case .completed: return loc.downloadComplete
-        case .canceled: return loc.downloadCanceled
-        case .failed: return loc.downloadFailed
-        }
     }
 }

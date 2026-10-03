@@ -141,6 +141,9 @@ struct Localized {
     var cancelDownload: String { t("Cancel download", "取消下载") }
     var openDownloadedFile: String { t("Open file", "打开文件") }
     var showDownloadedFile: String { t("Show in Finder", "在 Finder 中显示") }
+    var openDownloadsFolder: String { t("Open Downloads folder", "打开下载文件夹") }
+    var searchDownloads: String { t("Search downloads", "搜索下载") }
+    var noMatchingDownloads: String { t("No matching downloads", "没有匹配的下载") }
     var clearCompletedDownloads: String { t("Clear finished", "清除已结束") }
     var edit: String { t("Edit…", "编辑…") }
     var refreshIconAndTitle: String { t("Refresh Icon & Title", "刷新图标和标题") }
