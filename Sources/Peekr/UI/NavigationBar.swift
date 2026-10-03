@@ -20,6 +20,14 @@ struct NavigationBar: View {
     var onBookmarks: () -> Void
     var onToggleSidebar: () -> Void
 
+    private struct OmniboxBoundsKey: PreferenceKey {
+        static var defaultValue: Anchor<CGRect>?
+
+        static func reduce(value: inout Anchor<CGRect>?, nextValue: () -> Anchor<CGRect>?) {
+            value = nextValue() ?? value
+        }
+    }
+
     @State private var text = ""
     @State private var isDragging = false
     @State private var suggestions: [OmniboxSuggestion] = []
@@ -35,26 +43,38 @@ struct NavigationBar: View {
     /// URL over the newly activated page.
     @State private var shouldSyncFocusedAddress = false
     @State private var focused = false
+    @State private var suggestionsHovered = false
+    @State private var suggestionDismissTask: Task<Void, Never>?
     @State private var downloadsOpen = false
 
-    private var showSuggestions: Bool { focused && !suggestions.isEmpty }
+    private var showSuggestions: Bool {
+        !suggestions.isEmpty && (focused || suggestionsHovered)
+    }
 
     var body: some View {
-        VStack(spacing: 6) {
-            bar
-            if showSuggestions {
-                suggestionsList
-                    .transition(
-                        reduceMotion
-                            ? .identity
-                            : .scale(scale: 0.97, anchor: .top).combined(with: .opacity)
-                    )
+        bar
+            .overlayPreferenceValue(OmniboxBoundsKey.self) { anchor in
+                GeometryReader { proxy in
+                    if showSuggestions, let anchor {
+                        suggestionsList
+                            .frame(width: proxy[anchor].width)
+                            .offset(
+                                x: proxy[anchor].minX,
+                                y: proxy[anchor].maxY + 6
+                            )
+                            .transition(
+                                reduceMotion
+                                    ? .identity
+                                    : .scale(scale: 0.97, anchor: .top).combined(with: .opacity)
+                            )
+                            .zIndex(10)
+                    }
+                }
             }
-        }
-        .animation(
-            reduceMotion ? nil : (showSuggestions ? Motion.dropdownOpen : Motion.dropdownClose),
-            value: showSuggestions
-        )
+            .animation(
+                reduceMotion ? nil : (showSuggestions ? Motion.dropdownOpen : Motion.dropdownClose),
+                value: showSuggestions
+            )
         .overlay(alignment: .topTrailing) {
             if downloadsOpen {
                 DownloadCenter(
@@ -79,10 +99,14 @@ struct NavigationBar: View {
             // — it keeps whatever's in the field (typed text or a chosen
             // candidate) rather than snapping back to the page address.
             if isFocused {
+                // The omnibox dropdown and the download center share the same
+                // top chrome space; never leave two popovers competing there.
+                downloadsOpen = false
+                suggestionDismissTask?.cancel()
                 updateSuggestions()
             } else {
                 shouldSyncFocusedAddress = false
-                clearSuggestions()
+                scheduleSuggestionDismissal()
             }
         }
         .onChange(of: text) { _, _ in
@@ -215,6 +239,7 @@ struct NavigationBar: View {
             .frame(maxWidth: .infinity)
             .background(.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
             .shadcnFocusRing(focused, cornerRadius: 8)
+            .anchorPreference(key: OmniboxBoundsKey.self, value: .bounds) { $0 }
     }
 
     @ViewBuilder
@@ -244,7 +269,14 @@ struct NavigationBar: View {
         }
         .padding(5)
         .liquidGlass(in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-        .padding(.horizontal, 6)
+        .onHover { isHovered in
+            suggestionsHovered = isHovered
+            if isHovered {
+                suggestionDismissTask?.cancel()
+            } else if !focused {
+                scheduleSuggestionDismissal()
+            }
+        }
     }
 
     private func suggestionRow(_ suggestion: OmniboxSuggestion, highlighted: Bool) -> some View {
@@ -389,7 +421,26 @@ struct NavigationBar: View {
 
     private func clearSuggestions() {
         suggestTask?.cancel()
+        suggestionDismissTask?.cancel()
+        suggestionDismissTask = nil
+        suggestionsHovered = false
         suggestions = []
         selectedIndex = nil
+    }
+
+    /// AppKit ends editing before SwiftUI delivers a click to a suggestion row.
+    /// Defer blur dismissal briefly so the row remains alive long enough to
+    /// receive the click, while clicks outside the dropdown still close it.
+    private func scheduleSuggestionDismissal() {
+        suggestionDismissTask?.cancel()
+        suggestionDismissTask = Task { @MainActor in
+            do {
+                try await Task.sleep(for: .milliseconds(120))
+            } catch {
+                return
+            }
+            guard !Task.isCancelled, !focused, !suggestionsHovered else { return }
+            clearSuggestions()
+        }
     }
 }
