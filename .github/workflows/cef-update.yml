@@ -1,0 +1,142 @@
+name: CEF arm64 update review
+
+on:
+  schedule:
+    - cron: "17 6 * * 1,4"
+  workflow_dispatch:
+    inputs:
+      run_build:
+        description: "Run the approved Apple Silicon source build and smoke gates"
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: cef-arm64-update
+  cancel-in-progress: false
+
+jobs:
+  check:
+    name: Check stable arm64 metadata
+    runs-on: ubuntu-24.04
+    outputs:
+      current: ${{ steps.check.outputs.current }}
+      latest: ${{ steps.check.outputs.latest }}
+      update_available: ${{ steps.check.outputs.update_available }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate root manifest
+        run: ./scripts/validate-cef-manifest.sh check
+
+      - name: Check upstream arm64 stable pin
+        id: check
+        run: |
+          set -euo pipefail
+          RESULT="$(./scripts/cef-update-check.sh)"
+          echo "$RESULT"
+          echo "current=$(jq -r .current <<<"$RESULT")" >> "$GITHUB_OUTPUT"
+          echo "latest=$(jq -r .latestStableArm64 <<<"$RESULT")" >> "$GITHUB_OUTPUT"
+          echo "update_available=$(jq -r .updateAvailable <<<"$RESULT")" >> "$GITHUB_OUTPUT"
+
+      - name: Write review summary
+        run: |
+          {
+            echo "## CEF arm64 update check"
+            echo
+            echo "- Current: \\`${{ steps.check.outputs.current }}\\`"
+            echo "- Latest stable arm64: \\`${{ steps.check.outputs.latest }}\\`"
+            echo "- Update available: \\`${{ steps.check.outputs.update_available }}\\`"
+            echo
+            echo "No manifest, artifact, source header, or release file is changed by this job."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  review:
+    name: Open human review issue
+    needs: check
+    if: needs.check.outputs.update_available == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Create or reuse review issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CURRENT: ${{ needs.check.outputs.current }}
+          LATEST: ${{ needs.check.outputs.latest }}
+        run: |
+          set -euo pipefail
+          TITLE="CEF arm64 update review: ${LATEST}"
+          EXISTING="$(gh issue list --state open --search "${TITLE} in:title" --json number --jq '.[0].number' || true)"
+          if [ -n "$EXISTING" ]; then
+            echo "Review issue already exists: #$EXISTING"
+            exit 0
+          fi
+          gh issue create \
+            --title "$TITLE" \
+            --body "A newer stable arm64 CEF pin is available.\n\nCurrent: ${CURRENT}\nLatest: ${LATEST}\n\nBefore changing CEF_VERSION.json, attach source revision, automate-git.py digest, Chrome-codec license review, bridge-symbol results, arm64 bundle/smoke evidence, and rollback notes. This workflow never auto-promotes or auto-merges the update."
+
+  build:
+    name: Build and validate custom arm64 artifact
+    needs: check
+    if: inputs.run_build == true
+    runs-on: macos-14
+    timeout-minutes: 720
+    env:
+      PEEKR_CEF_ARTIFACT_URL: ${{ vars.PEEKR_CEF_ARTIFACT_URL }}
+      PEEKR_CEF_APPROVED_ORIGIN: ${{ vars.PEEKR_CEF_APPROVED_ORIGIN }}
+      PEEKR_HARDENED: "0"
+      PEEKR_SIGN_IDENTITY: "-"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Assert Apple Silicon host
+        run: |
+          set -euo pipefail
+          test "$(uname -s)" = "Darwin"
+          test "$(uname -m)" = "arm64"
+
+      - name: Validate reviewed manifest
+        run: ./scripts/validate-cef-manifest.sh release
+
+      - name: Rebuild pinned Chrome-codec artifact
+        run: ./scripts/build-cef-chrome-codecs.sh
+
+      - name: Validate staged artifact and Swift package
+        run: |
+          set -euo pipefail
+          ARTIFACT="$(python3 -c 'import json; print(json.load(open("CEF_VERSION.json"))["platforms"]["macosarm64"]["minimal"]["name"])')"
+          PEEKR_CEF_ARTIFACT="$PWD/.cef/artifacts/$ARTIFACT" ./scripts/prepare-cef.sh stage
+          swift build
+          swift test
+
+      - name: Build debug bundle
+        run: ./scripts/bundle.sh debug
+
+      - name: Audit CEF bridge symbols
+        run: |
+          Vendor/CefSwift/Scripts/check-symbols.sh \
+            "build/Peekr.app/Contents/Frameworks/Chromium Embedded Framework.framework"
+
+      - name: Run CEF capability smoke
+        run: ./scripts/smoke-cef-capabilities.sh build/Peekr.app
+
+      - name: Run CEF media smoke
+        run: ./scripts/smoke-cef-media.sh build/Peekr.app
+
+      - name: Run CEF permission smoke
+        run: ./scripts/smoke-cef-permissions.sh build/Peekr.app
+
+      - name: Upload CEF review evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: cef-arm64-review-${{ github.run_id }}
+          if-no-files-found: error
+          path: |
+            CEF_VERSION.json
+            .cef/artifacts/*.tar.bz2
+            .cef/dist/**/.peekr-artifact-provenance.json
+            build/Peekr.app

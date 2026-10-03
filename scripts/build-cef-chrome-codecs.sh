@@ -5,13 +5,48 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 REPO_ROOT="$PWD"
+MANIFEST="${PEEKR_CEF_MANIFEST:-$REPO_ROOT/CEF_VERSION.json}"
 
-CEF_VERSION="148.0.10+g7ee53f5+chromium-148.0.7778.218"
-CEF_BRANCH="7778"
-CEF_COMMIT="7ee53f518427a047f3c385446e3f92797e6b8cae"
-AUTOMATE_URL="https://raw.githubusercontent.com/chromiumembedded/cef/${CEF_COMMIT}/tools/automate/automate-git.py"
-AUTOMATE_SHA256="fe0c880fd2a91ac3ab4c82301f596295cecc1901e503507e36300a5b58578dcd"
-ARTIFACT_NAME="cef_binary_${CEF_VERSION}_macosarm64_chrome_codecs_minimal.tar.bz2"
+test -f "$MANIFEST" || { echo "CEF manifest missing: $MANIFEST" >&2; exit 1; }
+
+manifest_field() {
+  python3 - "$MANIFEST" "$1" <<'PY'
+import json
+import sys
+
+manifest_path, field = sys.argv[1:]
+with open(manifest_path, encoding="utf-8") as stream:
+    manifest = json.load(stream)
+artifact = manifest["platforms"]["macosarm64"]["minimal"]
+build = manifest["build"]
+values = {
+    "cef": manifest["cef"],
+    "chromium": manifest["chromium"],
+    "sourceRevision": build["sourceRevision"],
+    "automateGitURL": build["automateGitURL"],
+    "automateGitSHA256": build["automateGitSHA256"],
+    "gnDefines": " ".join(build["gnDefines"]),
+    "name": artifact["name"],
+    "sha1": artifact["sha1"],
+    "sha256": artifact["sha256"],
+    "size": str(artifact["size"]),
+}
+print(values[field])
+PY
+}
+
+"$REPO_ROOT/scripts/validate-cef-manifest.sh" check
+CEF_VERSION="$(manifest_field cef)"
+CHROMIUM_VERSION="$(manifest_field chromium)"
+CEF_BRANCH="$(printf '%s' "$CHROMIUM_VERSION" | cut -d. -f3)"
+CEF_COMMIT="$(manifest_field sourceRevision)"
+AUTOMATE_URL="$(manifest_field automateGitURL)"
+AUTOMATE_SHA256="$(manifest_field automateGitSHA256)"
+GN_DEFINES="$(manifest_field gnDefines)"
+ARTIFACT_NAME="$(manifest_field name)"
+EXPECTED_SHA1="$(manifest_field sha1)"
+EXPECTED_SHA256="$(manifest_field sha256)"
+EXPECTED_SIZE="$(manifest_field size)"
 
 # Keep the very large Chromium checkout outside tracked source by default. The
 # location is configurable so a dedicated volume can be used without changing
@@ -76,7 +111,7 @@ chmod 755 "$AUTOMATE"
 # distributions. Chrome branding plus proprietary_codecs enables the H.264/AAC
 # demux/decode path missing from Spotify's redistributable CEF builds. ThinLTO
 # and symbols are disabled to keep the single-machine build within 32 GiB RAM.
-export GN_DEFINES="is_official_build=true proprietary_codecs=true ffmpeg_branding=Chrome use_thin_lto=false symbol_level=0"
+export GN_DEFINES
 export CEF_ARCHIVE_FORMAT="tar.bz2"
 export CEF_ENABLE_ARM64=1
 export SDKROOT="$(xcrun --show-sdk-path --sdk macosx)"
@@ -118,6 +153,15 @@ cp -f "$BUILT_ARTIFACT" "$ARTIFACT_DIR/$ARTIFACT_NAME"
 ARTIFACT_SHA1="$(shasum -a 1 "$ARTIFACT_DIR/$ARTIFACT_NAME" | awk '{ print $1 }')"
 ARTIFACT_SHA256="$(shasum -a 256 "$ARTIFACT_DIR/$ARTIFACT_NAME" | awk '{ print $1 }')"
 ARTIFACT_SIZE="$(stat -f %z "$ARTIFACT_DIR/$ARTIFACT_NAME")"
+
+if [ "$ARTIFACT_SHA1" != "$EXPECTED_SHA1" ] \
+  || [ "$ARTIFACT_SHA256" != "$EXPECTED_SHA256" ] \
+  || [ "$ARTIFACT_SIZE" != "$EXPECTED_SIZE" ]; then
+  echo "Built artifact does not match the root CEF_VERSION.json pins." >&2
+  echo "Expected size=$EXPECTED_SIZE sha1=$EXPECTED_SHA1 sha256=$EXPECTED_SHA256" >&2
+  echo "Actual   size=$ARTIFACT_SIZE sha1=$ARTIFACT_SHA1 sha256=$ARTIFACT_SHA256" >&2
+  exit 1
+fi
 
 echo "[cef-build] Artifact: $ARTIFACT_DIR/$ARTIFACT_NAME"
 echo "[cef-build] Size: $ARTIFACT_SIZE"

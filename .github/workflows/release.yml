@@ -53,6 +53,18 @@ jobs:
       - name: Show toolchain
         run: swift --version && xcodebuild -version
 
+      - name: Assert Apple Silicon release host
+        run: |
+          set -euo pipefail
+          test "$(uname -s)" = "Darwin"
+          test "$(uname -m)" = "arm64"
+
+      - name: Validate reviewed arm64 CEF manifest
+        env:
+          PEEKR_CEF_ARTIFACT_URL: ${{ vars.PEEKR_CEF_ARTIFACT_URL }}
+          PEEKR_CEF_APPROVED_ORIGIN: ${{ vars.PEEKR_CEF_APPROVED_ORIGIN }}
+        run: ./scripts/validate-cef-manifest.sh release
+
       - name: Cache SwiftPM
         uses: actions/cache@v4
         with:
@@ -122,7 +134,13 @@ jobs:
           # Prefer a repository variable pointing at an immutable, access-
           # controlled artifact URL; prepare-cef.sh verifies both SHA-1/SHA-256.
           PEEKR_CEF_ARTIFACT_URL: ${{ vars.PEEKR_CEF_ARTIFACT_URL }}
+          PEEKR_CEF_APPROVED_ORIGIN: ${{ vars.PEEKR_CEF_APPROVED_ORIGIN }}
         run: ./scripts/bundle.sh release
+
+      - name: Audit CEF bridge symbols
+        run: |
+          Vendor/CefSwift/Scripts/check-symbols.sh \
+            "build/Peekr.app/Contents/Frameworks/Chromium Embedded Framework.framework"
 
       - name: Set up notarization credentials
         id: notary

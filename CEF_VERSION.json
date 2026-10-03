@@ -8,8 +8,30 @@
         "name": "cef_binary_148.0.10+g7ee53f5+chromium-148.0.7778.218_macosarm64_chrome_codecs_minimal.tar.bz2",
         "sha1": "ecaf72905c02c0b8458461bdf04b7b8da706f997",
         "sha256": "49689bad292d405df292c0251270743215aa716d85910d63f8ca1cd1a6b4c4e6",
-        "size": 125443078
+        "size": 125443078,
+        "source": {
+          "url": null,
+          "origin": null,
+          "immutable": true
+        }
       }
     }
+  },
+  "build": {
+    "sourceRevision": "7ee53f518427a047f3c385446e3f92797e6b8cae",
+    "automateGitURL": "https://raw.githubusercontent.com/chromiumembedded/cef/7ee53f518427a047f3c385446e3f92797e6b8cae/tools/automate/automate-git.py",
+    "automateGitSHA256": "fe0c880fd2a91ac3ab4c82301f596295cecc1901e503507e36300a5b58578dcd",
+    "gnDefines": [
+      "is_official_build=true",
+      "proprietary_codecs=true",
+      "ffmpeg_branding=Chrome",
+      "use_thin_lto=false",
+      "symbol_level=0"
+    ]
+  },
+  "review": {
+    "codecLicensing": "pending",
+    "apiCompatibility": "pending",
+    "attestation": "required"
   }
 }

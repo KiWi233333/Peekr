@@ -24,9 +24,10 @@ fi
 
 case "$(uname -s)-$(uname -m)" in
   Darwin-arm64) PLATFORM="macosarm64" ;;
-  Darwin-x86_64) PLATFORM="macosx64" ;;
-  *) echo "Unsupported CEF host: $(uname -s)-$(uname -m)" >&2; exit 2 ;;
+  *) echo "Peekr custom CEF requires Darwin-arm64; refusing $(uname -s)-$(uname -m)." >&2; exit 2 ;;
 esac
+
+"$ROOT/scripts/validate-cef-manifest.sh" check
 
 manifest_field() {
   python3 - "$MANIFEST" "$PLATFORM" "$1" <<'PY'
@@ -37,13 +38,15 @@ path, platform, field = sys.argv[1:]
 with open(path, encoding="utf-8") as stream:
     manifest = json.load(stream)
 artifact = manifest["platforms"][platform]["minimal"]
+source = artifact.get("source") or {}
 values = {
     "cef": manifest["cef"],
     "name": artifact["name"],
     "sha1": artifact["sha1"],
     "sha256": artifact.get("sha256", ""),
     "size": str(artifact["size"]),
-    "source": artifact.get("source", ""),
+    "sourceURL": source.get("url") or "",
+    "sourceOrigin": source.get("origin") or "",
 }
 print(values[field])
 PY
@@ -54,7 +57,8 @@ ARTIFACT_NAME="$(manifest_field name)"
 EXPECTED_SHA1="$(manifest_field sha1)"
 EXPECTED_SHA256="$(manifest_field sha256)"
 EXPECTED_SIZE="$(manifest_field size)"
-MANIFEST_SOURCE="$(manifest_field source)"
+MANIFEST_SOURCE_URL="$(manifest_field sourceURL)"
+MANIFEST_SOURCE_ORIGIN="$(manifest_field sourceOrigin)"
 
 case "$EXPECTED_SHA1:$EXPECTED_SHA256" in
   *[!0-9a-fA-F:]*) echo "Invalid checksum characters in $MANIFEST" >&2; exit 1 ;;
@@ -70,7 +74,7 @@ esac
 DOWNLOADS="$ROOT/.cef/downloads"
 TARGET="$DOWNLOADS/$ARTIFACT_NAME"
 DIST="$ROOT/.cef/dist/${CEF_VERSION}_${PLATFORM}_minimal"
-PROVENANCE="$DIST/.peekr-artifact-sha1"
+PROVENANCE="$DIST/.peekr-artifact-provenance.json"
 mkdir -p "$DOWNLOADS"
 
 checksum() {
@@ -94,8 +98,13 @@ matches_manifest() {
 
 if [ "$MODE" = "record" ]; then
   test -f "$DIST/.ok" || { echo "CEF distribution is not prepared: $DIST" >&2; exit 1; }
-  printf '%s\n' "$EXPECTED_SHA1" > "$PROVENANCE"
-  echo "[cef] Recorded prepared artifact provenance: $EXPECTED_SHA1"
+  matches_manifest "$TARGET" || { echo "Cached custom artifact no longer matches the manifest." >&2; exit 1; }
+  SOURCE_URL="${PEEKR_CEF_ARTIFACT_URL:-$MANIFEST_SOURCE_URL}"
+  SOURCE_ORIGIN="${PEEKR_CEF_APPROVED_ORIGIN:-$MANIFEST_SOURCE_ORIGIN}"
+  cat > "$PROVENANCE" <<EOF
+{"artifact":"$ARTIFACT_NAME","cef":"$CEF_VERSION","platform":"$PLATFORM","size":$EXPECTED_SIZE,"sha1":"$EXPECTED_SHA1","sha256":"$EXPECTED_SHA256","sourceURL":"$SOURCE_URL","sourceOrigin":"$SOURCE_ORIGIN"}
+EOF
+  echo "[cef] Recorded prepared artifact provenance: $EXPECTED_SHA256"
   exit 0
 fi
 
@@ -124,14 +133,27 @@ else
       ENCODED_NAME="$(python3 -c 'import sys, urllib.parse; print(urllib.parse.quote(sys.argv[1], safe=""))' "$ARTIFACT_NAME")"
       SOURCE_URL="${PEEKR_CEF_BASE_URL%/}/$ENCODED_NAME"
     else
-      SOURCE_URL="$MANIFEST_SOURCE"
+      SOURCE_URL="$MANIFEST_SOURCE_URL"
     fi
     if [ -z "$SOURCE_URL" ]; then
       echo "No source configured for custom CEF artifact $ARTIFACT_NAME." >&2
       echo "Set PEEKR_CEF_ARTIFACT, PEEKR_CEF_ARTIFACT_DIR, PEEKR_CEF_ARTIFACT_URL, or PEEKR_CEF_BASE_URL." >&2
       exit 1
     fi
-    SOURCE_ORIGIN="$(python3 -c 'import sys, urllib.parse; u=urllib.parse.urlsplit(sys.argv[1]); print(f"{u.scheme}://{u.netloc}" if u.scheme and u.netloc else "configured URL")' "$SOURCE_URL")"
+    case "$SOURCE_URL" in
+      https://*) ;;
+      *) echo "Custom CEF artifact sources must use HTTPS: $SOURCE_URL" >&2; exit 1 ;;
+    esac
+    SOURCE_ORIGIN="$(python3 -c 'import sys, urllib.parse; u=urllib.parse.urlsplit(sys.argv[1]); print(f"{u.scheme}://{u.netloc}")' "$SOURCE_URL")"
+    APPROVED_ORIGIN="${PEEKR_CEF_APPROVED_ORIGIN:-$MANIFEST_SOURCE_ORIGIN}"
+    [ -n "$APPROVED_ORIGIN" ] || {
+      echo "Set PEEKR_CEF_APPROVED_ORIGIN for the immutable artifact origin: $SOURCE_ORIGIN" >&2
+      exit 1
+    }
+    [ "$SOURCE_ORIGIN" = "$APPROVED_ORIGIN" ] || {
+      echo "Unapproved CEF artifact origin: $SOURCE_ORIGIN (expected $APPROVED_ORIGIN)" >&2
+      exit 1
+    }
     echo "[cef] Downloading custom artifact from $SOURCE_ORIGIN"
     curl --fail --location --retry 3 --progress-bar --output "$STAGING" "$SOURCE_URL"
   fi
@@ -151,8 +173,8 @@ fi
 # artifact hash. Invalidate only its completion marker when provenance differs;
 # the plugin will atomically rebuild this cache entry from the verified tarball.
 if [ -f "$DIST/.ok" ]; then
-  RECORDED_SHA1="$(cat "$PROVENANCE" 2>/dev/null || true)"
-  if [ "$RECORDED_SHA1" != "$EXPECTED_SHA1" ]; then
+  RECORDED_SHA256="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])) .get("sha256", ""))' "$PROVENANCE" 2>/dev/null || true)"
+  if [ "$RECORDED_SHA256" != "$EXPECTED_SHA256" ]; then
     rm -f "$DIST/.ok" "$PROVENANCE"
     echo "[cef] Invalidated stale extracted CEF cache for the new artifact."
   fi

@@ -39,9 +39,10 @@ The script pins CEF `148.0.10+g7ee53f5+chromium-148.0.7778.218` at commit
 
 ## Pin and consume the artifact
 
-Add a project-root `CEF_VERSION.json` using the produced name, byte size, SHA-1,
-and SHA-256. The `platforms.macosarm64.minimal` object accepts two Peekr fields
-in addition to CefSwift's manifest schema:
+The project-root `CEF_VERSION.json` is the only Peekr CEF authority. It must keep
+the produced name, byte size, SHA-1, SHA-256, source revision, pinned
+`automate-git.py` digest, GN flags, and human-review status. It intentionally has
+no x86_64 entry:
 
 ```json
 {
@@ -49,15 +50,36 @@ in addition to CefSwift's manifest schema:
   "sha1": "<40 hex characters>",
   "sha256": "<64 hex characters>",
   "size": 123,
-  "source": "https://immutable-artifact-location/example.tar.bz2"
+  "source": {
+    "url": "https://immutable-artifact-location/example.tar.bz2",
+    "origin": "https://immutable-artifact-location",
+    "immutable": true
+  }
 }
 ```
 
-`scripts/prepare-cef.sh` accepts a local file (`PEEKR_CEF_ARTIFACT`), a local
-directory (`PEEKR_CEF_ARTIFACT_DIR`), an exact URL
-(`PEEKR_CEF_ARTIFACT_URL`), or a base URL (`PEEKR_CEF_BASE_URL`). It validates
-size, SHA-1, and SHA-256 before CefSwift extracts the distribution. The normal
-`scripts/bundle.sh` path performs this automatically.
+Run `./scripts/validate-cef-manifest.sh check` before local work. Release mode
+is intentionally fail-closed until codec licensing, API compatibility,
+attestation, and the approved immutable artifact origin are marked `approved`.
+`scripts/prepare-cef.sh` accepts a local file (`PEEKR_CEF_ARTIFACT`) or local
+directory for an explicit developer build; remote downloads require HTTPS and
+`PEEKR_CEF_APPROVED_ORIGIN`, then validate size, SHA-1, and SHA-256 before
+CefSwift extracts the distribution. The normal `scripts/bundle.sh` path performs
+the same arm64 gate automatically and records a JSON provenance receipt beside
+the extracted cache. Remote staging also requires
+`PEEKR_CEF_APPROVED_ORIGIN` to equal the URL origin; a checksum alone is not an
+approval of an untrusted host.
+
+The root `.github/workflows/cef-update.yml` only checks stable arm64 metadata,
+opens a human review issue, and optionally runs the approved Apple Silicon build
+and smoke gates. It never treats the vendored CefSwift updater as authoritative,
+never adds an x86 artifact, and never auto-merges a Chrome-codec update.
+
+Rollback is a manifest revert: restore the previous `CEF_VERSION.json`, remove
+the matching `.cef/dist/<version>_macosarm64_minimal` cache entry, rerun
+`./scripts/validate-cef-manifest.sh check`, then rebuild and repeat the bridge
+symbol and CEF smoke checks. Do not reuse a same-version cache without the
+matching SHA-256 provenance receipt.
 
 For a deterministic runtime check, build a debug app and run:
 

@@ -4,6 +4,13 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+case "$(uname -s)-$(uname -m)" in
+  Darwin-arm64) ;;
+  *) echo "Peekr custom CEF bundles require Darwin-arm64; refusing $(uname -s)-$(uname -m)." >&2; exit 2 ;;
+esac
+
+./scripts/validate-cef-manifest.sh check
+
 CONFIG="${1:-release}"
 case "$CONFIG" in
   debug|release) ;;
@@ -68,7 +75,6 @@ test -n "$CEF_MANIFEST" || { echo "CEF manifest missing after bundle." >&2; exit
 CEF_VERSION="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["cef"])' "$CEF_MANIFEST")"
 case "$(uname -m)" in
   arm64) CEF_PLATFORM="macosarm64" ;;
-  x86_64) CEF_PLATFORM="macosx64" ;;
   *) echo "Unsupported CEF architecture: $(uname -m)" >&2; exit 1 ;;
 esac
 CEF_DIST=".cef/dist/${CEF_VERSION}_${CEF_PLATFORM}_minimal"
