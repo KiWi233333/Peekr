@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { finishRound, stopRound } from './round.js';
 // peekr — command-line harness for AI agents to drive Peekr's Chromium pages.
 //
 //   peekr nodejs <<'EOF' … EOF   run a script with the helper surface
@@ -24,9 +25,10 @@ const USAGE = `peekr — drive Peekr's browser from any AI agent
 
 Usage:
   peekr nodejs <<'EOF'
-  const task = await useOrCreateSpace('research tokens')
-  await openOrReuseTab('https://example.com')
-  cliLog(await snapshotText())
+  const task = await taskSpace('research tokens')
+  const page = task.page('p1')
+  await page.goto('https://example.com')
+  cliLog(await page.snapshot())
   EOF
 
   peekr doctor      check agent.json, CDP endpoint and control API
@@ -35,6 +37,7 @@ Usage:
   peekr help [topic] show this message or an API topic
 
 Helpers (available as bare identifiers inside the heredoc):
+  pages     taskSpace → page(label), pages(), handOff(), finish({keep})
   spaces    useOrCreateSpace listSpaces claimSpace handOffSpace
             takeOverSpace completeSpace waitForAgentControl
   nav       listTabs openOrReuseTab switchTab closeTab gotoAndWait
@@ -46,8 +49,9 @@ Helpers (available as bare identifiers inside the heredoc):
   output    cliLog
 
 Notes:
-  - @N refs are valid only for the most recent snapshot; re-snapshot after
-    every navigation or mutation.
+  - Page handles restore refs across rounds only for the same document.
+    Re-snapshot after navigation or DOM changes.
+  - Native Agent Access is required. One CLI round owns the browser at a time.
   - A space taken over by the user hard-stops every browser operation.
 `;
 
@@ -88,7 +92,13 @@ async function runNodejs(sourceOverride?: string, jsonOutput = false): Promise<n
     warn: (...values: unknown[]) => process.stderr.write(`${values.join(" ")}\n`),
   };
   let interrupted = false;
-  const onInterrupt = () => { interrupted = true; };
+  const onInterrupt = () => {
+    interrupted = true;
+    stopRound();
+    for (const socket of state.sockets.values()) socket.close();
+    process.stderr.write(JSON.stringify({ ok: false, code: 'PEEKR_INTERRUPTED', hard_stop: false, message: 'Script interrupted. In-flight effects may be unknown; no action was replayed.' }) + '\n');
+    process.exit(130);
+  };
   process.once("SIGINT", onInterrupt);
   const names = [...helperNames(), "peekr", "ego", "console"];
   const values = [
@@ -112,6 +122,7 @@ async function runNodejs(sourceOverride?: string, jsonOutput = false): Promise<n
   }
   try {
     await run(...values);
+    await finishRound();
     if (interrupted) {
       process.stderr.write(JSON.stringify({ ok: false, code: "PEEKR_INTERRUPTED", message: "Script interrupted.", hard_stop: false }) + "\n");
       return 130;
@@ -134,7 +145,7 @@ async function runNodejs(sourceOverride?: string, jsonOutput = false): Promise<n
   } finally {
     process.removeListener("SIGINT", onInterrupt);
     for (const socket of state.sockets.values()) socket.close();
-    state.browser?.close();
+    stopRound();
   }
 }
 
@@ -142,7 +153,8 @@ async function runDoctor(): Promise<number> {
   const report: Record<string, unknown> = { discoveryFile: discoveryFileURL() };
   try {
     const discovery = loadDiscovery();
-    report.discovery = discovery;
+    const { token: _token, ...safeDiscovery } = discovery;
+    report.discovery = safeDiscovery;
     const targets = await listTargetsHttp(discovery.port);
     report.cdp = {
       reachable: true,
@@ -271,6 +283,10 @@ export { resetRefs } from "./state.js";
 export { resolveRef } from "./ref-map.js";
 export { skillFiles } from "./skill-assets.js";
 export { PUBLIC_API_SCHEMA, renderApiHelp, validateApiCall } from "./public-api-schema.js";
+export { TaskSpace, Page } from './page-model.js';
+export { parseChord } from './driver/key-chords.js';
+export { TargetSocket } from './cdp.js';
+export { acquireLease, releaseLease, generationOf } from './round.js';
 export { PageLedgerStore, pageLedgerFileURL } from "./page-ledger.js";
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

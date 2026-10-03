@@ -2,8 +2,8 @@
 // pass through assertAgentMayOperate() so a user-taken-over space hard-stops
 // exactly like ego-browser's "user is controlling".
 
-import { listTargetsHttp } from "../cdp.js";
-import { loadDiscovery } from "../discovery.js";
+import { runOperation } from '../round.js';
+import { taskSpace, claimTaskSpace, takeOverTaskSpace } from '../page-model.js';
 import { ErrorCodes, PeekrError } from "../errors.js";
 import { resetRefs, state } from "../state.js";
 import {
@@ -22,19 +22,20 @@ import {
 
 /** Guard: refuse browser ops when the selected space belongs to the user. */
 async function guarded<T>(operation: () => Promise<T>): Promise<T> {
-  await assertAgentMayOperate();
-  return operation();
+  return runOperation(async () => { await assertAgentMayOperate(); return operation(); });
 }
 
 export const helpers = {
   // Task spaces (ego's task-space names are aliased below).
-  listSpaces,
-  useOrCreateSpace,
-  claimSpace,
-  handOffSpace,
-  takeOverSpace,
-  completeSpace,
-  waitForAgentControl,
+  listSpaces: (...args: Parameters<typeof listSpaces>) => runOperation(() => listSpaces(...args)),
+  useOrCreateSpace: (...args: Parameters<typeof useOrCreateSpace>) => runOperation(() => useOrCreateSpace(...args)),
+  claimSpace: (...args: Parameters<typeof claimSpace>) => runOperation(() => claimSpace(...args)),
+  handOffSpace: (...args: Parameters<typeof handOffSpace>) => runOperation(() => handOffSpace(...args)),
+  takeOverSpace: (...args: Parameters<typeof takeOverSpace>) => runOperation(() => takeOverSpace(...args)),
+  completeSpace: (...args: Parameters<typeof completeSpace>) => runOperation(() => completeSpace(...args)),
+  waitForAgentControl: (...args: Parameters<typeof waitForAgentControl>) => runOperation(() => waitForAgentControl(...args)),
+
+  taskSpace,
 
   // Navigation / tabs
   listTabs: () => guarded(listTabs),
@@ -44,17 +45,10 @@ export const helpers = {
   closeTab: (targetId?: string) => guarded(() => closeTab(targetId)),
   gotoAndWait: (url: string, options?: { timeout?: number; settle?: number }) =>
     guarded(() => gotoAndWait(url, options)),
-  currentTab: async () => {
-    await guarded(async () => {
-      await ensureCurrentPage();
-    });
-    const discovery = loadDiscovery();
-    const targets = await listTargetsHttp(discovery.port);
-    const current = targets.find((target) => target.targetId === state.targetId);
-    return current
-      ? { targetId: current.targetId, title: current.title, url: current.url }
-      : null;
-  },
+  currentTab: () => guarded(async () => {
+    const id = await ensureCurrentPage();
+    return (await listTabs()).find(tab => tab.targetId === id) ?? null;
+  }),
   pageInfo: () => guarded(pageInfo),
 
   // Observation
@@ -79,12 +73,12 @@ export const helpers = {
 
   // Waits
   wait,
-  waitForLoad,
-  waitForElement,
+  waitForLoad: (...args: Parameters<typeof waitForLoad>) => guarded(() => waitForLoad(...args)),
+  waitForElement: (...args: Parameters<typeof waitForElement>) => guarded(() => waitForElement(...args)),
 
   // Direct evaluation
   js: (expression: string) => guarded(() => js(expression)),
-  cdp,
+  cdp: (...args: Parameters<typeof cdp>) => guarded(() => cdp(...args)),
 
   /** Clear refs without a fresh snapshot (rarely needed; snapshot resets). */
   resetRefs: (): void => {
@@ -99,12 +93,12 @@ export const helpers = {
 
 // ego-trained agents get the familiar task-space names for free.
 const aliases: Record<string, unknown> = {
-  taskSpace: helpers.useOrCreateSpace,
-  useOrCreateTaskSpace: helpers.useOrCreateSpace,
+  taskSpace: helpers.taskSpace,
+  useOrCreateTaskSpace: helpers.taskSpace,
   listTaskSpaces: helpers.listSpaces,
-  claimTaskSpace: helpers.claimSpace,
+  claimTaskSpace,
   handOffTaskSpace: helpers.handOffSpace,
-  takeOverTaskSpace: helpers.takeOverSpace,
+  takeOverTaskSpace,
   completeTaskSpace: helpers.completeSpace,
 };
 Object.assign(helpers, aliases);

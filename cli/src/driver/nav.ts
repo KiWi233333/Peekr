@@ -1,197 +1,156 @@
+import { forgetPageRefs } from '../page-refs.js';
 // Navigation driver: target discovery, sticky current-tab selection, per-page
 // socket lifecycle, and URL loading. Mirrors ego-browser's nav.ts surface.
 
-import { BrowserSocket, listTargetsHttp, TargetSocket, type CdpTarget } from "../cdp.js";
+import { listTargetsHttp, TargetSocket } from "../cdp.js";
 import { discoveryFileURL, loadDiscovery } from "../discovery.js";
 import { ErrorCodes, PeekrError } from "../errors.js";
 import { PageLedgerStore, pageLedgerFileURL } from "../page-ledger.js";
 import { state } from "../state.js";
+import { acquireLease, rememberFailure } from "../round.js";
+import { assertAgentMayOperate, controlRequest } from "./spaces.js";
 
-const INTERNAL_URL_PREFIXES = ["devtools://", "chrome://", "wss://"];
-
-let ledger: PageLedgerStore | undefined;
-let ledgerSpaceId: string | undefined;
-
-function currentLedger(): PageLedgerStore | undefined {
-  const spaceId = state.space?.id;
-  if (!spaceId) {
-    ledger = undefined;
-    ledgerSpaceId = undefined;
-    return undefined;
-  }
-  if (!ledger || ledgerSpaceId !== spaceId) {
-    ledger = new PageLedgerStore(pageLedgerFileURL(discoveryFileURL()));
-    ledgerSpaceId = spaceId;
-  }
-  return ledger;
+export function currentLedger(): PageLedgerStore {
+  if (!state.space) throw new PeekrError(ErrorCodes.spaceRequired, 'Select a task space first.');
+  acquireLease();
+  return new PageLedgerStore(pageLedgerFileURL(discoveryFileURL()));
 }
 
 function nextPageLabel(store: PageLedgerStore): string {
-  const used = new Set(store.list(state.space?.id).map((entry) => entry.label));
-  for (let index = 1; ; index += 1) {
-    const label = `p${index}`;
-    if (!used.has(label)) return label;
-  }
+  const used = new Set(store.list(state.space?.id).map(entry => entry.label));
+  for (let index = 1; ; index++) if (!used.has(`p${index}`)) return `p${index}`;
 }
 
-function isPageTarget(target: CdpTarget): boolean {
-  return target.type === "page" && !INTERNAL_URL_PREFIXES.some((prefix) => target.url.startsWith(prefix));
+function spacePath(): string {
+  if (!state.space) throw new PeekrError(ErrorCodes.spaceRequired, 'Select a task space first.');
+  return `/spaces/${encodeURIComponent(state.space.id)}/tabs`;
 }
 
-async function ensureBrowserSocket(): Promise<BrowserSocket> {
-  if (!state.browser) {
-    const discovery = loadDiscovery();
-    state.browser = await BrowserSocket.connect(discovery.port);
-  }
-  return state.browser;
-}
-
-/** Open (or reuse) the per-page socket and enable the domains we rely on. */
 export async function socketFor(targetId: string, wsUrl?: string): Promise<TargetSocket> {
   const existing = state.sockets.get(targetId);
-  if (existing) return existing;
-  const url = wsUrl
-    ?? (await listTargetsHttp(loadDiscovery().port)).find((target) => target.targetId === targetId)?.webSocketDebuggerUrl;
-  if (!url) {
-    throw new PeekrError(ErrorCodes.cdpUnavailable, `No DevTools socket for target ${targetId}.`);
+  if (existing) {
+    if (existing.isOpen) return existing;
+    state.sockets.delete(targetId);
+    state.refMap.clear();
+    throw new PeekrError(ErrorCodes.cdpUnavailable, 'Page socket disconnected; start a new round. No action was replayed.');
   }
+  const url = wsUrl ?? (await listTargetsHttp(loadDiscovery().port)).find(target => target.targetId === targetId)?.webSocketDebuggerUrl;
+  if (!url) throw new PeekrError(ErrorCodes.stalePage, `No live socket for page ${targetId}.`);
   const socket = await TargetSocket.open(url);
-  await socket.try("Page.enable");
-  await socket.try("Runtime.enable");
-  await socket.try("DOM.enable");
-  state.sockets.set(targetId, socket);
-  return socket;
+  // Recheck native ownership before every protocol dispatch, including polling waits.
+  socket.beforeSend = async () => {
+    try {
+      await assertAgentMayOperate();
+      if (!(await listTabs()).some(tab => tab.targetId === targetId)) {
+        throw new PeekrError(ErrorCodes.targetNotOwned, 'Page no longer belongs to the selected task space.');
+      }
+    } catch (error) { rememberFailure(error); throw error; }
+  };
+  try {
+    await socket.try('Page.enable');
+    await socket.try('Runtime.enable');
+    await socket.try('DOM.enable');
+    state.sockets.set(targetId, socket);
+    return socket;
+  } catch (error) {
+    socket.close();
+    throw error;
+  }
 }
 
-/** Socket of the current page; connects (or reconnects) on demand. */
 export async function currentSocket(options: { createIfMissing?: boolean } = {}): Promise<TargetSocket> {
-  const targetId = await ensureCurrentPage(options);
-  return socketFor(targetId);
+  return socketFor(await ensureCurrentPage(options));
 }
 
-/**
- * Pick the current page: the sticky preferred target when still alive, else
- * the first real page. Throws `PEEKR_NO_ACTIVE_TAB` when Peekr has no pages.
- */
-export async function ensureCurrentPage(options: { createIfMissing?: boolean } = {}): Promise<string> {
-  const discovery = loadDiscovery();
-  let targets = (await listTargetsHttp(discovery.port)).filter(isPageTarget);
-
-  if (targets.length === 0 && options.createIfMissing) {
-    const browser = await ensureBrowserSocket();
-    const created = await browser.send<{ targetId: string }>("Target.createTarget", { url: "about:blank" });
-    state.preferredTargetId = created.targetId;
-    state.targetId = created.targetId;
-    targets = (await listTargetsHttp(discovery.port)).filter(isPageTarget);
-  } else if (targets.length === 0) {
-    throw new PeekrError(
-      ErrorCodes.noActiveTab,
-      "Peekr has no live web pages. Open one in the panel or call openOrReuseTab(url).",
-    );
-  }
-
-  const preferred = state.preferredTargetId
-    ? targets.find((target) => target.targetId === state.preferredTargetId)
-    : undefined;
-  const chosen = preferred ?? targets[0];
-  if (state.targetId === chosen.targetId && state.sockets.has(chosen.targetId)) {
-    return chosen.targetId;
-  }
-
-  state.preferredTargetId = chosen.targetId;
+export async function ensureCurrentPage(_options: { createIfMissing?: boolean } = {}): Promise<string> {
+  await assertAgentMayOperate();
+  const tabs = await listTabs();
+  const preferred = state.preferredTargetId;
+  const chosen = preferred ? tabs.find(tab => tab.targetId === preferred) : tabs[0];
+  if (!chosen) throw new PeekrError(preferred ? ErrorCodes.stalePage : ErrorCodes.noActiveTab,
+    preferred ? 'Selected page disappeared; refusing to switch to another page.' : 'No managed pages in this task space.');
+  if (state.targetId !== chosen.targetId) state.refMap.clear();
   state.targetId = chosen.targetId;
-  await socketFor(chosen.targetId, chosen.webSocketDebuggerUrl);
+  state.preferredTargetId = chosen.targetId;
+  await socketFor(chosen.targetId);
   return chosen.targetId;
 }
 
 export interface TabInfo {
   targetId: string;
+  tabId?: string;
   title: string;
   url: string;
   active: boolean;
-  /** Stable Page label when the selected TaskSpace owns this target. */
   label?: string;
 }
 
 export async function listTabs(): Promise<TabInfo[]> {
-  const discovery = loadDiscovery();
-  const targets = (await listTargetsHttp(discovery.port)).filter(isPageTarget);
+  await assertAgentMayOperate();
+  const payload = await controlRequest<{ tabs: TabInfo[] }>('GET', spacePath());
   const store = currentLedger();
-  const labels = new Map(store?.list(state.space?.id).map((entry) => [entry.targetId, entry.label]));
-  return targets.map((target) => ({
-    targetId: target.targetId,
-    title: target.title,
-    url: target.url,
-    active: target.targetId === (state.preferredTargetId ?? targets[0]?.targetId),
-    ...(labels.get(target.targetId) ? { label: labels.get(target.targetId) } : {}),
-  }));
+  const { active } = store.reconcile(state.space!.id, payload.tabs.map(tab => tab.targetId), acquireLease());
+  const labels = new Map(active.map(entry => [entry.targetId, entry.label]));
+  return payload.tabs.map(tab => ({ ...tab, label: labels.get(tab.targetId), active: tab.targetId === state.preferredTargetId }));
 }
 
 export async function switchTab(targetId: string): Promise<void> {
-  const discovery = loadDiscovery();
-  const target = (await listTargetsHttp(discovery.port)).find((entry) => entry.targetId === targetId);
-  if (!target) {
-    throw new PeekrError(ErrorCodes.noActiveTab, `No tab with targetId ${targetId}.`);
-  }
-  state.preferredTargetId = targetId;
-  state.targetId = targetId;
-  await socketFor(targetId, target.webSocketDebuggerUrl);
+  const tab = (await listTabs()).find(entry => entry.targetId === targetId || entry.label === targetId);
+  if (!tab) throw new PeekrError(ErrorCodes.targetNotOwned, 'Target is not a managed page in this space.');
+  if (state.targetId !== tab.targetId) state.refMap.clear();
+  state.preferredTargetId = tab.targetId;
+  state.targetId = tab.targetId;
+  await socketFor(tab.targetId);
 }
 
-export interface OpenOptions {
-  wait?: boolean;
-  timeout?: number;
-  label?: string;
+export interface OpenOptions { wait?: boolean; timeout?: number; label?: string }
+
+export function navigationURL(input: string): string {
+  let url: URL;
+  try { url = new URL(/^[a-z][a-z0-9+.-]*:/i.test(input) ? input : `https://${input}`); }
+  catch { throw new PeekrError(ErrorCodes.invalidArgument, 'Invalid page URL.'); }
+  if (!['http:', 'https:'].includes(url.protocol)) throw new PeekrError(ErrorCodes.invalidArgument, 'Only HTTP(S) page URLs are supported.');
+  return url.href;
 }
 
-/** Reuse the first tab whose URL starts with `url`; otherwise open a new one. */
 export async function openOrReuseTab(url: string, options: OpenOptions = {}): Promise<TabInfo> {
-  const wanted = url.startsWith("http") ? url : `https://${url}`;
-  const existing = (await listTabs()).find((tab) => tab.url.startsWith(wanted));
+  await assertAgentMayOperate();
+  const wanted = navigationURL(url);
+  const tabs = await listTabs();
+  const store = currentLedger();
+  const entry = options.label ? store.resolve(state.space!.id, options.label) : undefined;
+  if (entry && (entry.status !== 'active' || entry.generation !== acquireLease())) {
+    throw new PeekrError(ErrorCodes.stalePage, `Page ${options.label} is stale or permanently closed. Use a new label.`);
+  }
+  // Explicit labels identify pages, never URL prefixes or unrelated tabs.
+  const existing = options.label ? tabs.find(tab => tab.targetId === entry?.targetId) : tabs.find(tab => tab.url === wanted);
   if (existing) {
     await switchTab(existing.targetId);
-    const store = currentLedger();
-    if (store && state.space && options.label && !store.resolve(state.space.id, options.label)) {
-      store.bind(state.space.id, options.label, existing.targetId, { url: existing.url, title: existing.title });
-      existing.label = options.label;
-    }
+    if (existing.url !== wanted) await gotoAndWait(wanted, { timeout: options.timeout });
     return existing;
   }
-  const browser = await ensureBrowserSocket();
-  const created = await browser.send<{ targetId: string }>("Target.createTarget", { url: wanted });
-  state.preferredTargetId = created.targetId;
-  state.targetId = created.targetId;
+  const label = options.label ?? nextPageLabel(store);
+  const { tab } = await controlRequest<{ tab: TabInfo }>('POST', spacePath(), { url: wanted });
+  store.bind(state.space!.id, label, tab.targetId, { url: wanted, title: tab.title, generation: acquireLease() });
+  state.refMap.clear();
+  state.targetId = tab.targetId;
+  state.preferredTargetId = tab.targetId;
   if (options.wait !== false) await waitForLoad({ timeout: options.timeout });
-  const tabs = await listTabs();
-  const result =
-    tabs.find((tab) => tab.targetId === created.targetId)
-    ?? { targetId: created.targetId, title: "", url: wanted, active: true };
-  const store = currentLedger();
-  if (store && state.space) {
-    const label = options.label ?? nextPageLabel(store);
-    if (!store.resolve(state.space.id, label)) {
-      store.bind(state.space.id, label, result.targetId, { url: result.url, title: result.title });
-      result.label = label;
-    }
-  }
-  return result;
+  return { ...tab, label, active: true };
 }
 
 export async function closeTab(targetId?: string): Promise<void> {
   const id = targetId ?? state.targetId;
-  if (!id) return;
-  const browser = await ensureBrowserSocket();
-  await browser.try("Target.closeTarget", { targetId: id });
-  state.sockets.get(id)?.close();
-  state.sockets.delete(id);
-  const store = currentLedger();
-  if (store && state.space) {
-    const entry = store.list(state.space.id).find((candidate) => candidate.targetId === id);
-    if (entry) store.unbind(state.space.id, entry.label);
-  }
-  if (id === state.targetId) {
-    state.targetId = null;
-  }
+  if (!id) throw new PeekrError(ErrorCodes.noActiveTab, 'No selected page.');
+  const tab = (await listTabs()).find(entry => entry.targetId === id || entry.label === id);
+  if (!tab) throw new PeekrError(ErrorCodes.targetNotOwned, 'Target is not owned by this space.');
+  await switchTab(tab.targetId);
+  await controlRequest('DELETE', `${spacePath()}/${encodeURIComponent(tab.targetId)}`);
+  forgetPageRefs();
+  state.sockets.get(tab.targetId)?.close();
+  state.sockets.delete(tab.targetId);
+  if (tab.label) currentLedger().unbind(state.space!.id, tab.label);
+  if (state.targetId === tab.targetId) { state.targetId = null; state.preferredTargetId = null; state.refMap.clear(); }
 }
 
 export interface PageInfo {
@@ -240,16 +199,17 @@ export interface WaitOptions {
 }
 
 /** Wait until the current page reaches `complete` (plus an optional settle). */
-export async function waitForLoad(options: WaitOptions = {}): Promise<void> {
+export async function waitForLoad(options: WaitOptions = {}, loaderId?: string): Promise<void> {
   const socket = await currentSocket();
   const timeoutMs = options.timeout ?? 20_000;
   const deadline = Date.now() + timeoutMs;
   for (;;) {
     const done = await socket
-      .send<any>("Runtime.evaluate", { expression: "document.readyState", returnByValue: true })
-      .catch(() => undefined);
+      .send<any>("Runtime.evaluate", { expression: "document.readyState", returnByValue: true });
     const readyState = done?.result?.value;
-    if (readyState === "complete") break;
+    const info = await pageInfo();
+    const frame = loaderId ? await socket.send<any>('Page.getFrameTree') : undefined;
+    if (readyState === 'complete' && /^https?:/.test(info.url) && (!loaderId || frame?.frameTree?.frame?.loaderId === loaderId)) break;
     if (Date.now() > deadline) {
       throw new PeekrError(
         ErrorCodes.actionFailed,
@@ -263,9 +223,11 @@ export async function waitForLoad(options: WaitOptions = {}): Promise<void> {
 
 export async function gotoAndWait(url: string, options: WaitOptions = {}): Promise<PageInfo> {
   const socket = await currentSocket();
-  const target = url.startsWith("http") ? url : `https://${url}`;
-  await socket.send("Page.navigate", { url: target });
-  await waitForLoad({ timeout: options.timeout, settle: options.settle ?? 250 });
+  const target = navigationURL(url);
+  forgetPageRefs();
+  const result = await socket.send<{errorText?: string; loaderId?: string}>("Page.navigate", { url: target });
+  if (result.errorText) throw new PeekrError(ErrorCodes.actionFailed, result.errorText);
+  await waitForLoad({ timeout: options.timeout, settle: options.settle ?? 250 }, result.loaderId);
   // Refs from the previous page are gone after navigation.
   state.refMap = new Map();
   return await pageInfo();

@@ -1,11 +1,9 @@
 // Minimal CDP client. Node ≥22 ships a global `WebSocket`, so no dependency
 // is needed. CEF's browser-level flattened sessions (Target.attachToTarget)
 // are broken — verified against CEF 148 — so the harness connects one socket
-// per page (`/json/list` → webSocketDebuggerUrl) and keeps a browser-level
-// socket only for Target.createTarget / Target.closeTarget, which do work.
+// per authorized page. Native control routes own all target lifecycle operations.
 
 import { ErrorCodes, PeekrError } from "./errors.js";
-import type { Discovery } from "./discovery.js";
 
 export interface CdpTarget {
   targetId: string;
@@ -36,13 +34,20 @@ export class TargetSocket {
     method: string;
     predicate?: (params: any) => boolean;
     resolve: (event: CdpEvent) => void;
+    reject: (error: Error) => void;
     timer: NodeJS.Timeout;
   }> = [];
   private eventLog: CdpEvent[] = [];
 
+  beforeSend?: () => Promise<void>;
+  get isOpen(): boolean { return this.ws?.readyState === WebSocket.OPEN; }
   private constructor(readonly url: string) {}
 
   static async open(wsUrl: string): Promise<TargetSocket> {
+    const url = new URL(wsUrl);
+    if (url.protocol !== 'ws:' || !['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)) {
+      throw new PeekrError(ErrorCodes.cdpUnavailable, 'Only local DevTools sockets are supported.');
+    }
     const socket = new TargetSocket(wsUrl);
     await socket.openWs(wsUrl);
     return socket;
@@ -52,7 +57,7 @@ export class TargetSocket {
     return new Promise((resolvePromise, reject) => {
       this.ws = new WebSocket(wsUrl);
       const timer = setTimeout(
-        () => reject(new PeekrError(ErrorCodes.cdpUnavailable, "DevTools WebSocket handshake timed out.")),
+        () => { this.ws.close(); reject(new PeekrError(ErrorCodes.cdpUnavailable, "DevTools WebSocket handshake timed out.")); },
         10_000,
       );
       this.ws.addEventListener("open", () => {
@@ -65,11 +70,10 @@ export class TargetSocket {
       });
       this.ws.addEventListener("message", (event) => this.receive(String(event.data)));
       this.ws.addEventListener("close", () => {
-        for (const [, entry] of this.pending) {
-          clearTimeout(entry.timer);
-          entry.reject(new PeekrError(ErrorCodes.cdpUnavailable, "DevTools connection closed."));
-        }
-        this.pending.clear();
+        clearTimeout(timer);
+        const error = new PeekrError(ErrorCodes.cdpUnavailable, 'DevTools connection closed; requests were not replayed.');
+        reject(error);
+        this.rejectPending(error);
       });
     });
   }
@@ -115,6 +119,8 @@ export class TargetSocket {
   }
 
   async send<T = any>(method: string, params?: any): Promise<T> {
+    await this.beforeSend?.();
+    if (!this.isOpen) throw new PeekrError(ErrorCodes.cdpUnavailable, 'DevTools socket is closed; start a new round.');
     const id = this.nextId++;
     return new Promise<T>((resolvePromise, reject) => {
       const timer = setTimeout(() => {
@@ -122,7 +128,8 @@ export class TargetSocket {
         reject(new PeekrError(ErrorCodes.cdpUnavailable, `CDP ${method} timed out.`));
       }, DEFAULT_TIMEOUT_MS);
       this.pending.set(id, { method, resolve: resolvePromise, reject, timer });
-      this.ws.send(JSON.stringify({ id, method, params: params ?? {} }));
+      try { this.ws.send(JSON.stringify({ id, method, params: params ?? {} })); }
+      catch (error) { clearTimeout(timer); this.pending.delete(id); reject(error as Error); }
     });
   }
 
@@ -130,7 +137,8 @@ export class TargetSocket {
   async try<T = any>(method: string, params?: any): Promise<T | undefined> {
     try {
       return await this.send<T>(method, params);
-    } catch {
+    } catch (error) {
+      if (error instanceof PeekrError && (error.hardStop || error.code === ErrorCodes.cdpUnavailable)) throw error;
       return undefined;
     }
   }
@@ -139,6 +147,7 @@ export class TargetSocket {
     method: string,
     options: { predicate?: (params: any) => boolean; timeoutMs?: number } = {},
   ): Promise<CdpEvent> {
+    if (!this.isOpen) return Promise.reject(new PeekrError(ErrorCodes.cdpUnavailable, 'DevTools socket is closed.'));
     for (let index = 0; index < this.eventLog.length; index++) {
       const event = this.eventLog[index];
       if (event.method !== method) continue;
@@ -155,50 +164,27 @@ export class TargetSocket {
         method,
         predicate: options.predicate,
         resolve: resolvePromise,
+        reject,
         timer,
       });
     });
   }
 
+  private rejectPending(error: Error): void {
+    for (const entry of this.pending.values()) { clearTimeout(entry.timer); entry.reject(error); }
+    this.pending.clear();
+    for (const waiter of this.eventWaiters) { clearTimeout(waiter.timer); waiter.reject(error); }
+    this.eventWaiters = [];
+    this.eventLog = [];
+  }
+
   close(): void {
+    this.rejectPending(new PeekrError(ErrorCodes.cdpUnavailable, 'DevTools socket disposed.'));
     try {
       this.ws.close();
     } catch {
       // Closing an already-dead socket is fine.
     }
-  }
-}
-
-/**
- * Browser-level control socket. Only the target lifecycle commands
- * (createTarget/closeTarget) are routed here — CEF implements those, but not
- * flattened attach sessions.
- */
-export class BrowserSocket {
-  private constructor(private readonly socket: TargetSocket) {}
-
-  static async connect(port: number): Promise<BrowserSocket> {
-    const version = await fetchJson<any>(port, "/json/version").catch(() => null);
-    const wsUrl = version?.webSocketDebuggerUrl;
-    if (!wsUrl) {
-      throw new PeekrError(
-        ErrorCodes.cdpUnavailable,
-        `Peekr's DevTools endpoint on 127.0.0.1:${port} did not answer. Enable Agent Access, then quit and reopen Peekr.`,
-      );
-    }
-    return new BrowserSocket(await TargetSocket.open(wsUrl));
-  }
-
-  send<T = any>(method: string, params?: any): Promise<T> {
-    return this.socket.send<T>(method, params);
-  }
-
-  try<T = any>(method: string, params?: any): Promise<T | undefined> {
-    return this.socket.try<T>(method, params);
-  }
-
-  close(): void {
-    this.socket.close();
   }
 }
 

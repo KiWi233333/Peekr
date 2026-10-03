@@ -3,7 +3,7 @@
 // from the most recent snapshot, and the selected task space. Everything here
 // lives for one `peekr nodejs` invocation, mirroring ego-browser.
 
-import type { BrowserSocket, TargetSocket } from "./cdp.js";
+import type { TargetSocket } from "./cdp.js";
 
 export interface RefInfo {
   /** `@N` handle shown to the agent; unique within the latest snapshot. */
@@ -17,7 +17,7 @@ export interface RefInfo {
   /** Owning target id for OOPIF refs; undefined = the current page itself. */
   frameTargetId?: string;
   /** Same-origin frame chain (data-peekr-frame ids) + in-frame selector. */
-  frame?: { chain: number[]; selector: string };
+  frame?: { chain: number[]; selector: string; epoch?: string };
   href?: string;
 }
 
@@ -28,7 +28,6 @@ export interface SpaceContext {
 }
 
 export const state = {
-  browser: null as BrowserSocket | null,
   /** Live page sockets keyed by targetId (pages + OOPIF frames). */
   sockets: new Map<string, TargetSocket>(),
   preferredTargetId: null as string | null,

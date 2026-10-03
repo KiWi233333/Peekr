@@ -1,12 +1,14 @@
+import { forgetSpaceRefs } from '../page-refs.js';
 // Task-space operations over Peekr's local control API. Spaces map 1:1 onto
 // Peekr workspaces with a three-state ownership (user / agent /
 // agentDelegatedToUser), enforced app-side and mirrored here. When the
-// control API is absent (older app build without the bridge), space helpers
-// fail with a clear error while plain page ops keep working CDP-only.
+// control API is absent, all browser operations fail closed.
 
-import { loadDiscovery } from "../discovery.js";
+import { discoveryFileURL, loadDiscovery } from "../discovery.js";
 import { ErrorCodes, PeekrError } from "../errors.js";
 import { state, type SpaceContext } from "../state.js";
+import { acquireLease, assertRound, yieldRound } from "../round.js";
+import { PageLedgerStore, pageLedgerFileURL } from "../page-ledger.js";
 
 export interface SpaceInfo extends SpaceContext {
   agentOwner: string;
@@ -30,7 +32,7 @@ async function controlConfig(): Promise<ControlConfig> {
   return { controlPort: discovery.controlPort, token: discovery.token };
 }
 
-async function controlRequest<T>(
+export async function controlRequest<T>(
   method: string,
   path: string,
   body?: unknown,
@@ -69,34 +71,42 @@ export async function listSpaces(): Promise<SpaceInfo[]> {
   return payload.spaces;
 }
 
-/** Numeric ids must exist; strings match by name or id, else create. */
-export async function useOrCreateSpace(nameOrId: string | number): Promise<SpaceInfo> {
-  if (typeof nameOrId === "number" || /^\d+$/.test(String(nameOrId).trim())) {
-    const numeric = Number(nameOrId);
-    const found = (await listSpaces()).find((space) => Number(space.id) === numeric);
-    if (!found) {
-      throw new PeekrError(
-        ErrorCodes.spaceNotFound,
-        `No space with id ${numeric}. Use listSpaces() or pass an intent name to create one.`,
-      );
-    }
-    state.space = found;
-    return found;
+export function selectSpace(space: SpaceInfo): SpaceInfo {
+  if (state.space?.id !== space.id) {
+    state.targetId = null;
+    state.preferredTargetId = null;
+    state.refMap.clear();
   }
-  const name = String(nameOrId).trim();
-  const existing = (await listSpaces()).find(
-    (space) => space.name === name || space.id === name,
-  );
-  const space: SpaceInfo = existing
-    ?? await controlRequest<{ space: SpaceInfo }>("POST", "/spaces", { name }).then((payload) => payload.space);
   state.space = space;
+  return space;
+}
+
+export async function readSpace(id: string): Promise<SpaceInfo> {
+  const space = (await listSpaces()).find(entry => entry.id === id);
+  if (!space) throw new PeekrError(ErrorCodes.spaceInactive, `Space ${id} no longer exists.`);
+  return space;
+}
+
+/** An exact id wins; duplicate names are ambiguous and must never silently select a space. */
+export async function useOrCreateSpace(nameOrId: string | number): Promise<SpaceInfo> {
+  const name = String(nameOrId).trim();
+  if (!name) throw new PeekrError(ErrorCodes.invalidArgument, 'A task space name or id is required.');
+  const spaces = await listSpaces();
+  const exact = spaces.find(space => space.id === name);
+  const matches = exact ? [exact] : spaces.filter(space => space.name === name);
+  if (matches.length > 1) throw new PeekrError(ErrorCodes.invalidArgument, 'Ambiguous space name; use its id.');
+  if (!matches.length && (/^[0-9]+$/.test(name) || /^[0-9a-f]{8}-[0-9a-f-]{27}$/i.test(name))) {
+    throw new PeekrError(ErrorCodes.spaceNotFound, `No space with id ${name}.`);
+  }
+  const space = matches[0] ?? (await controlRequest<{space: SpaceInfo}>('POST', '/spaces', { name })).space;
+  selectSpace(space);
+  await assertAgentMayOperate();
   return space;
 }
 
 async function spaceAction(path: string, body?: unknown): Promise<SpaceInfo> {
   const payload = await controlRequest<{ space: SpaceInfo }>("POST", path, body);
-  state.space = payload.space;
-  return payload.space;
+  return selectSpace(payload.space);
 }
 
 /** Take a user-owned (or handed-off) space over as the agent's own. */
@@ -109,6 +119,7 @@ export async function handOffSpace(id?: string | number): Promise<{ done: boolea
   const target = id ?? state.space?.id;
   if (!target) return { done: false, skipped: "no-space-selected" };
   const space = await spaceAction(`/spaces/${encodeURIComponent(String(target))}/handoff`);
+  yieldRound();
   return { done: true, space };
 }
 
@@ -125,17 +136,31 @@ export async function takeOverSpace(id?: string | number): Promise<SpaceInfo> {
  * Finish the task. `keep: false` (default) closes the space; `keep: true`
  * leaves the pages up for the user to inspect.
  */
-export async function completeSpace(id?: string | number, options: { keep?: boolean } = {}): Promise<{ done: boolean; skipped?: string }> {
-  const target = id ?? state.space?.id;
-  if (!target) return { done: false, skipped: "no-space-selected" };
-  const encoded = encodeURIComponent(String(target));
-  if (options.keep) {
-    await controlRequest("POST", `/spaces/${encoded}/complete`, { keep: true });
-    return { done: true };
+export async function completeSpace(id?: string | number, options: { keep?: boolean | string[] } = {}): Promise<{ done: boolean; closed: boolean }> {
+  const target = String(id ?? state.space?.id ?? '');
+  if (!target) throw new PeekrError(ErrorCodes.spaceRequired, 'Select a task space first.');
+  selectSpace(await readSpace(target));
+  await assertAgentMayOperate();
+  const store = new PageLedgerStore(pageLedgerFileURL(discoveryFileURL()));
+  const { tabs } = await controlRequest<{ tabs: Array<{ targetId: string }> }>('GET', `/spaces/${encodeURIComponent(target)}/tabs`);
+  const live = store.reconcile(target, tabs.map(tab => tab.targetId), acquireLease()).active;
+  let keep: string[] = [];
+  if (options.keep === true) keep = tabs.map(tab => tab.targetId);
+  else if (Array.isArray(options.keep)) {
+    keep = options.keep.map(label => {
+      const entry = live.find(page => page.label === label);
+      if (!entry) throw new PeekrError(ErrorCodes.stalePage, `Cannot retain unknown page ${label}.`);
+      return entry.targetId;
+    });
   }
-  await controlRequest("DELETE", `/spaces/${encoded}`);
+  const result = await controlRequest<{ closed: boolean }>('POST', `/spaces/${encodeURIComponent(target)}/finish`, { keep });
+  store.clearSpace(target);
+  forgetSpaceRefs(target);
   state.space = null;
-  return { done: true };
+  state.targetId = null;
+  state.preferredTargetId = null;
+  state.refMap.clear();
+  return { done: true, closed: result.closed };
 }
 
 /** Read-only poll until the space is agent-controlled again (or timeout). */
@@ -146,11 +171,11 @@ export async function waitForAgentControl(id?: string | number, timeoutSeconds =
   }
   const deadline = Date.now() + timeoutSeconds * 1_000;
   for (;;) {
-    const spaces = await listSpaces().catch(() => undefined);
-    const space = spaces?.find((entry) => entry.id === String(target));
-    if (space && space.ownership !== "user") {
-      state.space = space;
-      return space;
+    const spaces = await listSpaces();
+    const space = spaces.find((entry) => entry.id === String(target));
+    if (!space) throw new PeekrError(ErrorCodes.spaceInactive, `Space ${target} no longer exists.`);
+    if (space && space.ownership === "agent") {
+      return selectSpace(space);
     }
     if (Date.now() > deadline) {
       throw new PeekrError(
@@ -164,30 +189,15 @@ export async function waitForAgentControl(id?: string | number, timeoutSeconds =
 
 /**
  * Guard for browser ops: with a selected space that the user now owns, every
- * operation hard-stops. Cached briefly so a burst of ops costs one lookup.
+ * operation hard-stops. Ownership is refreshed before every protocol dispatch.
  */
 export async function assertAgentMayOperate(): Promise<void> {
-  if (!state.space) return;
-  try {
-    const discovery = loadDiscovery();
-    if (!discovery.controlPort) return; // CDP-only mode: no ownership enforcement possible
-  } catch {
-    return;
-  }
-  const spaces = await listSpaces().catch(() => undefined);
-  if (!spaces) return;
-  const fresh = spaces.find((space) => space.id === state.space!.id);
-  if (!fresh) {
-    throw new PeekrError(
-      ErrorCodes.spaceInactive,
-      `Space ${state.space.id} no longer exists (closed or completed).`,
-    );
-  }
+  assertRound();
+  acquireLease();
+  if (!state.space) throw new PeekrError(ErrorCodes.spaceRequired, 'Select a task space before operating the browser.');
+  const fresh = await readSpace(state.space.id);
   state.space = fresh;
-  if (fresh.ownership === "user") {
-    throw new PeekrError(
-      ErrorCodes.spaceUserInControl,
-      `Space "${fresh.name || fresh.id}" is controlled by the user right now.`,
-    );
+  if (fresh.ownership !== 'agent') {
+    throw new PeekrError(ErrorCodes.spaceUserInControl, `Space "${fresh.name || fresh.id}" is controlled by the user.`);
   }
 }

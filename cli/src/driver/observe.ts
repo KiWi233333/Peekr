@@ -1,8 +1,9 @@
+import { documentEpoch, savePageRefs } from '../page-refs.js';
 // The snapshot engine. ego-lite generates this inside its customized Chromium
 // kernel; Peekr cannot modify the CEF kernel, so the same output is produced
 // at the harness layer: CDP Accessibility.getFullAXTree per frame, joined with
 // DOMSnapshot.captureSnapshot for stable-locator attributes and geometry, and
-// cross-origin (OOPIF) frames merged from their own targets.
+// same-origin frame walking. Cross-origin frames currently remain placeholders.
 
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
@@ -76,6 +77,7 @@ export async function snapshotRaw(options: SnapshotOptions = {}): Promise<Snapsh
   const targetId = await ensureCurrentPage();
   const socket = state.sockets.get(targetId)!;
 
+  const epoch = await documentEpoch(socket);
   await socket.try("Accessibility.enable");
   const tree = await socket.send<{ nodes: AxNode[] }>("Accessibility.getFullAXTree");
 
@@ -101,7 +103,7 @@ export async function snapshotRaw(options: SnapshotOptions = {}): Promise<Snapsh
     try {
       const elements = await walkFrameElements(socket, frame.chain);
       for (const element of elements) {
-        const ref = renderer.nextRefFor(element.role, element.name, frame.chain, element.selector);
+        const ref = renderer.nextRefFor(element.role, element.name, frame.chain, element.selector, element.epoch);
         const parts = [
           `${indent}  ${refToken(ref)} [${element.role}]`,
           element.name ? JSON.stringify(element.name.slice(0, MAX_TEXT_LENGTH)) : undefined,
@@ -121,7 +123,9 @@ export async function snapshotRaw(options: SnapshotOptions = {}): Promise<Snapsh
     `URL: ${info?.url ?? ""}`.trimEnd(),
   ];
   const content = [...header, ...renderer.finish(), ""].join("\n");
+  if (epoch !== await documentEpoch(socket)) throw new PeekrError(ErrorCodes.unknownRef, 'Page navigated while taking the snapshot. Take a fresh snapshot.');
   resetRefs(renderer.refs);
+  savePageRefs(epoch, renderer.refs);
   return { content, refs: renderer.refs };
 }
 
@@ -207,14 +211,14 @@ export class SnapshotRenderer {
   }
 
   /** Register a frame-walked element as a ref and return its number. */
-  nextRefFor(role: string, name: string, chain: number[], selector: string): number {
+  nextRefFor(role: string, name: string, chain: number[], selector: string, epoch?: string): number {
     const ref = this.nextRef++;
     this.refs.push({
       ref,
       role,
       name,
       locator: selector ? `css:${selector}` : undefined,
-      frame: { chain, selector },
+      frame: { chain, selector, epoch },
     });
     return ref;
   }

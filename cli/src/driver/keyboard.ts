@@ -2,31 +2,54 @@
 // pipeline (IME-safe), plus fillInput which focuses and selects first so the
 // new text replaces the old across React/Vue controlled inputs.
 
-import { state } from "../state.js";
-import { resolveTarget } from "./locator.js";
+import { resolveTarget, resolveElement, callElement } from "./locator.js";
 import type { ClickTarget } from "./pointer.js";
 import { currentSocket } from "./nav.js";
+import { ErrorCodes, PeekrError } from '../errors.js';
+import { parseChord, type KeySpec } from './key-chords.js';
 
-const VIRTUAL_KEYS: Record<string, number> = {
-  Enter: 13, Tab: 9, Escape: 27, Backspace: 8, Delete: 46, Space: 32,
-  ArrowLeft: 37, ArrowUp: 38, ArrowRight: 39, ArrowDown: 40,
-  Home: 36, End: 35, PageUp: 33, PageDown: 34,
-};
-
-export async function pressKey(key: string): Promise<void> {
+export async function pressKey(chord: string, options: { delay?: number } = {}): Promise<void> {
+  const keys = parseChord(chord);
+  const delay = options.delay ?? 0;
+  if (!Number.isFinite(delay) || delay < 0) throw new PeekrError(ErrorCodes.invalidArgument, 'delay must be nonnegative milliseconds.');
   const socket = await currentSocket();
-  const virtualKeyCode = VIRTUAL_KEYS[key] ?? 0;
-  const base = {
-    key,
-    windowsVirtualKeyCode: virtualKeyCode,
-    nativeVirtualKeyCode: virtualKeyCode,
-  };
-  const isPrintable = virtualKeyCode === 0 && key.length === 1;
-  await socket.send("Input.dispatchKeyEvent", { type: isPrintable ? "keyDown" : "rawKeyDown", ...base });
-  if (isPrintable) {
-    await socket.send("Input.dispatchKeyEvent", { type: "char", ...base, text: key });
+  let modifiers = 0;
+  const pressed: KeySpec[] = [];
+  let failure: unknown;
+  try {
+    for (const key of keys) {
+      modifiers |= key.modifier ?? 0;
+      const {modifier: _, ...event} = key;
+      const commands = process.platform === 'darwin' && modifiers === 4 && key.key.toLowerCase() === 'a' ? ['selectAll'] : undefined;
+      await socket.send('Input.dispatchKeyEvent', {type:'rawKeyDown', ...event, modifiers, commands});
+      pressed.push(key);
+      if (key.key.length === 1 && !(modifiers & 7)) {
+        const text = modifiers & 8 ? key.key.toUpperCase() : key.key;
+        await socket.send('Input.dispatchKeyEvent', {type:'char', ...event, key:text, text, modifiers});
+      }
+    }
+    if (delay) await new Promise(resolve => setTimeout(resolve, delay));
+  } catch (error) { failure = error; }
+  // Every release still passes the ownership guard. Never bypass a takeover for cleanup.
+  for (const key of pressed.reverse()) {
+    modifiers &= ~(key.modifier ?? 0);
+    const {modifier: _, ...event} = key;
+    try { await socket.send('Input.dispatchKeyEvent', {type:'keyUp', ...event, modifiers}); }
+    catch (error) { failure ??= error; }
   }
-  await socket.send("Input.dispatchKeyEvent", { type: "keyUp", ...base });
+  if (failure) throw failure;
+
+}
+
+export async function typeKeys(text: string, options: { delay?: number } = {}): Promise<void> {
+  if (typeof text !== 'string') throw new PeekrError(ErrorCodes.invalidArgument, 'text must be a string.');
+  const delay = options.delay ?? 0;
+  if (!Number.isFinite(delay) || delay < 0) throw new PeekrError(ErrorCodes.invalidArgument, 'delay must be nonnegative milliseconds.');
+  for (const character of text) {
+    if (character.length === 1) await pressKey(character);
+    else await typeText(character);
+    if (delay) await new Promise(resolve => setTimeout(resolve, delay));
+  }
 }
 
 export async function typeText(text: string): Promise<void> {
@@ -36,36 +59,21 @@ export async function typeText(text: string): Promise<void> {
 
 /** Focus the element, select its content, then insert text as real input. */
 export async function fillInput(target: ClickTarget, text: string): Promise<void> {
-  const resolved = await resolveTarget(target);
-  if (resolved.frame) {
-    // In-frame elements: focus via the page context, then type through the
-    // trusted input pipeline.
-    const { focusFrameElement } = await import("./frames.js");
-    await focusFrameElement(resolved.socket, resolved.frame.chain, resolved.frame.selector);
-    await resolved.socket.send("Input.insertText", { text });
-    return;
-  }
-  if (!resolved.objectId) {
-    throw Object.assign(new Error("fillInput needs an element target, not bare coordinates"), { code: "PEEKR_ACTION_FAILED" });
-  }
-  await resolved.socket.send(
-    "Runtime.callFunctionOn",
-    {
-      objectId: resolved.objectId,
-      functionDeclaration: `function () {
-        this.focus();
-        if (typeof this.select === "function" && (this.tagName === "INPUT" || this.tagName === "TEXTAREA")) {
-          this.select();
-        } else if (this.isContentEditable) {
-          const range = document.createRange();
-          range.selectNodeContents(this);
-          const selection = window.getSelection();
-          selection.removeAllRanges();
-          selection.addRange(range);
-        }
-      }`,
-      returnByValue: true,
-    },
-  );
-  await resolved.socket.send("Input.insertText", { text });
+  if (typeof text !== 'string') throw new PeekrError(ErrorCodes.invalidArgument, 'fill requires text.');
+  await resolveTarget(target);
+  const element = await resolveElement(target as string | number);
+  await callElement(element, `
+    if (this.readOnly) throw Error('Element is readonly');
+    const textTypes = ['text','search','email','url','tel','password','number'];
+    if (this.tagName === 'TEXTAREA' || (this.tagName === 'INPUT' && textTypes.includes(this.type))) {
+      this.focus(); this.select();
+    } else if (this.isContentEditable) {
+      this.focus();
+      const range = this.ownerDocument.createRange(); range.selectNodeContents(this);
+      const selection = this.ownerDocument.defaultView.getSelection();
+      selection.removeAllRanges(); selection.addRange(range);
+    } else { throw Error('Expected a text input, textarea or contenteditable element'); }
+  `);
+  if (text) await element.socket.send('Input.insertText', {text});
+  else await pressKey('Backspace');
 }

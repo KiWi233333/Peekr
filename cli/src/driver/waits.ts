@@ -19,8 +19,7 @@ export async function waitForElement(selector: string, timeoutSeconds = 10): Pro
       .send<any>(
         "Runtime.evaluate",
         { expression: `!!document.querySelector(${JSON.stringify(selector)})`, returnByValue: true },
-      )
-      .catch(() => undefined);
+      );
     if (result?.result?.value === true) return;
     if (Date.now() > deadline) {
       throw new PeekrError(ErrorCodes.actionFailed, `waitForElement timed out for ${selector}.`);

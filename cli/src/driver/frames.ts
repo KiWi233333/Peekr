@@ -25,6 +25,7 @@ export interface FrameElement {
   value?: string;
   href?: string;
   selector: string;
+  epoch: string;
 }
 
 /**
@@ -46,11 +47,15 @@ export const ARIA_HELPERS_JS = `
       return "textbox";
     }
     if (tag === "select") return "combobox";
+    if (tag === "img") return "image";
     if (el.isContentEditable) return "textbox";
     return "generic";
   };
   const nameOf = (el, role) => {
-    const label = el.getAttribute("aria-label") || el.getAttribute("placeholder") || "";
+    const labelledBy = (el.getAttribute("aria-labelledby") || "").split(/\\s+/).filter(Boolean)
+      .map(id => el.ownerDocument.getElementById(id)?.textContent || "").join(" ").trim();
+    const label = labelledBy || el.getAttribute("aria-label") ||
+      Array.from(el.labels || []).map(label => label.textContent || "").join(" ").trim() || el.getAttribute("placeholder") || "";
     if (label) return label.trim();
     if (role === "image") return (el.getAttribute("alt") || "").trim();
     if (role === "button" || role === "link") {
@@ -98,8 +103,9 @@ const FRAME_WALKER_BODY = `{
   ${ARIA_HELPERS_JS}
   const selectorFor = (doc, el) => {
     if (el.id) return "#" + el.id.replace(/([^a-zA-Z0-9_-])/g, "\\\\$1");
-    const test = el.getAttribute("data-testid") || el.getAttribute("data-test");
-    if (test) return '[data-testid="' + test.replace(/"/g, '\\\\"') + '"]';
+    const testAttribute = el.hasAttribute("data-testid") ? "data-testid" : "data-test";
+    const test = el.getAttribute(testAttribute);
+    if (test) return '[' + testAttribute + '="' + test.replace(/"/g, '\\\\"') + '"]';
     const name = el.getAttribute("name");
     if (name) return el.tagName.toLowerCase() + '[name="' + name.replace(/"/g, '\\\\"') + '"]';
     let path = "";
@@ -107,11 +113,11 @@ const FRAME_WALKER_BODY = `{
     while (node && node !== doc.body && node.nodeType === 1) {
       let index = 1;
       let sibling = node;
-      while ((sibling = sibling.previousElementSibling)) index += 1;
-      path = "/" + node.tagName.toLowerCase() + ":nth-of-type(" + index + ")" + path;
+      while ((sibling = sibling.previousElementSibling)) if (sibling.tagName === node.tagName) index += 1;
+      path = node.tagName.toLowerCase() + ":nth-of-type(" + index + ")" + (path ? " > " + path : "");
       node = node.parentElement;
     }
-    return path;
+    return "body > " + path;
   };
   const out = [];
   for (const el of doc.querySelectorAll("a[href], button, input, textarea, select, [contenteditable=true], [role=button], [role=link], [role=checkbox], [role=radio], [role=textbox], [role=searchbox], [role=combobox]")) {
@@ -124,6 +130,7 @@ const FRAME_WALKER_BODY = `{
       value: ["textbox", "searchbox", "combobox"].includes(role) ? (el.value || "") : undefined,
       href: role === "link" ? el.href : undefined,
       selector: selectorFor(doc, el),
+      epoch: JSON.stringify([doc.location.href, doc.defaultView.performance.timeOrigin]),
     });
   }
   return { elements: out };
@@ -156,73 +163,6 @@ export async function walkFrameElements(
   const value = result?.result?.value;
   if (!value || value.error) return [];
   return value.elements as FrameElement[];
-}
-
-/** Viewport coordinates of an element inside a frame chain. */
-export async function resolveFramePoint(
-  socket: TargetSocket,
-  chain: number[],
-  selector: string,
-): Promise<{ x: number; y: number }> {
-  const result = await socket.send<any>("Runtime.callFunctionOn", {
-    objectId: await mainWindowObjectId(socket),
-    functionDeclaration: `function () {
-      const chainIds = ${JSON.stringify(chain)};
-      const selector = ${JSON.stringify(selector)};
-      let doc = document;
-      let frameRect = { left: 0, top: 0 };
-      for (const id of chainIds) {
-        const frame = doc.querySelector('iframe[data-peekr-frame="' + id + '"],frame[data-peekr-frame="' + id + '"]');
-        if (!frame) throw new Error("frame " + id + " gone");
-        frameRect = frame.getBoundingClientRect();
-        doc = frame.contentDocument;
-        if (!doc) throw new Error("frame cross-origin");
-      }
-      const el = doc.querySelector(selector);
-      if (!el) throw new Error("element " + selector + " not found in frame");
-      const rect = el.getBoundingClientRect();
-      return {
-        x: frameRect.left + rect.left + rect.width / 2,
-        y: frameRect.top + rect.top + rect.height / 2,
-      };
-    }`,
-    returnByValue: true,
-  });
-  const value = result?.result?.value;
-  if (typeof value?.x !== "number") {
-    throw new PeekrError(
-      ErrorCodes.actionFailed,
-      `Frame element ${selector} is not clickable: ${value?.error ?? value ?? "no geometry"}.`,
-    );
-  }
-  return value;
-}
-
-/** Focus an element inside a frame chain (for typing into it). */
-export async function focusFrameElement(
-  socket: TargetSocket,
-  chain: number[],
-  selector: string,
-): Promise<void> {
-  await socket.send("Runtime.callFunctionOn", {
-    objectId: await mainWindowObjectId(socket),
-    functionDeclaration: `function () {
-      const chainIds = ${JSON.stringify(chain)};
-      const selector = ${JSON.stringify(selector)};
-      let doc = document;
-      for (const id of chainIds) {
-        const frame = doc.querySelector('iframe[data-peekr-frame="' + id + '"],frame[data-peekr-frame="' + id + '"]');
-        if (!frame) throw new Error("frame " + id + " gone");
-        doc = frame.contentDocument;
-        if (!doc) throw new Error("frame cross-origin");
-      }
-      const el = doc.querySelector(selector);
-      if (!el) throw new Error("element not found in frame");
-      el.focus();
-      if (typeof el.select === "function" && (el.tagName === "INPUT" || el.tagName === "TEXTAREA")) el.select();
-    }`,
-    returnByValue: true,
-  });
 }
 
 async function mainWindowObjectId(socket: TargetSocket): Promise<string> {

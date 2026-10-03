@@ -1,0 +1,31 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Peekr agent fixture</title>
+<style>
+body { font: 16px system-ui; margin: 24px; } fieldset { margin: 12px 0; max-width: 640px; }
+.cover { position:relative; display:inline-block; } .cover span { position:absolute; inset:0; background:#ddd; }
+iframe { width:600px; height:250px; border:3px solid #ccc; }
+</style>
+<h1>Task space fixture</h1>
+<label>Name <input id="name"></label>
+<button id="submit" onclick="document.querySelector('#result').textContent=document.querySelector('#name').value">Apply</button>
+<p id="result"></p>
+<fieldset><legend>Forms</legend>
+<label><input id="agree" type="checkbox" onchange="window.checkChanges=(window.checkChanges||0)+1">Agree</label>
+<label><input id="radio" type="radio" name="choice">Choice</label>
+<label>Plan <select id="plan" onchange="window.selectChanges=(window.selectChanges||0)+1"><option value="a">Basic</option><option value="b">Pro</option><option disabled value="c">Disabled</option></select></label>
+<select id="multi" multiple><option value="x">One</option><option value="y">Two</option><option value="z">Three</option></select>
+<input id="upload" type="file" multiple hidden>
+<input id="readonly" value="unchanged" readonly>
+<textarea id="notes"></textarea>
+</fieldset>
+<fieldset><legend>Rejected actions</legend>
+<button class="duplicate">Duplicate</button><button class="duplicate">Duplicate</button>
+<button id="disabled" disabled>Disabled</button><button id="hidden" style="display:none">Hidden</button>
+<div class="cover"><button id="covered" onclick="window.coverClicked=true">Covered</button><span>Overlay</span></div>
+</fieldset>
+<iframe id="outer" src="/frame/outer"></iframe>
+<div id="shadow"></div>
+<script>
+document.querySelector('#shadow').attachShadow({mode:'open'}).innerHTML='<button id="shadow-button" onclick="this.textContent=\'Shadow clicked\'">Shadow button</button>';
+</script>
