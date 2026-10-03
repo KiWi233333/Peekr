@@ -29,13 +29,10 @@ struct OmniboxTextField: NSViewRepresentable {
         field.onBeginFocus = { [weak coordinator = context.coordinator, weak field] in
             guard let coordinator, let field else { return }
             // Replace the abbreviated display URL before the click selects text.
-            field.stringValue = coordinator.parent.address
             coordinator.parent.text = coordinator.parent.address
             coordinator.parent.focused = true
-            field.selectAllText()
-            // AppKit can apply its click selection after becomeFirstResponder;
-            // reapply the browser selection on the next run-loop turn.
-            DispatchQueue.main.async { [weak field] in field?.selectAllText() }
+            field.stringValue = coordinator.parent.address
+            field.prepareForFocusSelection()
         }
         return field
     }
@@ -56,13 +53,7 @@ struct OmniboxTextField: NSViewRepresentable {
                     let window = field.window
                 else { return }
                 if field.currentEditor() == nil { window.makeFirstResponder(field) }
-                field.selectAllText()
-                DispatchQueue.main.async { [weak field, weak coordinator] in
-                    guard let field, let coordinator,
-                          coordinator.focusRequest == focusRequest
-                    else { return }
-                    field.selectAllText()
-                }
+                field.prepareForFocusSelection()
             }
         } else if !focused, field.currentEditor() != nil {
             DispatchQueue.main.async { [weak field, weak coordinator] in
@@ -119,9 +110,37 @@ struct OmniboxTextField: NSViewRepresentable {
 
 final class OmniboxNativeTextField: NSTextField {
     var onBeginFocus: (() -> Void)?
+    private var selectionRequest = 0
 
     func selectAllText() {
         currentEditor()?.selectAll(nil)
+    }
+
+    /// AppKit can create the field editor and apply its click selection in
+    /// separate turns. Select immediately, then retry once the editor exists so
+    /// a first click cannot leave only a caret or partial selection behind.
+    func prepareForFocusSelection() {
+        selectionRequest &+= 1
+        let request = selectionRequest
+        selectAllText()
+        selectAllTextWhenReady(request: request, attempts: 3)
+    }
+
+    private func selectAllTextWhenReady(request: Int, attempts: Int) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.selectionRequest == request else { return }
+            guard let editor = self.currentEditor() else {
+                guard attempts > 0 else { return }
+                self.selectAllTextWhenReady(request: request, attempts: attempts - 1)
+                return
+            }
+            guard self.window?.firstResponder === editor else { return }
+            editor.selectAll(nil)
+        }
+    }
+
+    private func cancelPendingSelection() {
+        selectionRequest &+= 1
     }
 
     override func becomeFirstResponder() -> Bool {
@@ -131,14 +150,17 @@ final class OmniboxNativeTextField: NSTextField {
     }
 
     override func mouseDown(with event: NSEvent) {
+        let editor = currentEditor()
+        let isEditing = editor != nil && window?.firstResponder === editor
         let selectsOnClick =
-            currentEditor() == nil && event.clickCount == 1
+            !isEditing && event.clickCount == 1
             && event.modifierFlags.intersection([.shift, .control, .option, .command]).isEmpty
+        cancelPendingSelection()
         super.mouseDown(with: event)
         // AppKit finishes its click tracking first. A drag or double-click keeps
         // its own selection; subsequent clicks keep ordinary caret placement.
         if selectsOnClick {
-            selectAllText()
+            prepareForFocusSelection()
         }
     }
 }
