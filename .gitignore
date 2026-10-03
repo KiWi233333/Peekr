@@ -16,3 +16,7 @@ cli/dist/
 
 # Local ego lite reverse-engineering reference (binary, Skill, and pinned source)
 .reference/ego-lite/
+
+# Local OpenCode project configuration
+.opencode/
+opencode.json
