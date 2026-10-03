@@ -4,132 +4,117 @@
 
 # Peekr
 
-**一款极速的 SlidePad 式「边缘滑出」网页浏览器，专为 macOS 打造，披着 Liquid Glass 外衣。**
+**为 macOS 打造的原生边缘滑出式 Chromium 浏览器。**
 
-把网页应用钉在屏幕任意边/角的 dock 上，鼠标滑过去（或按全局热键），面板就会*探*出来——而且**不抢占当前 App 的焦点**。
+鼠标悬停屏幕边缘，或按全局热键，即可调出网页面板，无需切走当前应用。
 
 [![Platform](https://img.shields.io/badge/platform-macOS%2014%2B-black?logo=apple&logoColor=white)](https://www.apple.com/macos/)
-[![Swift](https://img.shields.io/badge/Swift-5.10-F05138?logo=swift&logoColor=white)](https://swift.org)
-[![Native](https://img.shields.io/badge/AppKit%20%2B%20SwiftUI-no%20Electron-1E90FF)](#为什么选-peekr)
-[![License](https://img.shields.io/github/license/KiWi233333/Peekr?color=blue)](LICENSE)
+[![Engine](https://img.shields.io/badge/engine-bundled%20Chromium-5C6BC0)](#从源码构建)
 [![Release](https://img.shields.io/github/v/release/KiWi233333/Peekr?include_prereleases&sort=semver)](https://github.com/KiWi233333/Peekr/releases)
-[![Stars](https://img.shields.io/github/stars/KiWi233333/Peekr?style=social)](https://github.com/KiWi233333/Peekr/stargazers)
+[![License](https://img.shields.io/github/license/KiWi233333/Peekr?color=blue)](LICENSE)
 
 [English](README.md) · 简体中文
 
-<img src="assets/hero.png" alt="Peekr 从屏幕边缘探出" width="820" />
+<img src="assets/hero.png" alt="Peekr 边缘滑出浏览器" width="820" />
 
 </div>
 
----
+## 当前源码中的功能
 
-## 亮点
+以下描述的是当前源码分支。下载的发行版可能没有这些功能；请以对应版本的
+[Release](https://github.com/KiWi233333/Peekr/releases) 和
+[更新记录](CHANGELOG.md) 为准。
 
-- ⚡️ **原生 Chromium** —— Swift + AppKit + SwiftUI 驱动内置 CEF/Chromium，页面首次探出时才惰性创建。
-- 🪟 **Liquid Glass** —— 在 macOS 26 上使用真正的 `glassEffect` / `GlassEffectContainer`；旧系统自动降级为 `.ultraThinMaterial`。
-- 🎯 **从不抢焦点** —— 无边框的 non-activating 面板：能在网页里打字，却不会让你掉出当前 App。
-- 🧲 **6 向停靠** —— 吸附到左右两边或四个角；拖拽即可重新停靠。
-- 🔒 **持久的会话** —— 内置 Chromium Profile 保持登录态，并由 Peekr 的应用模型隔离标签页身份。
+- **原生面板**：SwiftUI + AppKit 的非激活式滑出面板，支持六个停靠位置、
+  拖动缩放、固定、多显示器和可自定义全局热键（默认 `⌃⌥Space`）。
+  macOS 26 使用 Liquid Glass，旧系统回退到系统材质。
+- **Chromium 浏览**：内置 CEF、持续保活的标签页、可切换搜索引擎的地址栏、
+  浏览器快捷键、页内查找、书签、favicon，以及 Chrome Cookie 和书签导入；
+  也可从支持的浏览器导入打开的标签页。
+- **空间与标签**：可命名的 Spaces、可折叠和彩色的标签组、拖动排序、标签别名，
+  以及从网页标题解析的未读数量。空间概览按需捕获当前页面预览；其他卡片使用
+  上次可用预览或标签信息。
+- **可选的 Agent 接入**：AI Agent 可通过 Chromium DevTools 协议和内置
+  `peekr-cli` 在任务空间操作页面。空间区分用户、Agent、交给用户接管三种归属，
+  用户可在界面中接管。Agent 接入默认关闭。所有空间共享同一个 Chromium
+  Profile，包括 Cookie 和登录态；空间不是独立账号或安全沙箱。
 
-## 为什么选 Peekr？
+Agent 自动化仍在开发中。CLI 已支持语义化快照、常见页面操作和任务空间交接，
+尚未覆盖完整的自动化能力、跨域 iframe、下载和自动操作重试。
+具体边界见[实现进度](docs/agent-browser-progress-2026-09-27-interactions.md)。
 
-市面上大多数「滑出式浏览器」都是 Electron 套壳，动辄几百 MB、卡顿明显。Peekr 是一个约 2400 行、单一 target、**零第三方依赖**的 Swift 应用——秒启动、空闲 0% CPU，用起来就像 macOS 原生的一部分。它以 `LSUIElement` agent 形式驻留菜单栏：无 Dock 图标、无主窗口，只在你需要时探出面板。
+## 安装与使用
 
-## 功能
+需要 macOS 14 或更新版本。从
+[GitHub Releases](https://github.com/KiWi233333/Peekr/releases) 下载可用 DMG，
+将 Peekr 拖到「应用程序」。供参考：[v0.2.1](https://github.com/KiWi233333/Peekr/releases/download/v0.2.1/Peekr-0.2.1.dmg)
+是 Chromium + WebKit 双引擎历史版本，[v0.1.0](https://github.com/KiWi233333/Peekr/releases/download/v0.1.0/Peekr-0.1.0.dmg)
+只包含 WebKit。当前源码分支只使用 Chromium。
 
-| | |
-|---|---|
-| **边缘探出 + 悬停延迟** | 悬停停靠的边/角即滑出；停留延迟可配置。 |
-| **6 向停靠** | 停靠到左右两边或任意角。拖拽面板的玻璃背景，在边/角附近松手即可**自动吸附**到最近的锚点——且**永不改变尺寸**。 |
-| **可缩放面板** | 拖动缩放手柄；默认宽度为屏幕可见区的 ⅔。 |
-| **全局热键** | 可重绑定（默认 `⌃⌥Space`）；在偏好设置里录制任意快捷键。 |
-| **浏览器快捷键** | `⌘L` 聚焦地址栏、`⌘R` 刷新、`⌘[` / `⌘]` 前进后退、`⌘W` 关闭、`⌘1`–`⌘9` 切换应用、`Esc` 隐藏。 |
-| **每应用导航栏** | 玻璃地址栏：前进 / 后退 / 刷新-停止、可加载或搜索的地址输入框、进度条、在 Safari 中打开。 |
-| **图标 dock** | 真实 favicon（自动抓取并缓存），无则回退为字母图标；拖拽排序；右键 编辑 / 重载 / 删除；可设置**自定义图标**。 |
-| **浏览器数据导入** | 在「偏好设置 → 应用 → 导入浏览器数据…」中，把当前标签页导入为 Peekr 应用，或把指定 Chrome Profile 的 Cookie 复制到 Peekr Chromium Profile。临时数据库快照仅当前用户可访问并在导入后删除；解密值只在本机内存中处理，不支持的分区 Cookie 会跳过。 |
-| **持久会话** | 所有页面使用持久共享 Chromium Profile，让导入的 Chrome 登录态可供 Peekr 应用使用。 |
-| **多显示器** | 跟随光标所在屏幕，并记住最后一块屏。 |
-| **固定与自动隐藏** | 可固定常开，也可在离开时自动滑走。 |
-| **双语** | 中英文，跟随系统语言自动切换。 |
-| **开机自启** | 一个开关，基于 `SMAppService`。 |
+- 悬停停靠的屏幕边/角，或按 `⌃⌥Space` 打开面板。
+- 从菜单栏图标打开「偏好设置」（`⌘,`）、控制面板或退出。
+- 面板内用 `⌘L` 聚焦地址栏、`⌘F` 页内查找、`⌘R` 刷新、
+  `⌘W` 关闭标签、`⌘1`–`⌘9` 切换标签。
+- 设置、空间与标签、书签、图标及 Chromium Profile 位于
+  `~/Library/Application Support/Peekr/`。
 
-## 截图
+### 让 Agent 使用 Peekr
 
-<div align="center">
-<img src="assets/screenshot.png" alt="Peekr 滑出面板：图标 rail、导航栏与加载中的网页应用" width="720" />
-</div>
+在包含 Agent 接入的构建中，打开**偏好设置 → 浏览器 → Agent 接入**，
+启用后重启 Peekr。启用期间应用会写入
+`~/Library/Application Support/Peekr/agent.json`。调试端点只在本机开放，
+但本机其他进程在启用期间也能连接。CLI 需要 Node.js 22 或更新版本。
 
-## 安装
-
-### 从源码构建
-
-需要 **Xcode 26** 才能用上真正的 Liquid Glass（低版本也能构建运行，自动降级为材质效果）。macOS 14+。
+可点击该设置中的**安装命令行工具**，将命令注册到
+`~/.local/bin/peekr`；也可直接运行应用包内的启动器。若还要为 Codex 和
+Claude Code 安装 `peekr-cli` Skill，执行：
 
 ```bash
-git clone https://github.com/KiWi233333/Peekr.git
-cd Peekr
-
-make run     # 构建并启动 Release .app（内置 Chromium）
-make dev     # 构建并启动 Debug .app
-make app     # 仅构建 Release build/Peekr.app
-make build   # swift build —— 快速编译检查
-make clean
+peekr install
+peekr doctor
 ```
 
-> [!NOTE]
-> Chromium 依赖 CefSwift Framework 和五个 Helper Bundle，因此 Peekr
-> 不再支持用裸 `swift run` 启动。`make dev` 和 `make run` 都会生成完整
-> `.app`；首次构建会把固定版本的 CEF 构建依赖下载到 `.cef/`，产物自身
-> 则完整内置 Chromium 运行时，当前使用 CefSwift
-> 提供的单一持久全局 Profile。
+`doctor` 确认可连接后，可以运行：
 
-### 使用
-
-- 悬停停靠的边/角，或按全局热键（`⌃⌥Space`）触发面板。
-- 从菜单栏图标打开 **偏好设置…**（`⌘,`）或 **退出**。
-- 用户数据位于 `~/Library/Application Support/Peekr/`（`apps.json`、`settings.json`、`icons/`）。删除即可重置。
-
-## 架构
-
-Peekr 没有依赖注入框架——所有对象都在 `AppDelegate.applicationDidFinishLaunching` 里手动接线，构造顺序*即*依赖关系。状态由四个 `@MainActor @Observable` 真相源持有，SwiftUI 直接读取。
-
-```
-Sources/Peekr/
-  App/          PeekrApp（CefSwift 启动入口）、AppDelegate、AppModel、
-                BookmarksModel、MainMenu
-  Model/        WebApp、Workspace、BookmarkNode、Settings、PanelAnchor、HotKeyConfig
-  Store/        AppStore、SettingsStore、BookmarkStore（JSON 持久化）
-  Web/          WebEngine、CefSwiftEngine、WebViewManager、
-                BrowserState、BookmarkImporter、OpenTabsImporter
-  Panel/        SlidePanel、PanelController、PanelGeometry、EdgeTrigger
-  UI/           PanelRootView、AppRail、NavigationBar、EditAppSheet、
-                BookmarkSheet、ImportTabsSheet
-  Preferences/  PreferencesWindowController、PreferencesView
-  Input/        GlobalHotKey（Carbon）
-  StatusBar/    StatusBarController
-  Util/         GlassStyle（liquidGlass + theme）、IconStore、LaunchAtLogin、
-                Localization、AppPaths
+```bash
+peekr nodejs <<'EOF'
+const task = await taskSpace('example')
+const page = task.page('home')
+await page.goto('https://example.com')
+cliLog(await page.snapshot())
+EOF
 ```
 
-几条承重约定（完整说明见 [`CLAUDE.md`](CLAUDE.md)）：
+任务空间 API 和首个 heredoc 示例见 [CLI 指南](skills/peekr-cli/SKILL.md)
+与[安装说明](skills/peekr-cli/references/install.md)。
 
-- **位置 ≠ 尺寸。** 方位判断收敛在 `PanelAnchor`，几何收敛在 `PanelGeometry`。拖拽吸附只改停靠位置和滑入方向，**永不**改变面板尺寸。
-- **每个关注点只有一扇门。** 玻璃走 `liquidGlass()`，文案走 `Localized`，地址栏 URL 解析走 `WebViewManager.url(fromOmnibox:)`。复用这些单一入口，而非另起炉灶。
-- **容错解码。** 持久化模型手写 `init(from:)`，用 `decodeIfPresent(...) ?? fallback` 逐字段兜底，schema 演进时永不丢弃用户旧 JSON。
+## 从源码构建
 
-## 路线图
+需要 macOS 14+ 和 Xcode。编译完整的 macOS 26 Liquid Glass 路径需要
+Xcode 26。构建流程会准备固定版本的 CEF，并把 Chromium Framework
+及 Helper 进程打进完整的 `.app`；不能只用 `swift run` 启动。
 
-完整路线图（基于用户需求洞察）见 **[ROADMAP.md](ROADMAP.md)**。重点：
+```bash
+# 在包含当前分支改动的源码目录中运行
+make build   # 快速 Swift 编译检查
+make dev     # 构建并启动 InjectionIII 热更新 Debug .app，随后持续显示日志
+make inject  # 重新构建并启动注入用 Debug .app
+make app     # 构建 Release build/Peekr.app
+make run     # 构建并打开 Release .app
+make dmg     # 构建 Release DMG：dist/Peekr.dmg
+swift test
+```
 
-- [x] 浏览器快捷键、书签与打开标签导入
-- [ ] 每应用面板尺寸记忆 + 真休眠（含睡眠/唤醒热键）
-- [ ] 应用辨识度：别名、活动应用强调、未读 / 通知角标
-- [ ] 按 URL 模式注入自定义 CSS / JS
-- [ ] 内置内容拦截、应用快速切换器
+`make dev` 会准备 CEF Debug 应用包，用 xcodebuild 构建注入用 Debug 产物，
+打开 InjectionIII 和当前仓库，然后启动热更新版本。终端会持续跟踪 Chromium
+的 `debug.log`，按 `Ctrl+C` 只停止日志输出，应用仍会运行。修改已接入注入的
+SwiftUI 视图并保存即可热更新；启动流程、Package.swift 和新增文件仍需重启。
+`make inject` 可以跳过 CEF 打包，重新构建并启动注入用 App。
 
-## 贡献
+## 参与贡献
 
-欢迎提交 Issue 和 PR！请先阅读 [CONTRIBUTING.md](CONTRIBUTING.md) 和 [行为准则](CODE_OF_CONDUCT.md)。提交信息遵循 [Conventional Commits](https://www.conventionalcommits.org/)。
+请阅读[贡献指南](CONTRIBUTING.md)、[路线图](ROADMAP.md)和
+[行为准则](CODE_OF_CONDUCT.md)。
 
 ## 许可证
 

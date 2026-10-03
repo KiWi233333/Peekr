@@ -1,95 +1,49 @@
 # Roadmap
 
-This roadmap turns real-world user needs — distilled from reviews and feature
-requests across **SlidePad**, **MenubarX**, and **FloatBrowser** — into Peekr's
-plan. Each item notes the pain point it answers, so we build what users have
-actually been asking the category for.
+Peekr's direction is guided by recurring requests from users of slide-over
+browsers. Priorities may change; dates and version numbers below are deliberately
+omitted. Suggest or vote on a [feature request](https://github.com/KiWi233333/Peekr/issues/new?template=feature_request.yml).
 
-It is a direction, not a contract: priorities shift, and dates are intentionally
-omitted. Want something moved up? Open or 👍 a
-[Feature request](https://github.com/KiWi233333/Peekr/issues/new?template=feature_request.yml).
+## Current source branch
 
-## Legend
+These capabilities are implemented in the current checkout. This section is
+**not a release announcement**; use the [changelog](CHANGELOG.md) and
+[GitHub Releases](https://github.com/KiWi233333/Peekr/releases) to check a
+downloaded version.
 
-| Mark | Meaning |
-|------|---------|
-| ✅ | Shipped (see [CHANGELOG](CHANGELOG.md)) |
-| 🚧 | In progress |
-| 📋 | Planned |
-| 🔬 | Exploratory — not committed |
+- A Chromium-only browser in a non-activating, six-position slide-over panel,
+  with resizing, pinning, hotkey access, bookmarks, import, and native macOS UI.
+- Named Spaces with independent tabs and selection; colored, collapsible tab
+  groups; tab aliases; and unread counts parsed from page titles.
+- A Spaces overview with an on-demand image of the active page. Other Spaces
+  show a cached preview or tab information; the app does not continuously
+  capture every background page.
+- Opt-in Agent Access, task Space ownership and handoff, plus a bundled
+  `peekr-cli` for semantic snapshots and common page actions. All Spaces use
+  the same persistent Chromium profile and login state.
 
-## Guiding principle
+The Agent implementation is partial: full cross-origin frame support, advanced
+events, downloads, automatic action retries, and release acceptance remain
+open. See the [implementation plan](docs/plan-agent-browser-replica.md) and
+[verified progress](docs/agent-browser-progress-2026-09-27-interactions.md).
 
-> Users don't want *more* features — they want **lighter, distinguishable,
-> focus-preserving, and trustworthy**. The first three are SlidePad's top pain
-> points; the fourth (open-source, native, no Electron) is the gap across the
-> whole category. Peekr's bets all sit on that intersection.
+## Planned
 
----
+- **Per-app panel size memory:** restore each site's preferred width and height.
+- **Real hibernation and hotkey:** suspend inactive web apps and expose their
+  awake/asleep state, targeting background memory and CPU use.
+- **Onboarding and in-app help:** make first-run setup and bookmark management
+  easier to discover.
+- **Custom CSS/JS by URL pattern:** user styles and scripts scoped to sites.
+- **Content blocking:** request and page policies for ads and cookie banners.
+- **Quick switcher:** fuzzy switching beyond the existing number shortcuts.
 
-## Now — `v0.2.2`
+## Exploring
 
-Close the highest-frequency pain points that Peekr's architecture is already
-positioned to win.
+- Separate account profiles for the same site. Current Spaces share one
+  Chromium profile; profile partitioning needs its own design.
+- Per-app rules for mute, reload, notifications, zoom, and user agent.
+- Optional sync, reading mode, and cross-platform support.
 
-- 📋 **Per-app panel size memory** — remember width/height per web app and
-  restore it on activation, instead of one global size.
-  *Pain: SlidePad users asked for "dimensions that change as you activate a tab."*
-- 📋 **Real hibernation + hotkey** — fully suspend a web app (stop the process,
-  not just pause) with a bindable sleep/wake shortcut, and surface which apps are
-  awake. *Pain: SlidePad's #1 complaint — high memory and background CPU even
-  when "sleeping."*
-- 📋 **App identity & badges** — per-app aliases, clearer active-app emphasis,
-  and unread/notification badges so near-identical sites are tellable apart.
-  *Pain: identical favicons/titles make tabs indistinguishable.*
-- 📋 **Onboarding & in-app help** — first-run guide and discoverable bookmark
-  management. *Pain: "zero documentation… can't figure out how to save a bookmark."*
-
-## Next — `v0.4.0`
-
-Power-user stickiness the category keeps wishing for but nobody ships well.
-
-- 📋 **Agent access on the Chromium engine** — the committed direction: Peekr
-  becomes the slide-out browser AI agents drive. Spaces carry a three-state
-  ownership model (user / agent / delegated, modeled after ego-lite's task
-  spaces); the opt-in CDP endpoint plus `agent.json` discovery file let
-  CDP-speaking tools (Playwright, browser-use, custom CLIs) work in an agent
-  space while the user's own tabs stay theirs. Chromium-first by decision —
-  Agent features target the bundled Chromium runtime only.
-- 📋 **Custom CSS / JS injection per URL pattern** — userstyles/userscripts
-  scoped by host. *Pain: requested for both SlidePad and MenubarX, unmet by both.*
-- 📋 **Content blocking** — built-in ad/cookie-banner blocking via Chromium request and DOM policies
-  rules. *Pain: a recurring MenubarX request.*
-- 📋 **App quick-switcher** — an Arc-style fuzzy switcher on top of the existing
-  `⌘1`–`⌘9`. *Pain: SlidePad users asked for a better quick switcher.*
-- 🔬 **Multiple accounts per app** — more than one isolated session for the same
-  site, building on Chromium profile partitioning.
-
-## Later — `v0.5.0+`
-
-- 🔬 **Per-app behavior rules** — auto-mute, auto-reload, notification policy,
-  default zoom, custom user-agent.
-- 🔬 **Workspaces / profiles** — grouped sets of apps you can switch between.
-- 🔬 **Sync** — optional iCloud sync of apps and settings across Macs.
-
-## Exploratory / under consideration
-
-Real demand exists, but each is a large bet not yet committed.
-
-- 🔬 **Cross-platform (Windows / ARM tablets)** — frequently requested
-  (e.g. Surface Pro X), but Peekr is pure AppKit; this means a substantial
-  rewrite, not a port. Tracked as a long-horizon question.
-- 🔬 **Reading / focus mode**, **command palette**, **drag-and-drop between apps**.
-
----
-
-## Shipped
-
-See the [CHANGELOG](CHANGELOG.md) for full history. Highlights:
-
-- ✅ Bookmarks & open-tab import (Chrome / Edge / Brave / Safari)
-- ✅ Browser keyboard shortcuts (`⌘1`–`⌘9`, `⌘L`, `⌘R`, `⌘[`/`⌘]`, `⌘W`, `Esc`)
-- ✅ 6-way docking with release-to-snap and a resizable panel
-- ✅ Non-activating panel that never steals focus
-- ✅ Isolated, persistent per-app sessions
-- ✅ Liquid Glass with graceful fallback, bilingual UI, launch at login
+See [README.md](README.md) for current usage and [CONTRIBUTING.md](CONTRIBUTING.md)
+for development.

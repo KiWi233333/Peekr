@@ -14,8 +14,8 @@ DerivedData/
 node_modules/
 cli/dist/
 
-# Local ego lite reverse-engineering reference (binary, Skill, and pinned source)
-.reference/ego-lite/
+# Local reference packages (binary, Skill, and pinned source)
+.reference/*/
 
 # Local OpenCode project configuration
 .opencode/

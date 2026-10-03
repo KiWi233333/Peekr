@@ -1,18 +1,18 @@
 # Chrome-codec CEF runtime
 
 Peekr remains a native Swift/AppKit/SwiftUI application. Its web content runs in
-CEF helper processes; Electron and Node.js are not part of the application.
+CEF helper processes; other Chromium hosts and Node.js are not part of the application.
 
-Here, “Electron-equivalent Chromium” means Blink/V8, Chromium networking and
+Here, “Chromium-host-equivalent Chromium” means Blink/V8, Chromium networking and
 storage, the multi-process renderer/GPU model, DevTools plumbing, downloads,
 file selection, WebRTC/media capture, and Chrome-branded H.264/AAC decoding.
 It does not mean Google Chrome Sync, the Chrome Web Store, bundled Widevine, or
-closed Google services. Electron also supports only a subset of Chrome extension
+closed Google services. Other Chromium hosts also support only a subset of Chrome extension
 APIs; those browser-product features are a separate integration and licensing
 problem from embedding the Chromium engine.
 
 The public CEF binary distribution intentionally omits patented/proprietary
-codec support. To match Electron's Chromium media capability, Peekr builds the
+codec support. To match a Chromium host's media capability, Peekr builds the
 exact CEF revision required by CefSwift with these GN arguments:
 
 ```text

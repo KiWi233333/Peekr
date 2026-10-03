@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- The panel edge no longer stacks hand-drawn layers: the window border stroke and
+  the web card's drop shadow are gone, so the edge is the panel material plus the
+  system window shadow instead of reading as a shadow/border band.
+
 ## [0.2.2]
 
 ### Added

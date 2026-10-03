@@ -1,13 +1,14 @@
-# Peekr × ego lite 复刻计划
+# Peekr Agent 浏览器能力实施计划
 
-状态：设计基线  
+状态：实施中（W2 基础闭环已验证，完整对齐未完成）
+
 目标分支：`kiwi/feat/browser-use`  
-基准应用：`ego lite` 0.5.0.32  
-基准开源源码：`citrolabs/ego-lite`，commit `d01be93325c7ea59d41c2ca9f4c59b58b4be4046`
+参考版本：0.5.0.32
+参考源码快照：commit `d01be93325c7ea59d41c2ca9f4c59b58b4be4046`
 
-当前执行状态：W0 已完成，W1 基础入口已完成；W2 正在实施。应用、设置、文档和测试已收敛到 Chromium-only。W2 当前已落地 CDP 基础传输、空间 ownership 桥接和首版 Page ledger 持久化/重连前的 target 对账；断线重连、原生 tab 控制、frame 映射和跨进程并发仍保持待办。
+当前执行状态（2026-09-27）：W0 与 W1 基础入口已完成，W2 原生归属与生命周期基础可用。本次继续补齐 8 页预算、异步收尾互斥、页面转移保护、取消清理，以及历史导航、常用表单、文件输入、组合键、严格定位和同源 iframe 引用失效。CLI 43 项、Swift 134 项与真实 CEF 16 组场景通过。完整 frame/session、事件和高级交互仍未完成。见 [基础闭环](agent-browser-progress-2026-09-27.md) 与 [本轮交互和质量验证](agent-browser-progress-2026-09-27-interactions.md)。
 
-本文档定义 Peekr 对 ego lite 的完整复刻边界、功能契约、模块拆分、实施顺序和验收方式。复刻对象是 Agent-facing harness、CLI、Skill 和任务空间体验。ego Framework 的 Chromium 内核和原生绑定是闭源组件，Peekr 不复制其二进制，而是用自己的 CEF/CDP 和 Swift AppModel 提供等价能力。
+本文档定义 Peekr 的 Agent 浏览器能力边界、功能契约、模块拆分、实施顺序和验收方式。目标是吸收可验证的交互和自动化契约，不复制外部二进制；Peekr 使用自己的 CEF/CDP 和 Swift AppModel 提供等价能力。
 
 ## 0. 分阶段执行总清单
 
@@ -34,12 +35,12 @@ W0 删除残留审计证据（2026-09-14）：
 
 ### W1 — CLI 启动器与公开 API 契约
 
-目标：建立与 ego lite 一致的命令行入口、脚本执行语义和可生成帮助。
+目标：建立一致的命令行入口、脚本执行语义和可生成帮助。
 
 - [x] **W1.1 命令解析骨架**：已接入 `--help`、`--version`、`help [topic]`、`onboarding`、`import list`、`import --browser`、`upgrade`、`nodejs` 的确定性路由；真实导入和自更新后端分别留给 W2/W6。
 - [x] **W1.2 stdin/heredoc**：支持 `peekr < script.js` 与 `peekr nodejs -e '...'`，保证脚本只执行一次，空输入和非法参数有稳定退出码。
-- [x] **W1.3 SDK 注入**：实现 `peekr` namespace、顶层 helpers 与 `ego.helpers` 兼容别名，三者共享同一个运行时状态。
-- [x] **W1.4a schema 驱动运行时**：`public-api-schema.ts` 统一提供 API help、公开方法描述和声明式 options 校验；`peekr`、`ego.helpers` 与注入的顶层函数均经过同一校验代理。
+- [x] **W1.3 SDK 注入**：实现 `peekr` namespace、顶层 helpers 与 `兼容 namespace` 兼容别名，三者共享同一个运行时状态。
+- [x] **W1.4a schema 驱动运行时**：`public-api-schema.ts` 统一提供 API help、公开方法描述和声明式 options 校验；`peekr`、`兼容 namespace` 与注入的顶层函数均经过同一校验代理。
 - [ ] **W1.4b 类型生成**：从 schema 生成完整的 TypeScript API 类型，禁止 CLI 与运行时各自维护方法列表。
 - [x] **W1.5a 输出基础**：脚本 stdout 采用 round 缓冲并在成功后统一 flush；脚本错误写入 stderr，退出码固定，成功输出与错误输出分流。
 - [x] **W1.5b 输出格式基础**：支持默认人类可读输出与 `nodejs --json` 机器可读输出；SIGINT 返回 130 并输出结构化中断错误。
@@ -55,20 +56,22 @@ W1 当前证据：`cli/test/cli-entry.test.mjs`、`cli/test/page-ledger.test.mjs
 - [x] **W2.1a CDP 基础传输**：已有端口发现、Bearer token 注入、HTTP target 列表、Node WebSocket、单请求超时和统一 `PeekrError` 映射。
 - [ ] **W2.1b CDP 可靠性**：补齐断线检测、socket 重建、in-flight 请求取消/重放边界和 protocol error 结构化字段。
 - [x] **W2.2a 空间控制基础**：已有 `/spaces`、create、claim、handoff、takeover、complete、DELETE 与 ownership guard；CLI 已使用 discovery token 调用。
-- [ ] **W2.2b 原生 tab 控制**：在控制桥接中补齐列举、创建、关闭、激活 tab 以及 agent/user tab origin，避免 CLI 只能绕过 control API 直接发 CDP。
+- [x] **W2.2b 原生 tab 控制**：控制桥接列举、创建、关闭、激活原生缓存 tab；只有显式创建并绑定的 target 属于 agent，用户 tab 不自动归属。
 - [x] **W2.3a Page ledger 持久化**：`cli/src/page-ledger.ts` 以 discovery 同目录 `page-ledger.json` 保存 `spaceId + label + targetId + url/title`，采用 0600 临时文件和原子 rename。
 - [x] **W2.3b target 对账接入**：选中 TaskSpace 后 `listTabs` 返回稳定 `label`；新建/复用 tab 支持显式 label 或自动 `pN`，关闭 tab 会解除映射，live target 对账可识别 stale 条目。
 - [ ] **W2.3c 完整 Page 身份**：补齐 page ID、frame/OOPIF session、用户 tab ID、target 重建迁移和永久关闭 label，禁止 stale target 被错误复用。
 - [x] **W2.4a TaskSpace 生命周期基础**：实现 create/list/claim/use/handOff/takeOver/complete，ownership 变化会刷新本地 selected space。
 - [ ] **W2.4b 生命周期边界**：增加 `markError`、空间关闭时 ledger 清理、用户 tab 保留策略和 agent tab budget。
 - [ ] **W2.5 并发模型**：对同一 Page 的命令按 ID 顺序结算；事件、chunk、下载和工具调用禁止使用 latest-wins 覆盖。
-- [ ] **W2.6 验收**：两个 CLI 进程同时访问同一空间时 ownership 结果确定；Peekr 重启后 ledger 能恢复或明确报告失效引用。
+- [x] **W2.6 验收**：跨进程轮次锁使第二进程明确返回 busy；SIGKILL 后可回收锁；真实 Peekr 重启后旧 label 明确返回 stale，禁止猜测迁移 target。
 
-W2 当前证据（2026-09-14）：`cli` 的 22 项测试、`npm run typecheck` 和 `git diff --check` 通过；`cli/test/page-ledger.test.mjs` 覆盖持久化、label→target 解耦和 stale target 对账。W2.1b、W2.2b、W2.3c、W2.4b、W2.5/6 尚未完成，不能据此宣称已具备 ego lite 的完整 Page/TaskSpace 语义。
+W2 当前证据（2026-09-27）：CLI 43 项测试、Swift 129 项 XCTest 与 5 项 Swift Testing 通过，真实 CEF 的 16 组场景通过。W2.1b 已有断线拒绝 pending 请求/事件、protocol error 原字段和禁止写操作重放，但无同轮自动重连；W2.3c 已有 generation、关闭 label 墓碑与跨轮 refs，仍缺 frame/session 及 target 迁移。W2.4b 已有 finish 清理、保留策略、8 页预算及收尾互斥，仍缺 markError。W2.5 当前按整个浏览器轮次和完整 helper FIFO 串行，事件/chunk/download 尚未完成。详见本轮验证记录。
 
 ### W3 — 导航、等待与可观察性
 
 目标：先实现 agent 能稳定“看见页面并等待页面就绪”。
+
+增量状态：goto/reload/goBack/goForward/stop、基本条件等待与同源 frame 文档失效已实现；networkidle、完整事件和跨域 frame 仍缺失，下列整项保持未完成。
 
 - [ ] **W3.1 导航**：实现 `goto`、`reload`、`goBack`、`goForward`、`stop`，统一 URL、title、loading、HTTP 和 frame 状态。
 - [ ] **W3.2 等待**：实现 waitForSelector、waitForURL、load/domcontentloaded/networkidle、超时和取消；等待条件必须绑定当前 navigation epoch。
@@ -78,7 +81,9 @@ W2 当前证据（2026-09-14）：`cli` 的 22 项测试、`npm run typecheck` �
 
 ### W4 — Locator 与交互动作
 
-目标：覆盖 ego-lite 的主要元素定位与用户动作，保证动作前可解释、失败后可诊断。
+目标：覆盖 参考基线的主要元素定位与用户动作，保证动作前可解释、失败后可诊断。
+
+增量状态：严格单元素匹配、派发前可操作性检查、组合键、clear/check/selectOption/setInputFiles 已验证；完整定位器、自动等待、拖拽及 chooser/download 仍缺失，下列整项保持未完成。
 
 - [ ] **W4.1 locator**：支持 ref、role/name、text、label、placeholder、alt、title、CSS、XPath、href、test id、shadow DOM。
 - [ ] **W4.2 actionability**：统一 visible/enabled/editable/stable/receives-events 检查、自动滚动、strict mode 和重试策略。
@@ -102,7 +107,7 @@ W2 当前证据（2026-09-14）：`cli` 的 22 项测试、`npm run typecheck` �
 
 目标：让复刻能力可以被 Agent 发现、安装、升级和持续维护。
 
-- [ ] **W6.1 Skill 目录**：建立 `skills/peekr-cli/`，复制 ego-browser 的阅读结构（SKILL、references、scripts、learnings），内容改为 Peekr 契约。
+- [ ] **W6.1 Skill 目录**：建立 `skills/peekr-cli/`，参考成熟 harness 的阅读结构（SKILL、references、scripts、learnings），内容改为 Peekr 契约。
 - [ ] **W6.2 安装脚本**：实现 Node 版本检测、CLI 安装/升级、PATH 选择、幂等执行、失败回滚和卸载提示。
 - [ ] **W6.3 资源打包**：构建时复制 CLI、Skill、schema 和版本清单；禁止将本机 `.reference` 或调试 token 带入发布包。
 - [ ] **W6.4 诊断与迁移**：`peekr doctor` 检查 CEF runtime、调试端口、发现文件、Node 和权限；旧 WebKit 设置迁移到 Chromium-only schema。
@@ -110,7 +115,7 @@ W2 当前证据（2026-09-14）：`cli` 的 22 项测试、`npm run typecheck` �
 
 ### W7 — 兼容性收口与持续回归
 
-目标：把 ego-lite 参考实现转化为可长期维护的兼容矩阵。
+目标：把参考基线转化为可长期维护的兼容矩阵。
 
 - [ ] **W7.1 API 矩阵**：为每个公开方法记录支持级别（完全、部分、明确不支持）和对应测试。
 - [ ] **W7.2 运行时矩阵**：覆盖 macOS 版本、Apple Silicon、CEF 版本、Node 版本、代理/无代理网络和多显示器。
@@ -120,17 +125,11 @@ W2 当前证据（2026-09-14）：`cli` 的 22 项测试、`npm run typecheck` �
 
 ## 1. 参考基准与结论
 
-### 1.1 本机解包基准
+### 1.1 本地参考资料
 
-已检查以下本机资源：
+参考资料保存在本机忽略目录中，不进入仓库提交。只记录经过核验、且对 Peekr 自己的契约有帮助的行为，不在规范文档中保留外部产品、仓库或安装路径名称。
 
-- `.../ego Framework.framework/Versions/0.5.0.32/Helpers/ego-browser`
-- `.../Resources/ego-skills/ego-browser/SKILL.md`
-- `.../Resources/ego-skills/ego-browser/references/{api,install,clearing-state}.md`
-- `.../Resources/ego-skills/ego-browser/scripts/install.sh`
-- `.../Resources/ego-skills/ego-browser/learnings/`
-
-本机 CLI 是 arm64 Mach-O，内嵌 Node `v24.18.1`。它启动 Node 脚本并注入 `globalThis.ego`，同时把 helpers 注入脚本词法作用域。解包后可观察到的原生入口包括：
+本地 CLI 以独立进程启动 Node 脚本，并向脚本注入兼容 namespace 和 helpers。已核验的原生入口包括：
 
 ```text
 createTab                 listTabs
@@ -155,11 +154,11 @@ siteSkills / siteSkillsForUrl / runSiteTool / runSiteBrowserTool
 learnContext / cliLog / help
 ```
 
-### 1.2 开源 harness 的分层
+### 1.2 harness 的分层
 
-开源仓库的职责边界很清晰：
+参考 harness 的职责边界如下；下表只保留能力类别和 Peekr 自己的落点：
 
-| 层 | ego lite 模块 | Peekr 目标 |
+| 层 | 参考能力 | Peekr 目标 |
 |---|---|---|
 | CLI 启动 | `run.ts`, `index.ts` | `cli/src/run.ts`, `cli/src/index.ts` |
 | 原生桥接 | `browser-runtime.ts` | `cli/src/cdp.ts` + Swift Agent bridge |
@@ -168,39 +167,39 @@ learnContext / cliLog / help
 | Page 身份 | `page-ledger.ts`, `page-ref-registry.ts` | `cli/src/page-ledger.ts`, `cli/src/page-ref-registry.ts` |
 | 元素解析 | `element-resolver.ts` | 扩展现有 `cli/src/driver/locator.ts` |
 | 驱动 | `driver/*` | 现有 drivers 迁移到 Page 上下文 |
-| 输出与错误 | `output-sink.ts`, `ego-errors.ts` | 现有 `errors.ts` 增加 round sink 和 hard-stop |
-| Skill | `skills/ego-browser/` | `skills/peekr-cli/`，保持目录和阅读流程一致 |
+| 输出与错误 | `output-sink.ts`, `error-contract.ts` | 现有 `errors.ts` 增加 round sink 和 hard-stop |
+| Skill | Skill、references、scripts、learnings | `skills/peekr-cli/`，保持目录和阅读流程一致 |
 
-### 1.3 按功能的源码对照入口
+### 1.3 按功能的核对入口
 
-下表是实施时的第一跳位置；括号内的函数或类型是需要逐一对照并在 Peekr 中建立 parity 测试的完整功能集合。
+下表是实施时的第一跳位置；每项都需要在 Peekr 中建立自己的 parity 测试。
 
-| 功能 | ego lite 解包源码 | 主要函数/类型 |
+| 功能 | Peekr 目标模块 | 主要函数/类型 |
 |---|---|---|
-| CLI 输入与执行 | [`src/run.ts`](/Users/yunge/Projects/self/Peekr/.reference/ego-lite/0.5.0.32/source/package/ego-browser/src/run.ts) | `runMain`, `execute`, `executionContext` |
-| SDK 注入与宿主适配 | [`src/index.ts`](/Users/yunge/Projects/self/Peekr/.reference/ego-lite/0.5.0.32/source/package/ego-browser/src/index.ts) | `installEgoSdk`, `disposeEgoSdk`, `wrapUseTaskSpace` |
-| helper 聚合 | [`src/helpers.ts`](/Users/yunge/Projects/self/Peekr/.reference/ego-lite/0.5.0.32/source/package/ego-browser/src/helpers.ts) | `helperContext`, `taskSpace`, `useOrCreateTaskSpace`, `profiles` |
-| API schema/help | [`src/public-api-schema.ts`](/Users/yunge/Projects/self/Peekr/.reference/ego-lite/0.5.0.32/source/package/ego-browser/src/public-api-schema.ts)、[`src/help-runtime.ts`](/Users/yunge/Projects/self/Peekr/.reference/ego-lite/0.5.0.32/source/package/ego-browser/src/help-runtime.ts) | 全部公开方法、参数校验和 `help()` |
-| Space/Page 生命周期 | [`src/page-model.ts`](/Users/yunge/Projects/self/Peekr/.reference/ego-lite/0.5.0.32/source/package/ego-browser/src/page-model.ts) | `TaskSpace`, `Page`, `Download`, `FileChooser` |
-| Page 持久身份 | [`src/page-ledger.ts`](/Users/yunge/Projects/self/Peekr/.reference/ego-lite/0.5.0.32/source/package/ego-browser/src/page-ledger.ts)、[`src/page-ref-registry.ts`](/Users/yunge/Projects/self/Peekr/.reference/ego-lite/0.5.0.32/source/package/ego-browser/src/page-ref-registry.ts) | `PageLedgerStore`, `PageRefRegistry` |
-| CDP/session/events | [`src/browser-runtime.ts`](/Users/yunge/Projects/self/Peekr/.reference/ego-lite/0.5.0.32/source/package/ego-browser/src/browser-runtime.ts) | `browserCdp`, `ensureSession`, `ensureFrameSessions`, events/dialogs |
-| 导航和等待 | [`src/driver/nav.ts`](/Users/yunge/Projects/self/Peekr/.reference/ego-lite/0.5.0.32/source/package/ego-browser/src/driver/nav.ts)、[`src/driver/page-waits.ts`](/Users/yunge/Projects/self/Peekr/.reference/ego-lite/0.5.0.32/source/package/ego-browser/src/driver/page-waits.ts) | goto/reload、URL/selector/load/network idle |
-| Snapshot | [`src/driver/observe.ts`](/Users/yunge/Projects/self/Peekr/.reference/ego-lite/0.5.0.32/source/package/ego-browser/src/driver/observe.ts)、[`src/snapshot-result.ts`](/Users/yunge/Projects/self/Peekr/.reference/ego-lite/0.5.0.32/source/package/ego-browser/src/snapshot-result.ts) | `snapshot`, `snapshotText`, 压缩、frame/ref 修复 |
-| 元素解析 | [`src/element-resolver.ts`](/Users/yunge/Projects/self/Peekr/.reference/ego-lite/0.5.0.32/source/package/ego-browser/src/element-resolver.ts) | ref、role、CSS、href、XPath、shadow DOM、actionability |
-| 鼠标动作 | [`src/driver/page-actions.ts`](/Users/yunge/Projects/self/Peekr/.reference/ego-lite/0.5.0.32/source/package/ego-browser/src/driver/page-actions.ts)、[`src/driver/pointer.ts`](/Users/yunge/Projects/self/Peekr/.reference/ego-lite/0.5.0.32/source/package/ego-browser/src/driver/pointer.ts) | click、hover、drag、wheel、自动滚动 |
-| 键盘和剪贴板 | [`src/driver/page-keyboard.ts`](/Users/yunge/Projects/self/Peekr/.reference/ego-lite/0.5.0.32/source/package/ego-browser/src/driver/page-keyboard.ts)、[`src/clipboard.ts`](/Users/yunge/Projects/self/Peekr/.reference/ego-lite/0.5.0.32/source/package/ego-browser/src/clipboard.ts) | press/type/insertText/paste、macOS 编辑命令 |
-| 文件与下载 | [`src/driver/files.ts`](/Users/yunge/Projects/self/Peekr/.reference/ego-lite/0.5.0.32/source/package/ego-browser/src/driver/files.ts)、[`src/driver/downloads.ts`](/Users/yunge/Projects/self/Peekr/.reference/ego-lite/0.5.0.32/source/package/ego-browser/src/driver/downloads.ts) | chooser、setInputFiles、download 生命周期 |
-| JS/CDP/fetch | [`src/cdp-eval.ts`](/Users/yunge/Projects/self/Peekr/.reference/ego-lite/0.5.0.32/source/package/ego-browser/src/cdp-eval.ts)、[`src/http.ts`](/Users/yunge/Projects/self/Peekr/.reference/ego-lite/0.5.0.32/source/package/ego-browser/src/http.ts) | `evaluate`, `js`, `cdp`, `page.fetch`, `serverFetch` |
-| 错误和输出 | [`src/ego-errors.ts`](/Users/yunge/Projects/self/Peekr/.reference/ego-lite/0.5.0.32/source/package/ego-browser/src/ego-errors.ts)、[`src/output-sink.ts`](/Users/yunge/Projects/self/Peekr/.reference/ego-lite/0.5.0.32/source/package/ego-browser/src/output-sink.ts) | 错误码、hard-stop、buffer/flush |
-| 站点知识 | [`src/learning/`](/Users/yunge/Projects/self/Peekr/.reference/ego-lite/0.5.0.32/source/package/ego-browser/src/learning)、[`skills/ego-browser/learnings/`](/Users/yunge/Projects/self/Peekr/.reference/ego-lite/0.5.0.32/source/skills/ego-browser/learnings) | site manifest、notes、tools、runtime loader |
-| 安装与打包 | [`scripts/build.mjs`](/Users/yunge/Projects/self/Peekr/.reference/ego-lite/0.5.0.32/source/package/ego-browser/scripts/build.mjs)、[`scripts/install.sh`](/Users/yunge/Projects/self/Peekr/.reference/ego-lite/0.5.0.32/source/skills/ego-browser/scripts/install.sh) | 单文件构建、Skill 复制、PATH/App 安装 |
+| CLI 输入与执行 | `cli/src/run.ts`, `cli/src/index.ts` | `runMain`, `execute`, `executionContext` |
+| SDK 注入与宿主适配 | `cli/src/index.ts` | `installPeekrSdk`, `disposePeekrSdk`, `wrapUseTaskSpace` |
+| helper 聚合 | `cli/src/helpers.ts` | `helperContext`, `taskSpace`, `useOrCreateTaskSpace`, `profiles` |
+| API schema/help | `cli/src/public-api-schema.ts`, `cli/src/help-runtime.ts` | 公开方法、参数校验和 `help()` |
+| Space/Page 生命周期 | `cli/src/page-model.ts` | `TaskSpace`, `Page`, `Download`, `FileChooser` |
+| Page 持久身份 | `cli/src/page-ledger.ts`, `cli/src/page-ref-registry.ts` | `PageLedgerStore`, `PageRefRegistry` |
+| CDP/session/events | `cli/src/browser-runtime.ts` | `browserCdp`, `ensureSession`, `ensureFrameSessions` |
+| 导航和等待 | `cli/src/driver/nav.ts`, `cli/src/driver/page-waits.ts` | goto/reload、URL/selector/load/network idle |
+| Snapshot | `cli/src/driver/observe.ts`, `cli/src/snapshot-result.ts` | `snapshot`, `snapshotText`、压缩、frame/ref 修复 |
+| 元素解析 | `cli/src/element-resolver.ts` | ref、role、CSS、href、XPath、shadow DOM、actionability |
+| 鼠标动作 | `cli/src/driver/page-actions.ts`, `cli/src/driver/pointer.ts` | click、hover、drag、wheel、自动滚动 |
+| 键盘和剪贴板 | `cli/src/driver/page-keyboard.ts`, `cli/src/clipboard.ts` | press/type/insertText/paste、macOS 编辑命令 |
+| 文件与下载 | `cli/src/driver/files.ts`, `cli/src/driver/downloads.ts` | chooser、setInputFiles、download 生命周期 |
+| JS/CDP/fetch | `cli/src/cdp-eval.ts`, `cli/src/http.ts` | `evaluate`, `js`, `cdp`, `page.fetch`, `serverFetch` |
+| 错误和输出 | `cli/src/error-contract.ts`, `cli/src/output-sink.ts` | 错误码、hard-stop、buffer/flush |
+| 站点知识 | `cli/src/learning/` | site manifest、notes、tools、runtime loader |
+| 安装与打包 | `scripts/build.mjs`, `scripts/install.sh` | 单文件构建、Skill 复制、PATH/App 安装 |
 
-### 1.4 不能直接复刻的部分
+### 1.4 不能直接复用的部分
 
-1. ego Framework 内核生成的原生 snapshot 不能从 App bundle 中还原成源码。
-2. ego 的 `sendCDPMessage`、窗口/任务空间原生绑定不能直接复用。
-3. ego 的内嵌 Node helper 是其发行版的一部分；Peekr 第一版可要求 Node ≥22，同时保留未来替换为 App 内嵌 Node helper 的接口。
-4. ego 的网站 learnings 内容不能整包复制；只能复刻 manifest、工具协议和目录结构，内容由 Peekr 自己验证后产生。
+1. 外部内核生成的原生 snapshot 不能从 App bundle 中还原成源码。
+2. 外部实现的 `sendCDPMessage`、窗口/任务空间原生绑定不能直接复用。
+3. 外部实现的内嵌 Node helper 属于其发行版；Peekr 第一版可要求 Node ≥22，同时保留未来替换为 App 内嵌 Node helper 的接口。
+4. 外部实现的站点 learnings 内容不能整包复制；只能吸收 manifest、工具协议和目录结构，内容由 Peekr 自己验证后产生。
 
 ## 2. 总体兼容目标
 
@@ -218,7 +217,7 @@ peekr import --browser <browser> [--profile <name> ...]
 peekr upgrade
 peekr nodejs -e <script>
 peekr nodejs < script.js
-peekr < script.js                 # 兼容 ego 的直接 stdin 模式
+peekr < script.js                 # 兼容参考行为的直接 stdin 模式
 ```
 
 当前 `peekr nodejs` 入口保留，但最终 `peekr` 直接接收 heredoc 也必须工作。脚本输入只能执行一次，执行结束后统一 flush 输出；空输入、参数错误和脚本语法错误有确定退出码。
@@ -234,15 +233,15 @@ const page = task.page("p1");
 // Peekr 原生名称
 const same = await peekr.taskSpace("research");
 
-// ego 兼容名称
-const legacy = await ego.helpers.taskSpace("research");
+// 兼容 namespace
+const legacy = await globalThis.legacy.taskSpace("research");
 ```
 
 实现上采用三层：
 
 1. `peekr`：Peekr 的正式 namespace。
-2. 顶层 helpers：方便 heredoc，名称与 ego 保持一致。
-3. `ego`：只做兼容别名，不拥有第二份状态或实现。
+2. 顶层 helpers：方便 heredoc，名称与参考行为保持一致。
+3. `legacy`：只做兼容别名，不拥有第二份状态或实现。
 
 ### 2.3 任务空间兼容
 
@@ -262,13 +261,13 @@ ownership 必须保持三态：
 
 ### 3.1 CLI 启动、脚本执行和 SDK 注入
 
-**ego 行为**
+**参考行为**
 
 - `nodejs` 子命令把 stdin 或 `-e` 内容包装进 async 函数。
 - helpers 同时作为函数参数和 global 属性存在。
 - `console` 被 round console 替代，避免用户日志绕过输出收集。
 - 每轮结束统一处理输出；hard-stop 会丢弃前置业务输出。
-- SDK 被宿主嵌入时，`installEgoSdk()` 和直接 CLI 必须暴露同一 helper surface。
+- SDK 被宿主嵌入时，`installPeekrSdk()` 和直接 CLI 必须暴露同一 helper surface。
 - `help()` 从 JSDoc/API Schema 生成，而不是单独维护一份手写列表。
 
 **Peekr 实现**
@@ -277,7 +276,7 @@ ownership 必须保持三态：
 - `cli/src/index.ts` 只负责命令路由；脚本执行逻辑不放在命令分支中。
 - 新增 `cli/src/public-api-schema.ts` 和 `cli/src/help-runtime.ts`。
 - 增加 `installPeekrSdk(target, options)`，为 App 内嵌 Node 或未来其他宿主复用。
-- 为 `globalThis.peekr` 和 `globalThis.ego` 安装同一批函数引用。
+- 为 `globalThis.peekr` 和 `globalThis.legacy` 安装同一批函数引用。
 - 支持 `--sdk-path`，允许真实 E2E 使用当前 checkout 的 SDK。
 
 **验收**
@@ -288,7 +287,7 @@ ownership 必须保持三态：
 
 ### 3.2 原生发现、连接和生命周期
 
-**ego 行为**
+**参考行为**
 
 - CLI 不扫描端口，读取 App 写出的发现信息。
 - 原生绑定提供 CDP 传输、浏览器版本、Space 操作和状态事件。
@@ -317,7 +316,7 @@ ownership 必须保持三态：
 
 ### 3.3 TaskSpace、Workspace 和 ownership
 
-**ego 行为**
+**参考行为**
 
 - `taskSpace(nameOrId)`：优先复用 Agent-owned 空间，否则创建。
 - `useOrCreateTaskSpace`：字符串按名称复用，数字按 ID 精确查找。
@@ -344,7 +343,7 @@ ownership 必须保持三态：
 
 ### 3.4 Page ledger、tab 发现和 Page 生命周期
 
-**ego 行为**
+**参考行为**
 
 - Page 标签 (`p1`, `p2`) 跨 Node round 持久化。
 - ledger 记录 `targetId`、来源 (`agent`/`unknown`)、refs、已关闭和已释放标签。
@@ -363,7 +362,7 @@ ownership 必须保持三态：
 
 ### 3.5 CDP transport、session、事件和 dialog
 
-**ego 行为**
+**参考行为**
 
 - 浏览器级命令走 Browser socket；页面命令走 Page socket。
 - session 丢失时区分页面主 session、iframe session 和浏览器断开。
@@ -409,7 +408,7 @@ Page.waitForTimeout(timeout)
 
 ### 3.7 Snapshot、AX tree、OOPIF 和引用
 
-**ego 行为**
+**参考行为**
 
 - `page.snapshot()` 返回结构化 `{ content, refs }`。
 - 默认 viewport；可选 `full_page` 和 iframe `subtree`。
@@ -480,7 +479,7 @@ press(selector, chord, { delay, timeout })
 
 **键盘**
 
-- 支持 Playwright 风格 chord 和 `ControlOrMeta`。
+- 支持浏览器自动化风格 chord 和 `ControlOrMeta`。
 - 区分 `press`、`type`、`insertText`、`paste`。
 - macOS 编辑命令映射到原生 Meta 组合键。
 - 输入后验证 value/input/change 事件；无法确认时返回诊断。
@@ -527,10 +526,10 @@ press(selector, chord, { delay, timeout })
 
 ### 3.11 Site learnings 和工具包
 
-**ego 结构**
+**参考 harness 结构**
 
 ```text
-skills/ego-browser/learnings/<site>/
+skills/agent-browser-harness/learnings/<site>/
   manifest.json
   notes/*.md
   tools/*.js
@@ -577,7 +576,7 @@ PEEKR_INSTALL_USAGE
 
 ### 3.13 安装、Skill 分发和 App onboarding
 
-**ego 行为**
+**参考行为**
 
 - Skill 包跟随 App 发行。
 - 安装脚本定位运行中的 App、`/Applications` 或 `~/Applications`。
@@ -652,7 +651,7 @@ Sources/Peekr/Web/CefSwiftEngine.swift        # CEF/CDP 生命周期
 
 ### W0：基准冻结和兼容清单
 
-- 提交 `ego-api-manifest.json`、本机版本、源码 commit 和 Skill 目录清单。
+- 提交 `兼容接口清单.json`、本机版本、源码 commit 和 Skill 目录清单。
 - 生成 API parity 表，逐项标记 `same`、`adapted`、`unsupported`。
 - 添加 `cli/NOTICE`，记录 MIT 来源和未复制的闭源边界。
 
@@ -682,7 +681,7 @@ Sources/Peekr/Web/CefSwiftEngine.swift        # CEF/CDP 生命周期
 
 ### W5：Skill、learnings 和安装
 
-- 重写 `SKILL.md` 为 ego 同等级的首轮可执行文档。
+- 重写 `SKILL.md` 为 参考实现同等级的首轮可执行文档。
 - 补齐 API/install/clearing-state references。
 - 完成 `peekr install`、App bundle 资源复制、Preferences onboarding。
 - 引入 site learning validator。
@@ -699,7 +698,7 @@ Sources/Peekr/Web/CefSwiftEngine.swift        # CEF/CDP 生命周期
 | 类别 | 必须验证 |
 |---|---|
 | CLI | help/version、stdin、`-e`、空输入、语法错误、退出码 |
-| SDK | `peekr`、顶层 helpers、`ego` 别名引用同一状态 |
+| SDK | `peekr`、顶层 helpers、`参考实现` 别名引用同一状态 |
 | Space | 复用、创建、数字 ID、claim、handoff、takeover、finish |
 | ownership | user/agent/delegated 三态、hard-stop、rail 同步 |
 | Page | p1、popup、adopt/release、关闭保护、ledger 原子写入 |
@@ -729,13 +728,13 @@ EOF
 
 ## 7. 风险与明确取舍
 
-1. **Snapshot 质量风险**：CEF 的 AX 树可能比 ego 内核不完整。先做 AX/DOMSnapshot 双源，再准备注入式 ARIA walker 作为降级，不把降级结果伪装成完整 snapshot。
-2. **Space ID 差异**：Peekr 内部 UUID 与 ego 数字 ID 不兼容，必须增加持久外部 ID，不能让每个 helper 自己转换。
+1. **Snapshot 质量风险**：CEF 的 AX 树可能比参考内核不完整。先做 AX/DOMSnapshot 双源，再准备注入式 ARIA walker 作为降级，不把降级结果伪装成完整 snapshot。
+2. **Space ID 差异**：Peekr 内部 UUID 与参考实现的数字 ID 不兼容，必须增加持久外部 ID，不能让每个 helper 自己转换。
 3. **全局选择状态**：native bridge 若一次只能选择一个 Space，所有操作必须经过 FIFO gate；不能用并发 Promise 绕过选择锁。
 4. **用户控制边界**：ownership 检查必须在 Swift 侧最终裁决，CLI 缓存只用于性能，不能用于授权。
 5. **CEF target 差异**：维持当前每 target WebSocket 方案，禁止假设 Chromium flattened session 在所有 CEF 版本可用。
 6. **内嵌 Node**：第一阶段使用 Node ≥22；将 Node runtime 抽象为 `NodeHost`，以后可替换为 App 内嵌 helper，不让业务 API 依赖宿主路径。
-7. **版权**：复用开源 harness 时保留 MIT notice；不提交 ego Framework、反编译产物或未授权站点数据。
+7. **版权**：复用开源 harness 时保留 MIT notice；不提交外部内核、反编译产物或未授权站点数据。
 
 ## 8. 当前工作树之后的执行顺序
 
@@ -748,42 +747,16 @@ EOF
 
 本文档只描述复刻计划，不改变当前工作树中已有的 Swift 或 CLI WIP。
 
-## 9. 本地解包参考索引
+## 9. 本地参考索引
 
-完整参考包已放入仓库根目录的 `.reference/ego-lite/`，并已加入 `.gitignore`。它不会进入提交，但在本机 checkout 中可持续用于源码搜索、版本比对和真实 CLI 行为复现。
+完整参考包只允许放在仓库根目录的 `.reference/agent-browser-baseline/`，并必须加入 `.gitignore`。它不会进入提交，只用于本机源码搜索、版本比对和行为复现。
 
-| 参考内容 | 本地地址 | 用途 |
-|---|---|---|
-| 基准清单与 hash | [`manifest.json`](/Users/yunge/Projects/self/Peekr/.reference/ego-lite/0.5.0.32/manifest.json) | 记录 App 版本、源码 commit、二进制 hash 和授权边界 |
-| 可执行 CLI | [`app/Helpers/ego-browser`](/Users/yunge/Projects/self/Peekr/.reference/ego-lite/0.5.0.32/app/Helpers/ego-browser) | 运行 `help`、`nodejs`、`globalThis.ego` 和 helpers 行为探针 |
-| Skill 主文档 | [`ego-browser-SKILL.md`](/Users/yunge/Projects/self/Peekr/.reference/ego-lite/0.5.0.32/ego-browser-SKILL.md) | 对照 Agent 工作流、生命周期、语义/视觉/CDP 选择规则 |
-| Skill 完整目录 | [`app/Resources/ego-skills/ego-browser/`](/Users/yunge/Projects/self/Peekr/.reference/ego-lite/0.5.0.32/app/Resources/ego-skills/ego-browser) | 对照 references、install script 和 learnings |
-| API 参考 | [`references/api.md`](/Users/yunge/Projects/self/Peekr/.reference/ego-lite/0.5.0.32/app/Resources/ego-skills/ego-browser/references/api.md) | 核对方法签名、参数和返回值 |
-| 安装流程 | [`references/install.md`](/Users/yunge/Projects/self/Peekr/.reference/ego-lite/0.5.0.32/app/Resources/ego-skills/ego-browser/references/install.md) | 复刻 App 定位、PATH 注册和 doctor 流程 |
-| 状态清理规则 | [`references/clearing-state.md`](/Users/yunge/Projects/self/Peekr/.reference/ego-lite/0.5.0.32/app/Resources/ego-skills/ego-browser/references/clearing-state.md) | 复刻 cookie/cache/storage 的安全边界 |
-| 固定开源源码 | [`source/package/ego-browser/src/`](/Users/yunge/Projects/self/Peekr/.reference/ego-lite/0.5.0.32/source/package/ego-browser/src) | 对照 runtime、Page model、drivers、resolver 和测试 |
-| 开源构建脚本 | [`source/package/ego-browser/scripts/build.mjs`](/Users/yunge/Projects/self/Peekr/.reference/ego-lite/0.5.0.32/source/package/ego-browser/scripts/build.mjs) | 对照单文件 CLI 与 Skill 分发构建 |
-| 开源 Skill 源码 | [`source/skills/ego-browser/`](/Users/yunge/Projects/self/Peekr/.reference/ego-lite/0.5.0.32/source/skills/ego-browser) | 对照 canonical Skill 和站点 learnings |
+本地索引至少应包含版本清单、API 资料、Skill 目录、可执行探针和源码快照；具体文件名由本机资料管理，不写入规范文档。任何核对结果都必须转化为 Peekr 自己的契约、测试或实现后再提交。
 
-常用探针命令：
-
-```bash
-REF="$PWD/.reference/ego-lite/0.5.0.32"
-"$REF/app/Helpers/ego-browser" help nodejs
-"$REF/app/Helpers/ego-browser" nodejs -e 'console.log(Object.keys(ego)); console.log(Object.keys(ego.helpers))'
-"$REF/app/Helpers/ego-browser" nodejs -e 'console.log(ego.helpers.help())'
-```
-
-若重新安装 ego lite 或更换版本，应新建版本目录，不覆盖旧目录；重新计算 `manifest.json` 中的 hash，并在本计划文档中记录差异。
+若更换参考版本，应新建版本目录，不覆盖旧目录；重新计算清单中的 hash，并在本计划文档中记录差异。
 
 ## 10. 参考资料
 
-- 本机 Skill：[ego-browser/SKILL.md](</Applications/ego lite.app/Contents/Frameworks/ego Framework.framework/Versions/0.5.0.32/Resources/ego-skills/ego-browser/SKILL.md>)
-- 本机 CLI：`/Applications/ego lite.app/Contents/Frameworks/ego Framework.framework/Versions/0.5.0.32/Helpers/ego-browser`
-- ego lite 开源仓库：<https://github.com/citrolabs/ego-lite>
-- ego harness 架构说明：<https://github.com/citrolabs/ego-lite/blob/main/AGENTS.md>
-- TaskSpace/Page 实现：<https://github.com/citrolabs/ego-lite/blob/main/package/ego-browser/src/page-model.ts>
-- CDP runtime 实现：<https://github.com/citrolabs/ego-lite/blob/main/package/ego-browser/src/browser-runtime.ts>
-- 公开 API Schema：<https://github.com/citrolabs/ego-lite/blob/main/package/ego-browser/src/public-api-schema.ts>
-- Skill 构建流程：<https://github.com/citrolabs/ego-lite/blob/main/package/ego-browser/scripts/build.mjs>
-- Peekr 当前目标：[goal-peekr-cli.md](/Users/yunge/Projects/self/Peekr/docs/goal-peekr-cli.md)
+- 外部资料不写入本仓库的规范文档；需要核对时使用本地参考索引或独立研究记录。
+- 本计划只记录 Peekr 自己验证过的行为、实现、测试和未决差异。
+- Peekr 当前目标：[goal-peekr-cli.md](/Users/yunge/Projects/self/Peekr/docs/goal-peekr-cli.md)。
