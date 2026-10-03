@@ -11,11 +11,34 @@ struct HibernationCandidate {
     let isActive: Bool
     /// User pinned it awake / allowlisted — never hibernated.
     let keepAwake: Bool
-    /// Audible media is playing — never hibernated, matching Chrome/Edge so a
-    /// background music tab isn't cut off mid-track.
-    let isAudible: Bool
+    /// Only an explicit silent signal permits automatic hibernation. Unknown
+    /// audio is protected because stopping media is worse than retaining a tab.
+    let audioActivity: WebAudioActivity
+    /// Agent/CDP or another automation owner currently controls the page.
+    let isAutomationControlled: Bool
     /// Already suspended — skip so the sweep is idempotent.
     let isAsleep: Bool
+
+    var isAudible: Bool { audioActivity == .audible }
+
+    init(
+        id: UUID,
+        lastActiveAt: Date,
+        isActive: Bool,
+        keepAwake: Bool,
+        isAudible: Bool = false,
+        isAsleep: Bool = false,
+        isAutomationControlled: Bool = false,
+        audioActivity: WebAudioActivity? = nil
+    ) {
+        self.id = id
+        self.lastActiveAt = lastActiveAt
+        self.isActive = isActive
+        self.keepAwake = keepAwake
+        self.audioActivity = audioActivity ?? (isAudible ? .audible : .silent)
+        self.isAutomationControlled = isAutomationControlled
+        self.isAsleep = isAsleep
+    }
 }
 
 /// Decides which background tabs to *fully* hibernate (tear down the web process,
@@ -40,7 +63,11 @@ struct HibernationPolicy {
     }
 
     func shouldHibernate(_ c: HibernationCandidate, now: Date) -> Bool {
-        guard !c.isActive, !c.keepAwake, !c.isAudible, !c.isAsleep else { return false }
+        guard !c.isActive,
+              !c.keepAwake,
+              c.audioActivity == .silent,
+              !c.isAutomationControlled,
+              !c.isAsleep else { return false }
         return now.timeIntervalSince(c.lastActiveAt) >= idleThreshold
     }
 }

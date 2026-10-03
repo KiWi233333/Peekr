@@ -19,6 +19,28 @@ struct WebRendererFailure: Equatable {
     let code: Int
 }
 
+/// Runtime-only state for a page. Native browser objects and recovery tasks
+/// never enter the persisted Workspace model.
+enum WebPageLifecycle: String, Equatable {
+    case live
+    case asleep
+    case restoring
+    case crashed
+    case closed
+}
+
+/// Audio must fail closed: only an explicit `silent` signal makes a page
+/// eligible for automatic hibernation.
+enum WebAudioActivity: Equatable {
+    case silent
+    case audible
+    case unknown
+}
+
+struct WebActivitySnapshot: Equatable {
+    var audio: WebAudioActivity = .unknown
+}
+
 /// A snapshot of one page's navigation state, mirrored into `BrowserState`.
 /// Engine-agnostic on purpose: backend-specific types never leak past this seam.
 struct NavState: Equatable {
@@ -66,6 +88,8 @@ protocol WebEngine: AnyObject {
     var hostView: NSView { get }
     /// Current navigation state; read on activation to seed the foreground UI.
     var navState: NavState { get }
+    /// Backend activity facts used by the conservative lifecycle policy.
+    var activity: WebActivitySnapshot { get }
     /// Nav-state callback. `WebViewManager` keeps it set on every engine — even
     /// background ones — so each tab's unread badge stays current; it mirrors to
     /// the shared `BrowserState` only for the engine whose id is foreground.
@@ -103,6 +127,7 @@ protocol WebEngine: AnyObject {
 }
 
 extension WebEngine {
+    var activity: WebActivitySnapshot { WebActivitySnapshot() }
     func close() {}
     var zoomLevel: Double { 0 }
     func reload(ignoreCache: Bool) { reload() }

@@ -16,9 +16,12 @@ struct WebApp: Identifiable, Codable, Hashable {
     var isPinned: Bool
     /// Explicitly mutes this tab's page audio without muting other tabs.
     var isMuted: Bool
+    /// User-visible exemption from automatic page hibernation.
+    var keepAwake: Bool
 
     init(id: UUID = UUID(), title: String, urlString: String, alias: String = "",
-         usesCustomIcon: Bool = false, isPinned: Bool = false, isMuted: Bool = false) {
+         usesCustomIcon: Bool = false, isPinned: Bool = false, isMuted: Bool = false,
+         keepAwake: Bool = false) {
         self.id = id
         self.title = title
         self.urlString = urlString
@@ -26,13 +29,14 @@ struct WebApp: Identifiable, Codable, Hashable {
         self.usesCustomIcon = usesCustomIcon
         self.isPinned = isPinned
         self.isMuted = isMuted
+        self.keepAwake = keepAwake
     }
 
-    // Tolerate older app lists that predate `alias` / `usesCustomIcon` / `isPinned` / `isMuted`.
+    // Tolerate older app lists that predate `alias` / `usesCustomIcon` / `isPinned` / `isMuted` / `keepAwake`.
     // (Legacy per-app `panelWidth`/`panelHeight` keys, if present, are ignored —
     // panel size is now a single global value in Settings.)
     private enum CodingKeys: String, CodingKey {
-        case id, title, urlString, alias, usesCustomIcon, isPinned, isMuted
+        case id, title, urlString, alias, usesCustomIcon, isPinned, isMuted, keepAwake
     }
 
     init(from decoder: Decoder) throws {
@@ -44,6 +48,7 @@ struct WebApp: Identifiable, Codable, Hashable {
         usesCustomIcon = try c.decodeIfPresent(Bool.self, forKey: .usesCustomIcon) ?? false
         isPinned = try c.decodeIfPresent(Bool.self, forKey: .isPinned) ?? false
         isMuted = try c.decodeIfPresent(Bool.self, forKey: .isMuted) ?? false
+        keepAwake = try c.decodeIfPresent(Bool.self, forKey: .keepAwake) ?? false
     }
 
     var url: URL? { URL(string: urlString) }

@@ -9,13 +9,15 @@ final class WebViewManagerLifecycleTests: XCTestCase {
         var navState = NavState()
         var onNavStateChange: ((NavState) -> Void)?
         var onDownloadChange: ((WebDownload) -> Void)?
+        var activity = WebActivitySnapshot(audio: .unknown)
         private(set) var closeCount = 0
         private(set) var reloadCount = 0
+        private(set) var loadedURLs: [URL] = []
         var zoomLevel = 0.0
         var isAudioMuted = false
         private(set) var canceledDownloadIDs: [UInt32] = []
 
-        func load(_ url: URL) {}
+        func load(_ url: URL) { loadedURLs.append(url) }
         func goBack() {}
         func goForward() {}
         func reload() { reloadCount += 1 }
@@ -77,6 +79,96 @@ final class WebViewManagerLifecycleTests: XCTestCase {
 
         XCTAssertEqual(factory.profiles.map(\.id), [profile.id])
         XCTAssertEqual(factory.profiles.first?.storageKey, profile.storageKey)
+    }
+
+    func testHiddenIdleSilentBackgroundTabSleepsAndWakesWithItsURL() {
+        let storeURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("peekr-manager-sleep-\(UUID().uuidString).json")
+        let model = AppModel(store: AppStore(fileURL: storeURL))
+        let firstID = model.apps[0].id
+        let second = model.addApp(title: "Second", urlString: "https://second.example", select: false)
+        var clock = Date(timeIntervalSince1970: 10_000)
+        let factory = FakeFactory()
+        let manager = WebViewManager(
+            model: model,
+            factory: factory,
+            badges: BadgeStore(),
+            icons: IconStore(),
+            hibernationPolicy: HibernationPolicy(idleThreshold: 600),
+            now: { clock }
+        )
+
+        manager.activate(firstID)
+        manager.activate(second.id)
+        manager.activate(firstID)
+        factory.engines[1].activity = WebActivitySnapshot(audio: .silent)
+        manager.setPanelVisible(false)
+        clock = clock.addingTimeInterval(601)
+
+        XCTAssertEqual(manager.sweep(now: clock), [second.id])
+        XCTAssertEqual(factory.engines[1].closeCount, 1)
+        XCTAssertNil(manager.view(for: second.id))
+
+        manager.wake(second.id)
+        XCTAssertEqual(factory.engines.count, 3)
+        XCTAssertEqual(factory.engines[2].loadedURLs, [URL(string: "https://second.example")!])
+        XCTAssertEqual(model.tab(second.id)?.urlString, "https://second.example")
+    }
+
+    func testUnknownAudioAndKeepAwakeAreProtectedFromAutomaticSleep() {
+        let storeURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("peekr-manager-protected-\(UUID().uuidString).json")
+        let model = AppModel(store: AppStore(fileURL: storeURL))
+        let firstID = model.apps[0].id
+        let unknown = model.addApp(title: "Unknown", urlString: "https://unknown.example", select: false)
+        let kept = model.addApp(title: "Kept", urlString: "https://kept.example", select: false)
+        model.toggleKeepAwake(kept.id)
+        var clock = Date(timeIntervalSince1970: 10_000)
+        let factory = FakeFactory()
+        let manager = WebViewManager(
+            model: model,
+            factory: factory,
+            badges: BadgeStore(),
+            icons: IconStore(),
+            hibernationPolicy: HibernationPolicy(idleThreshold: 600),
+            now: { clock }
+        )
+        manager.activate(firstID)
+        manager.activate(unknown.id)
+        manager.activate(kept.id)
+        manager.activate(firstID)
+        factory.engines[1].activity = WebActivitySnapshot(audio: .unknown)
+        factory.engines[2].activity = WebActivitySnapshot(audio: .silent)
+        manager.setPanelVisible(false)
+        clock = clock.addingTimeInterval(601)
+
+        XCTAssertTrue(manager.sweep(now: clock).isEmpty)
+        XCTAssertEqual(factory.engines[1].closeCount, 0)
+        XCTAssertEqual(factory.engines[2].closeCount, 0)
+    }
+
+    func testSettledNavigationFactsArePersistedForRecovery() {
+        let storeURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("peekr-manager-navigation-\(UUID().uuidString).json")
+        let model = AppModel(store: AppStore(fileURL: storeURL))
+        let factory = FakeFactory()
+        let manager = WebViewManager(
+            model: model,
+            factory: factory,
+            badges: BadgeStore(),
+            icons: IconStore()
+        )
+        let id = model.apps[0].id
+        manager.activate(id)
+
+        factory.engines[0].publish(NavState(
+            isLoading: false,
+            url: URL(string: "https://settled.example/path"),
+            title: "Settled page"
+        ))
+
+        XCTAssertEqual(model.tab(id)?.urlString, "https://settled.example/path")
+        XCTAssertEqual(model.tab(id)?.title, "Settled page")
     }
 
     func testCloseAllForceClosesEveryCachedEngineAndClearsSelection() {
@@ -160,7 +252,7 @@ final class WebViewManagerLifecycleTests: XCTestCase {
         XCTAssertNil(manager.view(for: opened!.id))
     }
 
-    func testMirrorsLoadFailureAndRetriesCurrentPage() {
+    func testMirrorsLoadFailureAndRecoversRendererOnceBeforeExplicitRetry() async {
         let storeURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("peekr-manager-\(UUID().uuidString).json")
         let model = AppModel(store: AppStore(fileURL: storeURL))
@@ -190,9 +282,23 @@ final class WebViewManagerLifecycleTests: XCTestCase {
 
         let rendererFailure = WebRendererFailure(reason: "crashed", code: 139)
         factory.engines[0].publish(NavState(url: failure.url, rendererFailure: rendererFailure))
+        try? await Task.sleep(nanoseconds: 300_000_000)
+        XCTAssertEqual(factory.engines.count, 2)
+        XCTAssertEqual(factory.engines[0].closeCount, 1)
+        XCTAssertEqual(manager.state.pageLifecycle, .live)
+
+        // A delayed callback from the closed engine cannot overwrite the
+        // replacement engine's lifecycle or failure state.
+        factory.engines[0].publish(NavState(url: failure.url, rendererFailure: rendererFailure))
+        XCTAssertNil(manager.state.rendererFailure)
+
+        factory.engines[1].publish(NavState(url: failure.url, rendererFailure: rendererFailure))
         XCTAssertEqual(manager.state.rendererFailure, rendererFailure)
+        XCTAssertEqual(manager.state.pageLifecycle, .crashed)
         manager.retryCurrentPage()
-        XCTAssertEqual(factory.engines[0].reloadCount, 2)
+        XCTAssertEqual(factory.engines.count, 3)
+        XCTAssertEqual(factory.engines[1].closeCount, 1)
+        XCTAssertEqual(manager.state.pageLifecycle, .live)
     }
 
     func testForegroundNewTabSelectsAndActivates() {

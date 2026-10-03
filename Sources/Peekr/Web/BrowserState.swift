@@ -17,6 +17,8 @@ final class BrowserState {
     var loadError: WebLoadFailure?
     /// The active tab's renderer terminated and needs a reload.
     var rendererFailure: WebRendererFailure?
+    /// Runtime-only lifecycle state for the selected page.
+    var pageLifecycle: WebPageLifecycle = .closed
     /// Bumped to ask the nav bar to focus its omnibox (⌘L).
     var focusOmniboxToken = 0
 

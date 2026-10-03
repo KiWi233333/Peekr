@@ -268,6 +268,10 @@ struct AppRail: View {
                 Label(app.isMuted ? loc.unmuteTab : loc.muteTab,
                       systemImage: app.isMuted ? "speaker.wave.2" : "speaker.slash")
             }
+            Button { model.toggleKeepAwake(app.id) } label: {
+                Label(app.keepAwake ? loc.allowSleep : loc.keepAwake,
+                      systemImage: app.keepAwake ? "moon.zzz" : "moon.fill")
+            }
             Button {
                 if let copy = model.duplicateTab(app.id) { onSelect(copy.id) }
             } label: { Label(loc.duplicateTab, systemImage: "plus.square.on.square") }
@@ -811,6 +815,10 @@ struct AppRail: View {
             Button { onToggleMute(app.id) } label: {
                 Label(app.isMuted ? loc.unmuteTab : loc.muteTab,
                       systemImage: app.isMuted ? "speaker.wave.2" : "speaker.slash")
+            }
+            Button { model.toggleKeepAwake(app.id) } label: {
+                Label(app.keepAwake ? loc.allowSleep : loc.keepAwake,
+                      systemImage: app.keepAwake ? "moon.zzz" : "moon.fill")
             }
             Button {
                 if let copy = model.duplicateTab(app.id) { onSelect(copy.id) }

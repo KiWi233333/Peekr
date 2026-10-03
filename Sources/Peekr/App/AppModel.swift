@@ -266,6 +266,29 @@ final class AppModel {
         schedulePersist()
     }
 
+    /// Persists only settled navigation facts. Transient loading URLs never
+    /// replace the last known recovery target.
+    func applyLiveNavigation(_ id: WebApp.ID, url: URL?, title rawTitle: String) {
+        guard let location = locate(id) else { return }
+        var changed = false
+        if let url, workspaces[location.workspace].tabs[location.tab].urlString != url.absoluteString {
+            workspaces[location.workspace].tabs[location.tab].urlString = url.absoluteString
+            changed = true
+        }
+        let title = BadgeParser.strippingCount(fromTitle: rawTitle)
+        if !title.isEmpty, workspaces[location.workspace].tabs[location.tab].title != title {
+            workspaces[location.workspace].tabs[location.tab].title = title
+            changed = true
+        }
+        if changed { schedulePersist() }
+    }
+
+    func toggleKeepAwake(_ id: WebApp.ID) {
+        guard let location = locate(id) else { return }
+        workspaces[location.workspace].tabs[location.tab].keepAwake.toggle()
+        persist()
+    }
+
     func removeApp(_ id: WebApp.ID) {
         guard let location = locate(id) else { return }
         let workspaceIndex = location.workspace

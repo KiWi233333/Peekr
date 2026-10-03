@@ -183,6 +183,8 @@ struct Localized {
     var renameProfile: String { t("Rename Profile", "重命名 Profile") }
     var archiveProfile: String { t("Archive Profile", "归档 Profile") }
     var profileName: String { t("Profile name", "Profile 名称") }
+    var keepAwake: String { t("Keep Awake", "保持唤醒") }
+    var allowSleep: String { t("Allow Sleep", "允许休眠") }
     var spaces: String { t("Spaces", "工作区") }
     var openSpaces: String { t("Open Spaces", "打开工作区") }
     var defaultWorkspace: String { t("Workspace", "工作区") }

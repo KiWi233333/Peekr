@@ -14,7 +14,9 @@ final class HibernationPolicyTests: XCTestCase {
         isActive: Bool = false,
         keepAwake: Bool = false,
         isAudible: Bool = false,
-        isAsleep: Bool = false
+        isAsleep: Bool = false,
+        isAutomationControlled: Bool = false,
+        audioActivity: WebAudioActivity? = nil
     ) -> HibernationCandidate {
         HibernationCandidate(
             id: UUID(),
@@ -22,7 +24,9 @@ final class HibernationPolicyTests: XCTestCase {
             isActive: isActive,
             keepAwake: keepAwake,
             isAudible: isAudible,
-            isAsleep: isAsleep
+            isAsleep: isAsleep,
+            isAutomationControlled: isAutomationControlled,
+            audioActivity: audioActivity
         )
     }
 
@@ -49,6 +53,16 @@ final class HibernationPolicyTests: XCTestCase {
 
     func testAudibleTabNeverHibernates() {
         let c = candidate(idleFor: 10_000, isAudible: true)
+        XCTAssertTrue(policy.tabsToHibernate([c], now: now).isEmpty)
+    }
+
+    func testUnknownAudioNeverHibernates() {
+        let c = candidate(idleFor: 10_000, audioActivity: .unknown)
+        XCTAssertTrue(policy.tabsToHibernate([c], now: now).isEmpty)
+    }
+
+    func testAutomationControlledTabNeverHibernates() {
+        let c = candidate(idleFor: 10_000, isAutomationControlled: true)
         XCTAssertTrue(policy.tabsToHibernate([c], now: now).isEmpty)
     }
 

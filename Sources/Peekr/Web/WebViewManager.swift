@@ -28,6 +28,30 @@ final class WebViewManager {
     private var lastHosts: [UUID: String] = [:]
     private var lastHistoryURLs: [UUID: String] = [:]
 
+    private struct PageRuntime {
+        var lifecycle: WebPageLifecycle = .closed
+        var lastActiveAt: Date
+        var generation: UInt64 = 0
+        var recoveryAttempts = 0
+        var activity = WebActivitySnapshot()
+        var isAutomationControlled = false
+    }
+
+    private enum SweepReason {
+        case visibility
+        case memoryPressure
+        case manual
+    }
+
+    private var runtimes: [UUID: PageRuntime] = [:]
+    private var engineIdentities: [UUID: ObjectIdentifier] = [:]
+    private var recoveryTasks: [UUID: Task<Void, Never>] = [:]
+    private var hibernationTimer: Timer?
+    private var memoryPressureSource: DispatchSourceMemoryPressure?
+    private var panelIsVisible = true
+    private let hibernationPolicy: HibernationPolicy
+    private let now: () -> Date
+
     init(
         model: AppModel,
         factory: WebEngineFactory,
@@ -35,7 +59,9 @@ final class WebViewManager {
         icons: IconStore,
         searchEngine: @escaping () -> SearchEngine = { .google },
         historyStore: HistoryStore = HistoryStore(),
-        zoomStore: ZoomStore = ZoomStore()
+        zoomStore: ZoomStore = ZoomStore(),
+        hibernationPolicy: HibernationPolicy = HibernationPolicy(idleThreshold: 1_800),
+        now: @escaping () -> Date = Date.init
     ) {
         self.model = model
         self.factory = factory
@@ -44,6 +70,9 @@ final class WebViewManager {
         self.searchEngine = searchEngine
         self.historyStore = historyStore
         self.zoomStore = zoomStore
+        self.hibernationPolicy = hibernationPolicy
+        self.now = now
+        installMemoryPressureSource()
     }
 
     var historyEntries: [HistoryEntry] { historyStore.entries }
@@ -53,10 +82,27 @@ final class WebViewManager {
     /// Ensure an engine exists for `id`, make it current and mirror its state.
     func activate(_ id: UUID) {
         guard let app = model.allTabs.first(where: { $0.id == id }) else { return }
+        if runtimes[id]?.lifecycle == .crashed {
+            state.currentID = id
+            state.pageLifecycle = .crashed
+            return
+        }
+        var runtime = runtime(for: id)
+        let shouldRestore = runtime.lifecycle == .asleep || runtime.lifecycle == .restoring
+        runtime.lastActiveAt = now()
+        if shouldRestore {
+            runtime.lifecycle = .restoring
+        }
+        runtimes[id] = runtime
         let engine = engine(for: app)
         applyStoredZoom(to: engine, for: engine.navState.url ?? app.url)
         state.currentID = id
         mirror(engine.navState)
+        if shouldRestore {
+            restore(id, expectedGeneration: runtime.generation)
+        } else {
+            setLifecycle(.live, for: id)
+        }
     }
 
     func view(for id: UUID) -> NSView? { engines[id]?.hostView }
@@ -66,19 +112,22 @@ final class WebViewManager {
     /// destination Workspace's Profile.
     func prepareForWorkspaceSwitch(from oldWorkspaceID: UUID, to newWorkspaceID: UUID) {
         let ids = model.workspaces.first(where: { $0.id == oldWorkspaceID })?.tabs.map(\.id) ?? []
-        for id in ids { closeEngine(id, clearPresentation: false) }
+        for id in ids { closeEngine(id, clearPresentation: false, lifecycle: .asleep) }
         if ids.contains(state.currentID ?? UUID()) { state.currentID = nil }
     }
 
     func prepareForProfileChange(workspaceID: UUID) {
         let ids = model.workspaces.first(where: { $0.id == workspaceID })?.tabs.map(\.id) ?? []
-        for id in ids { closeEngine(id, clearPresentation: false) }
+        for id in ids { closeEngine(id, clearPresentation: false, lifecycle: .asleep) }
         if ids.contains(state.currentID ?? UUID()) { state.currentID = nil }
     }
 
     /// Mount background agent pages once so the rail later reuses the exact same CEF view.
     func prepareAgentTab(_ id: UUID) {
         guard let app = model.tab(id) else { return }
+        var runtime = runtime(for: id)
+        runtime.isAutomationControlled = true
+        runtimes[id] = runtime
         let engine = engine(for: app)
         guard engine.hostView.window == nil else { return }
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1024, height: 768),
@@ -93,6 +142,68 @@ final class WebViewManager {
 
     func reload(_ id: UUID) { engines[id]?.reload() }
 
+    /// Manual sleep is intentionally separate from the automatic policy and
+    /// may be used even for an audible or currently selected page.
+    @discardableResult
+    func sleep(_ id: UUID) -> Bool {
+        guard engines[id] != nil else { return false }
+        closeEngine(id, clearPresentation: false, lifecycle: .asleep)
+        if state.currentID == id {
+            state.currentID = nil
+            state.pageLifecycle = .asleep
+        }
+        return true
+    }
+
+    func wake(_ id: UUID) {
+        activate(id)
+    }
+
+    /// Deterministic lifecycle entry point used by tests and by the visibility
+    /// timer. Memory-pressure sweeps may run while the panel is visible, but
+    /// the ordinary idle sweep only runs while it is hidden.
+    @discardableResult
+    func sweep(now sweepDate: Date = Date()) -> [UUID] {
+        sweep(reason: .manual, at: sweepDate)
+    }
+
+    @discardableResult
+    private func sweep(reason: SweepReason, at sweepDate: Date) -> [UUID] {
+        guard reason == .memoryPressure || !panelIsVisible else { return [] }
+        let candidates = model.allTabs.compactMap { app -> HibernationCandidate? in
+            guard engines[app.id] != nil else { return nil }
+            let runtime = runtime(for: app.id, at: sweepDate)
+            let activity = engines[app.id]?.activity ?? runtime.activity
+            return HibernationCandidate(
+                id: app.id,
+                lastActiveAt: runtime.lastActiveAt,
+                isActive: state.currentID == app.id,
+                keepAwake: app.keepAwake,
+                isAsleep: runtime.lifecycle == .asleep,
+                isAutomationControlled: runtime.isAutomationControlled,
+                audioActivity: activity.audio
+            )
+        }
+        let ids = hibernationPolicy.tabsToHibernate(candidates, now: sweepDate)
+        for id in ids { _ = sleep(id) }
+        return ids
+    }
+
+    func setPanelVisible(_ visible: Bool) {
+        panelIsVisible = visible
+        hibernationTimer?.invalidate()
+        hibernationTimer = nil
+        guard !visible, hibernationPolicy.idleThreshold > 0 else { return }
+        let interval = min(60, max(1, hibernationPolicy.idleThreshold / 4))
+        hibernationTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) {
+            [weak self] _ in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                _ = self.sweep(reason: .visibility, at: self.now())
+            }
+        }
+    }
+
     func discard(_ id: UUID) {
         let wasCurrent = state.currentID == id
         closeEngine(id, clearPresentation: true)
@@ -106,6 +217,10 @@ final class WebViewManager {
     /// termination. This prevents a page's `beforeunload` handler from keeping
     /// the menu-bar app alive indefinitely after the user already confirmed quit.
     func closeAll() {
+        hibernationTimer?.invalidate()
+        hibernationTimer = nil
+        recoveryTasks.values.forEach { $0.cancel() }
+        recoveryTasks.removeAll()
         for engine in engines.values {
             engine.close()
             engine.hostView.removeFromSuperview()
@@ -117,7 +232,10 @@ final class WebViewManager {
         lastHosts.removeAll()
         lastHistoryURLs.removeAll()
         downloadEngines.removeAll()
+        engineIdentities.removeAll()
+        runtimes.removeAll()
         state.currentID = nil
+        state.pageLifecycle = .closed
     }
 
     // MARK: - Navigation actions (operate on the active engine)
@@ -133,7 +251,14 @@ final class WebViewManager {
         }
     }
     /// Retry the active tab's failed navigation without changing its URL.
-    func retryCurrentPage() { current?.reload() }
+    func retryCurrentPage() {
+        guard let id = state.currentID else { return }
+        if runtimes[id]?.lifecycle == .crashed || current?.navState.rendererFailure != nil {
+            recover(id, resetBudget: true)
+        } else {
+            current?.reload()
+        }
+    }
     func reloadIgnoringCache() { current?.reload(ignoreCache: true) }
 
     func zoomIn() { changeZoom { $0.zoomIn() } }
@@ -255,10 +380,58 @@ final class WebViewManager {
 
     private var current: WebEngine? { state.currentID.flatMap { engines[$0] } }
 
-    private func closeEngine(_ id: UUID, clearPresentation: Bool) {
+    private func runtime(for id: UUID, at date: Date? = nil) -> PageRuntime {
+        if let existing = runtimes[id] { return existing }
+        return PageRuntime(lastActiveAt: date ?? now())
+    }
+
+    private func setLifecycle(_ lifecycle: WebPageLifecycle, for id: UUID) {
+        guard var runtime = runtimes[id] else { return }
+        runtime.lifecycle = lifecycle
+        runtimes[id] = runtime
+        if state.currentID == id { state.pageLifecycle = lifecycle }
+    }
+
+    private func isCurrentEngine(
+        _ id: UUID,
+        generation: UInt64,
+        identity: ObjectIdentifier
+    ) -> Bool {
+        runtimes[id]?.generation == generation
+            && engineIdentities[id] == identity
+    }
+
+    private func installMemoryPressureSource() {
+        let source = DispatchSource.makeMemoryPressureSource(
+            eventMask: [.warning, .critical],
+            queue: .main
+        )
+        source.setEventHandler { [weak self] in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                _ = self.sweep(reason: .memoryPressure, at: self.now())
+            }
+        }
+        source.resume()
+        memoryPressureSource = source
+    }
+
+    @discardableResult
+    private func closeEngine(
+        _ id: UUID,
+        clearPresentation: Bool,
+        lifecycle: WebPageLifecycle = .closed
+    ) -> UInt64 {
+        var runtime = runtime(for: id)
+        runtime.generation &+= 1
+        runtime.lifecycle = lifecycle
+        runtimes[id] = runtime
+        recoveryTasks[id]?.cancel()
+        recoveryTasks[id] = nil
         engines[id]?.close()
         engines[id]?.hostView.removeFromSuperview()
         engines[id] = nil
+        engineIdentities[id] = nil
         agentHosts.removeValue(forKey: id)?.close()
         downloadEngines = downloadEngines.filter { $0.value != id }
         if clearPresentation {
@@ -268,12 +441,21 @@ final class WebViewManager {
             icons.discardNavigation(for: id)
             badges.clear(id)
         }
+        if state.currentID == id { state.pageLifecycle = lifecycle }
+        return runtime.generation
     }
 
     private func engine(for app: WebApp) -> WebEngine {
         if let existing = engines[app.id] { return existing }
+        var runtime = runtime(for: app.id)
+        if runtime.lifecycle != .restoring { runtime.lifecycle = .live }
+        runtime.activity = WebActivitySnapshot()
+        runtimes[app.id] = runtime
+        let generation = runtime.generation
         let engine = factory.makeEngine(for: app, profile: model.profile(forTab: app.id))
         let id = app.id
+        let identity = ObjectIdentifier(engine)
+        engineIdentities[id] = identity
         lastTitles[id] = app.title
         lastHosts[id] = IconStore.normalizedHost(app.host)
         icons.followNavigation(app, pageURL: app.url)
@@ -282,6 +464,17 @@ final class WebViewManager {
         // foreground page drives the shared `BrowserState` the nav bar binds to.
         engine.onNavStateChange = { [weak self] nav in
             guard let self else { return }
+            guard self.isCurrentEngine(id, generation: generation, identity: identity) else { return }
+            if let failure = nav.rendererFailure {
+                self.handleRendererFailure(
+                    id: id,
+                    failure: failure,
+                    nav: nav,
+                    generation: generation,
+                    identity: identity
+                )
+                return
+            }
             let host = IconStore.normalizedHost(nav.url?.displayHost)
             let hostChanged = host != nil && self.lastHosts[id] != host
             let titleChanged = self.lastTitles[id] != nav.title
@@ -312,18 +505,24 @@ final class WebViewManager {
             // fetch each hop's icon; `syncFavicon` then no-ops unless the host
             // actually changed.
             if !nav.isLoading, let app = self.model.allTabs.first(where: { $0.id == id }) {
+                self.model.applyLiveNavigation(id, url: nav.url, title: nav.title)
                 let pageURL = nav.url
                 Task { [weak self] in
-                    guard let self, let engine = self.engines[id] else { return }
+                    guard let self, self.isCurrentEngine(id, generation: generation, identity: identity) else { return }
                     let links = await engine.iconLinkURLs()
+                    guard self.isCurrentEngine(id, generation: generation, identity: identity) else { return }
                     self.icons.syncFavicon(app, pageURL: pageURL, domLinks: links)
                 }
+            }
+            if !nav.isLoading {
+                self.runtimeDidSettle(id)
             }
             self.recordHistory(id: id, navigation: nav)
             if id == self.state.currentID { self.mirror(nav) }
         }
         engine.onDownloadChange = { [weak self] download in
             guard let self else { return }
+            guard self.isCurrentEngine(id, generation: generation, identity: identity) else { return }
             self.downloads.update(download)
             if download.state == .downloading {
                 self.downloadEngines[download.id] = id
@@ -343,6 +542,91 @@ final class WebViewManager {
 
         let fallback = model.tab(id)?.displayName ?? url.displayHost ?? urlString
         historyStore.record(url: url, title: navigation.title.isEmpty ? fallback : navigation.title)
+    }
+
+    private func runtimeDidSettle(_ id: UUID) {
+        guard var runtime = runtimes[id] else { return }
+        runtime.lifecycle = .live
+        runtime.recoveryAttempts = 0
+        runtimes[id] = runtime
+        if state.currentID == id { state.pageLifecycle = .live }
+    }
+
+    private func handleRendererFailure(
+        id: UUID,
+        failure: WebRendererFailure,
+        nav: NavState,
+        generation: UInt64,
+        identity: ObjectIdentifier
+    ) {
+        guard isCurrentEngine(id, generation: generation, identity: identity),
+              var runtime = runtimes[id] else { return }
+
+        if runtime.recoveryAttempts >= 1 {
+            runtime.lifecycle = .crashed
+            runtimes[id] = runtime
+            if state.currentID == id {
+                state.pageLifecycle = .crashed
+                mirror(nav)
+            }
+            return
+        }
+
+        runtime.recoveryAttempts += 1
+        runtimes[id] = runtime
+        let expectedGeneration = closeEngine(
+            id,
+            clearPresentation: false,
+            lifecycle: .restoring
+        )
+        if state.currentID == id {
+            state.pageLifecycle = .restoring
+            state.rendererFailure = nil
+        }
+        scheduleRecovery(id, expectedGeneration: expectedGeneration)
+        _ = failure // retained in the NavState delivered to the explicit retry UI
+    }
+
+    private func scheduleRecovery(_ id: UUID, expectedGeneration: UInt64) {
+        recoveryTasks[id]?.cancel()
+        recoveryTasks[id] = Task { @MainActor [weak self] in
+            do {
+                try await Task.sleep(nanoseconds: 150_000_000)
+            } catch {
+                return
+            }
+            guard let self,
+                  self.runtimes[id]?.generation == expectedGeneration,
+                  self.runtimes[id]?.lifecycle == .restoring,
+                  self.model.tab(id) != nil else { return }
+            self.recoveryTasks[id] = nil
+            self.restore(id, expectedGeneration: expectedGeneration)
+        }
+    }
+
+    private func restore(_ id: UUID, expectedGeneration: UInt64) {
+        guard runtimes[id]?.generation == expectedGeneration,
+              runtimes[id]?.lifecycle == .restoring,
+              let app = model.tab(id) else { return }
+        let engine = engine(for: app)
+        // CefSwift stores this as pendingURL until its host view is mounted;
+        // fake engines observe the same recovery contract directly.
+        if let url = app.url { engine.load(url) }
+        if state.currentID == id {
+            applyStoredZoom(to: engine, for: app.url)
+            mirror(engine.navState)
+            state.pageLifecycle = .live
+        }
+        setLifecycle(.live, for: id)
+    }
+
+    private func recover(_ id: UUID, resetBudget: Bool) {
+        guard model.tab(id) != nil else { return }
+        var runtime = runtime(for: id)
+        if resetBudget { runtime.recoveryAttempts = 0 }
+        runtimes[id] = runtime
+        let generation = closeEngine(id, clearPresentation: false, lifecycle: .restoring)
+        restore(id, expectedGeneration: generation)
     }
 
     private func changeZoom(_ action: (WebEngine) -> Void) {
