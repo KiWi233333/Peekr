@@ -132,6 +132,16 @@ struct Localized {
         t("Import failed: \(message)", "导入失败：\(message)")
     }
     var open: String { t("Open", "打开") }
+    var downloads: String { t("Downloads", "下载") }
+    var noDownloads: String { t("No downloads yet", "暂无下载") }
+    var downloadInProgress: String { t("Downloading…", "下载中…") }
+    var downloadComplete: String { t("Completed", "已完成") }
+    var downloadCanceled: String { t("Canceled", "已取消") }
+    var downloadFailed: String { t("Failed", "失败") }
+    var cancelDownload: String { t("Cancel download", "取消下载") }
+    var openDownloadedFile: String { t("Open file", "打开文件") }
+    var showDownloadedFile: String { t("Show in Finder", "在 Finder 中显示") }
+    var clearCompletedDownloads: String { t("Clear finished", "清除已结束") }
     var edit: String { t("Edit…", "编辑…") }
     var refreshIconAndTitle: String { t("Refresh Icon & Title", "刷新图标和标题") }
     var delete: String { t("Delete", "删除") }
@@ -140,6 +150,13 @@ struct Localized {
     var newTab: String { t("New Tab", "新建标签") }
     var rename: String { t("Rename", "重命名") }
     var closeTab: String { t("Close Tab", "关闭标签") }
+    var pinTab: String { t("Pin Tab", "固定标签") }
+    var unpinTab: String { t("Unpin Tab", "取消固定标签") }
+    var muteTab: String { t("Mute Tab", "静音标签") }
+    var unmuteTab: String { t("Unmute Tab", "取消标签静音") }
+    var mutedTab: String { t("Muted", "已静音") }
+    var closeOtherTabs: String { t("Close Other Tabs", "关闭其他标签") }
+    var closeTabsToRight: String { t("Close Tabs to the Right", "关闭右侧标签") }
     var duplicateTab: String { t("Duplicate Tab", "复制标签") }
     var newTabGroup: String { t("New Tab Group", "新建标签组") }
     var tabGroup: String { t("Tab Group", "标签组") }
@@ -163,6 +180,10 @@ struct Localized {
     var defaultAgentWorkspace: String { t("Agent Space", "Agent 工作区") }
     var agentSpaceBadge: String { t("Agent-owned space", "Agent 专属工作区") }
     var takeOverWorkspace: String { t("Take Over Space", "接管此工作区") }
+    var pinWorkspace: String { t("Pin Workspace", "置顶工作区") }
+    var unpinWorkspace: String { t("Unpin Workspace", "取消置顶工作区") }
+    var moreActions: String { t("More Actions", "更多操作") }
+    var reorderWorkspaces: String { t("Drag cards to reorder", "拖动卡片调整顺序") }
     var resizeHint: String { t("Drag to resize", "拖动调整大小") }
 
     // Omnibox
@@ -170,6 +191,22 @@ struct Localized {
     func searchWith(_ engine: SearchEngine) -> String {
         t("Search with \(engine.displayName)", "使用 \(engine.displayName) 搜索")
     }
+
+    // Page context menu
+    var reload: String { t("Reload", "重新加载") }
+    var inspect: String { t("Inspect", "检查") }
+    var openLinkInNewTab: String { t("Open Link in New Tab", "在新标签页中打开链接") }
+    var copyLinkAddress: String { t("Copy Link Address", "复制链接地址") }
+    var openImageInNewTab: String { t("Open Image in New Tab", "在新标签页中打开图片") }
+    var copyImageAddress: String { t("Copy Image Address", "复制图片地址") }
+    func searchSelection(_ engine: SearchEngine, for selection: String) -> String {
+        t("Search \(engine.displayName) for \"\(selection)\"", "用 \(engine.displayName) 搜索“\(selection)”")
+    }
+
+    // Find in page
+    var findInPage: String { t("Find in page", "在页面中查找") }
+    var findPrevious: String { t("Previous match", "上一个匹配") }
+    var findNext: String { t("Next match", "下一个匹配") }
 
     // Bookmarks
     var bookmarks: String { t("Bookmarks", "书签") }
@@ -243,6 +280,18 @@ struct Localized {
     var pressKeys: String { t("Press keys…", "按下按键…") }
 
     // Web engine
+    var pageLoadErrorTitle: String { t("This page can’t be loaded", "此页面无法加载") }
+    var rendererFailureTitle: String { t("This page stopped responding", "此页面已停止响应") }
+    var rendererFailureMessage: String {
+        t("The page process stopped unexpectedly. Reload the page to try again.",
+          "页面进程意外停止。重新加载页面后再试一次。")
+    }
+    var retry: String { t("Retry", "重试") }
+    var back: String { t("Back", "返回") }
+    func pageLoadErrorMessage(_ error: WebLoadFailure) -> String {
+        t("Peekr could not load this page.\n\(error.diagnostic)",
+          "Peekr 无法加载此页面。\n\(error.diagnostic)")
+    }
     var searchEngineSection: String { t("Search", "搜索") }
     var defaultSearchEngine: String { t("Default search engine", "默认搜索引擎") }
     var searchEngineHint: String {

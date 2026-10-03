@@ -55,6 +55,7 @@ final class AppModel {
         workspaces = loadedWorkspaces
         activeWorkspaceID = validActiveID ?? loadedWorkspaces[0].id
         for index in workspaces.indices { workspaces[index].normalizeSidebar() }
+        normalizeWorkspaceOrder()
         if let selectedID { selectionHistory = [selectedID] }
     }
 
@@ -65,6 +66,12 @@ final class AppModel {
     }
 
     var activeWorkspace: Workspace { workspaces[activeIndex] }
+
+    /// The overview order is derived from the persisted order so pinned spaces
+    /// remain together without losing the user's order inside either section.
+    var orderedWorkspaces: [Workspace] {
+        workspaces.filter(\.isPinned) + workspaces.filter { !$0.isPinned }
+    }
 
     /// Browser order for the active Space, including children of collapsed
     /// groups. Collapse is presentation-only and never changes shortcut order.
@@ -112,6 +119,19 @@ final class AppModel {
         return ids[next]
     }
 
+    /// Selects a numbered tab using Chrome's shortcut convention: ⌘1–⌘8
+    /// address the corresponding tab and ⌘9 always addresses the last tab.
+    @discardableResult
+    func selectShortcutTab(_ number: Int) -> WebApp.ID? {
+        guard (1...9).contains(number) else { return nil }
+        let ids = activeWorkspace.orderedTabIDs
+        guard !ids.isEmpty else { return nil }
+        let index = number == 9 ? ids.count - 1 : number - 1
+        guard ids.indices.contains(index) else { return nil }
+        select(ids[index])
+        return ids[index]
+    }
+
     @discardableResult
     func selectMostRecentTab() -> WebApp.ID? {
         guard let current = selectedID else { return selectAdjacentTab() }
@@ -132,7 +152,8 @@ final class AppModel {
         title: String,
         urlString: String,
         alias: String = "",
-        toGroup groupID: TabGroup.ID? = nil
+        toGroup groupID: TabGroup.ID? = nil,
+        select: Bool = true
     ) -> WebApp {
         let app = WebApp(title: title, urlString: urlString, alias: alias)
         workspaces[activeIndex].tabs.append(app)
@@ -145,8 +166,10 @@ final class AppModel {
         } else {
             workspaces[activeIndex].sidebarItems.append(.tab(app.id))
         }
-        selectedID = app.id
-        recordSelection(app.id)
+        if select {
+            selectedID = app.id
+            recordSelection(app.id)
+        }
         persist()
         return app
     }
@@ -204,6 +227,14 @@ final class AppModel {
         persist()
     }
 
+    /// Pins a tab at the top of its workspace rail. `Workspace.normalizeSidebar`
+    /// moves pinned records out of groups and keeps the pinned order stable.
+    func togglePin(_ id: WebApp.ID) {
+        guard let location = locate(id) else { return }
+        workspaces[location.workspace].tabs[location.tab].isPinned.toggle()
+        persist()
+    }
+
     func rename(_ id: WebApp.ID, to title: String) {
         guard let location = locate(id) else { return }
         workspaces[location.workspace].tabs[location.tab].title = title
@@ -252,6 +283,23 @@ final class AppModel {
         }
         persist()
         onRemove?(id)
+    }
+
+    /// Chrome-style bulk tab actions. The context-menu tab stays open and is
+    /// selected after the operation, so closing background tabs never leaves
+    /// the browser pointing at a fallback tab by accident.
+    func closeOtherTabs(keeping keepID: WebApp.ID) {
+        guard activeWorkspace.orderedTabIDs.contains(keepID) else { return }
+        let ids = activeWorkspace.orderedTabIDs.filter { $0 != keepID }
+        for id in ids { removeApp(id) }
+        if tab(keepID) != nil { select(keepID) }
+    }
+
+    func closeTabsToRight(of anchorID: WebApp.ID) {
+        let ids = activeWorkspace.orderedTabIDs
+        guard let anchorIndex = ids.firstIndex(of: anchorID) else { return }
+        for id in ids.dropFirst(anchorIndex + 1) { removeApp(id) }
+        if tab(anchorID) != nil { select(anchorID) }
     }
 
     @discardableResult
@@ -546,6 +594,38 @@ final class AppModel {
         persist()
     }
 
+    func toggleWorkspacePin(_ id: UUID) {
+        guard let index = workspaces.firstIndex(where: { $0.id == id }) else { return }
+        workspaces[index].isPinned.toggle()
+        persist()
+    }
+
+    /// Moves a workspace before another workspace. Dropping across the pinned
+    /// boundary places the item at that section's edge instead of allowing a
+    /// temporary order that the next render would immediately undo.
+    func moveWorkspace(_ id: UUID, before referenceID: UUID?) {
+        var ordered = orderedWorkspaces
+        guard let sourceIndex = ordered.firstIndex(where: { $0.id == id }) else { return }
+        let item = ordered.remove(at: sourceIndex)
+
+        let insertionIndex: Int
+        if let referenceID,
+           let referenceIndex = ordered.firstIndex(where: { $0.id == referenceID }),
+           ordered[referenceIndex].isPinned == item.isPinned {
+            insertionIndex = referenceIndex
+        } else if item.isPinned {
+            insertionIndex = ordered.firstIndex(where: { !$0.isPinned }) ?? ordered.count
+        } else if referenceID != nil {
+            insertionIndex = ordered.firstIndex(where: { !$0.isPinned }) ?? ordered.count
+        } else {
+            insertionIndex = ordered.count
+        }
+
+        ordered.insert(item, at: insertionIndex)
+        workspaces = ordered
+        persist()
+    }
+
     func removeWorkspace(_ id: UUID) {
         guard workspaces.count > 1,
               let index = workspaces.firstIndex(where: { $0.id == id }) else { return }
@@ -626,8 +706,13 @@ final class AppModel {
 
     func persist() {
         pendingPersist?.cancel()
+        normalizeWorkspaceOrder()
         for index in workspaces.indices { workspaces[index].normalizeSidebar() }
         store.save(WorkspacesData(workspaces: workspaces, activeWorkspaceID: activeWorkspaceID))
+    }
+
+    private func normalizeWorkspaceOrder() {
+        workspaces = workspaces.filter(\.isPinned) + workspaces.filter { !$0.isPinned }
     }
 
     private func schedulePersist() {

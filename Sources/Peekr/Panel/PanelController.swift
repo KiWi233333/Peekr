@@ -223,8 +223,20 @@ final class PanelController {
             return event
         }
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown]) { [weak self] event in
-            guard let self else { return event }
-            if event.keyCode == UInt16(kVK_Escape) { self.hide(); return nil }
+            // Panel shortcuts only apply to the panel itself: a key Preferences
+            // window, sheet or DevTools window must not trigger panel actions.
+            guard let self, event.window === self.panel else { return event }
+            if event.keyCode == UInt16(kVK_Escape) {
+                if self.manager.findBar.isVisible {
+                    self.manager.closeFindBar()
+                    return nil
+                }
+                // A focused text field (omnibox, find bar, tab rename) owns Esc —
+                // let its own handling run instead of hiding the panel.
+                if self.panel.firstResponder is NSTextView { return event }
+                self.hide()
+                return nil
+            }
             let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
             if event.keyCode == UInt16(kVK_Tab), flags.contains(.control) {
                 self.handleControlTab(reverse: flags.contains(.shift))
@@ -273,12 +285,40 @@ final class PanelController {
 
     /// Browser-style shortcuts while the panel is key. Returns true if consumed.
     private func handleCommand(_ event: NSEvent) -> Bool {
+        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        // Arrow keys carry no printable characters, so branch on keyCode.
+        if event.keyCode == UInt16(kVK_LeftArrow) || event.keyCode == UInt16(kVK_RightArrow) {
+            let back = event.keyCode == UInt16(kVK_LeftArrow)
+            // ⌘⌥←/→ walk the tab strip (Chrome); plain ⌘←/→ navigate history —
+            // except while a text field owns them for caret movement.
+            if flags.contains(.option) {
+                handleControlTab(reverse: back)
+            } else {
+                guard !(panel.firstResponder is NSTextView) else { return false }
+                back ? manager.goBack() : manager.goForward()
+            }
+            return true
+        }
         guard let chars = event.charactersIgnoringModifiers else { return false }
         switch chars {
         case "l": manager.state.focusOmniboxToken += 1
-        case "r": manager.reloadOrStop()
+        case "r":
+            if flags.contains(.shift) {
+                manager.reloadIgnoringCache()
+            } else {
+                manager.reloadOrStop()
+            }
         case "[": manager.goBack()
         case "]": manager.goForward()
+        case "d":
+            let url = manager.state.urlString
+            guard !url.isEmpty else { return false }
+            let title = manager.state.title
+            bookmarks.add(title: title.isEmpty ? url : title, urlString: url)
+        case "f": manager.openFindBar()
+        case "=", "+": manager.zoomIn()
+        case "-": manager.zoomOut()
+        case "0": manager.zoomReset()
         case "t":
             if event.modifierFlags.contains(.shift) {
                 if let app = model.reopenLastClosedTab() { manager.activate(app.id) }
@@ -298,9 +338,7 @@ final class PanelController {
                 manager.state.currentID = nil
             }
         default:
-            guard let n = Int(chars), (1...9).contains(n), n - 1 < model.apps.count else { return false }
-            let id = model.apps[n - 1].id
-            model.select(id)
+            guard let n = Int(chars), let id = model.selectShortcutTab(n) else { return false }
             manager.activate(id)
         }
         return true

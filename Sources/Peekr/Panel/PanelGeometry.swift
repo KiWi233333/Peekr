@@ -74,8 +74,23 @@ enum PanelGeometry {
 
     /// On-screen (docked) and off-screen (hidden) frames for an anchor + size.
     static func layout(anchor: PanelAnchor, screen: NSScreen, size: NSSize) -> PanelLayout {
-        let vf = screen.visibleFrame
-        let full = screen.frame
+        layout(
+            anchor: anchor,
+            visibleFrame: screen.visibleFrame,
+            screenFrame: screen.frame,
+            size: size
+        )
+    }
+
+    /// Pure frame calculation used by the screen-backed overload and geometry tests.
+    /// Corner anchors leave through the same corner they enter from, so their
+    /// hidden frame is outside both adjoining screen edges.
+    static func layout(
+        anchor: PanelAnchor,
+        visibleFrame vf: NSRect,
+        screenFrame full: NSRect,
+        size: NSSize
+    ) -> PanelLayout {
         let w = min(size.width, vf.width)
         let h = min(size.height, vf.height)
         let centerX = vf.minX + (vf.width - w) / 2
@@ -96,13 +111,25 @@ enum PanelGeometry {
         }
         let onscreen = NSRect(x: onX, y: onY, width: w, height: h)
 
-        // Slide-in direction (off-screen origin), keeping size fixed.
-        var off = onscreen
-        if anchor.slidesHorizontally {
-            off.origin.x = anchor.isRightSide ? full.maxX : full.minX - w
-        } else {
-            off.origin.y = anchor.isTopSide ? full.maxY : full.minY - h
+        // Slide-in direction (off-screen origin), keeping size fixed. For a
+        // corner, moving both axes makes the panel feel attached to that
+        // corner, like Slidepad's directional reveal.
+        let offOrigin: NSPoint
+        switch anchor {
+        case .left:
+            offOrigin = NSPoint(x: full.minX - w, y: onscreen.minY)
+        case .right:
+            offOrigin = NSPoint(x: full.maxX, y: onscreen.minY)
+        case .topLeft:
+            offOrigin = NSPoint(x: full.minX - w, y: full.maxY)
+        case .topRight:
+            offOrigin = NSPoint(x: full.maxX, y: full.maxY)
+        case .bottomLeft:
+            offOrigin = NSPoint(x: full.minX - w, y: full.minY - h)
+        case .bottomRight:
+            offOrigin = NSPoint(x: full.maxX, y: full.minY - h)
         }
+        let off = NSRect(origin: offOrigin, size: onscreen.size)
         return PanelLayout(onscreen: onscreen, offscreen: off)
     }
 

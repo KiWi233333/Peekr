@@ -5,6 +5,61 @@ import XCTest
 
 @MainActor
 final class TabGroupModelTests: XCTestCase {
+    func testShortcutNineSelectsTheLastTab() {
+        let (model, tabs) = makeModel(count: 10)
+
+        XCTAssertEqual(model.selectShortcutTab(9), tabs[9].id)
+        XCTAssertEqual(model.selectedID, tabs[9].id)
+        XCTAssertEqual(model.selectShortcutTab(1), tabs[0].id)
+    }
+
+    func testShortcutNineSelectsTheOnlyTabWhenFewerThanNineExist() {
+        let (model, tabs) = makeModel(count: 4)
+
+        XCTAssertEqual(model.selectShortcutTab(9), tabs[3].id)
+        XCTAssertNil(model.selectShortcutTab(5))
+    }
+
+    func testPinningTabMovesItToTheTopAndOutOfItsGroup() {
+        let (model, tabs) = makeModel(count: 3)
+        let group = model.addGroup(name: "Research", containing: [tabs[0].id, tabs[1].id])
+
+        model.togglePin(tabs[1].id)
+
+        XCTAssertTrue(model.tab(tabs[1].id)?.isPinned == true)
+        XCTAssertEqual(model.apps.map(\.id), [tabs[1].id, tabs[0].id, tabs[2].id])
+        XCTAssertEqual(model.group(group.id)?.tabIDs, [tabs[0].id])
+        XCTAssertEqual(model.activeWorkspace.sidebarItems.first, .tab(tabs[1].id))
+
+        model.togglePin(tabs[1].id)
+
+        XCTAssertFalse(model.tab(tabs[1].id)?.isPinned == true)
+    }
+
+    func testCloseOtherTabsKeepsTheContextTabAndPreservesItsEngineIdentity() {
+        let (model, tabs) = makeModel(count: 4)
+        var removed: [UUID] = []
+        model.onRemove = { removed.append($0) }
+
+        model.closeOtherTabs(keeping: tabs[2].id)
+
+        XCTAssertEqual(model.apps.map(\.id), [tabs[2].id])
+        XCTAssertEqual(model.selectedID, tabs[2].id)
+        XCTAssertEqual(Set(removed), Set([tabs[0].id, tabs[1].id, tabs[3].id]))
+    }
+
+    func testCloseTabsToRightKeepsTabsThroughTheContextTab() {
+        let (model, tabs) = makeModel(count: 4)
+        var removed: [UUID] = []
+        model.onRemove = { removed.append($0) }
+
+        model.closeTabsToRight(of: tabs[1].id)
+
+        XCTAssertEqual(model.apps.map(\.id), [tabs[0].id, tabs[1].id])
+        XCTAssertEqual(model.selectedID, tabs[1].id)
+        XCTAssertEqual(removed, [tabs[2].id, tabs[3].id])
+    }
+
     func testDroppingOneUngroupedTabOntoAnotherCreatesGroupWithoutChangingTabIdentity() {
         let (model, tabs) = makeModel(count: 3)
 
@@ -222,6 +277,36 @@ final class TabGroupModelTests: XCTestCase {
         XCTAssertEqual(model.selectedID, tabs[2].id)
         model.selectWorkspace(secondSpace)
         XCTAssertEqual(model.selectedID, newTab.id)
+    }
+
+    func testWorkspacePinningKeepsPinnedSpacesFirstAndPersists() {
+        let first = Workspace(name: "First")
+        let second = Workspace(name: "Second")
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("peekr-workspace-pin-\(UUID().uuidString).json")
+        let store = AppStore(fileURL: url)
+        store.save(WorkspacesData(workspaces: [first, second], activeWorkspaceID: first.id))
+        addTeardownBlock { try? FileManager.default.removeItem(at: url) }
+        let model = AppModel(store: store)
+
+        model.toggleWorkspacePin(second.id)
+
+        XCTAssertEqual(model.orderedWorkspaces.map(\.id), [second.id, first.id])
+        let reloaded = AppModel(store: store)
+        XCTAssertEqual(reloaded.orderedWorkspaces.map(\.id), [second.id, first.id])
+    }
+
+    func testMovingWorkspaceChangesOrderAndKeepsPinnedSectionAtTheFront() {
+        let (model, _) = makeModel(count: 1)
+        let first = model.workspaces[0].id
+        let second = model.addWorkspace().id
+        let third = model.addWorkspace().id
+
+        model.moveWorkspace(third, before: first)
+        XCTAssertEqual(model.orderedWorkspaces.map(\.id), [third, first, second])
+
+        model.toggleWorkspacePin(second)
+        XCTAssertEqual(model.orderedWorkspaces.map(\.id), [second, third, first])
     }
 
     func testDuplicateTabStaysBesideSourceInsideItsGroup() throws {

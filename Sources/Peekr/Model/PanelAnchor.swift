@@ -15,9 +15,6 @@ enum PanelAnchor: String, Codable, CaseIterable, Identifiable {
     var isTopSide: Bool { self == .topLeft || self == .topRight }
     var isBottomSide: Bool { self == .bottomLeft || self == .bottomRight }
 
-    /// All supported anchors slide in horizontally (the rail hugs a side).
-    var slidesHorizontally: Bool { true }
-
     /// Rail hugs the docked side so icons sit nearest the screen edge.
     var railOnLeft: Bool { !isRightSide }
 

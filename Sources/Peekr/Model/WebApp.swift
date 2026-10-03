@@ -11,21 +11,28 @@ struct WebApp: Identifiable, Codable, Hashable {
     /// When true, the icon at icons/<id>.png is user-supplied and favicon
     /// auto-fetch is skipped.
     var usesCustomIcon: Bool
+    /// Pinned tabs stay at the top of the workspace rail, like Chrome's pinned
+    /// tab strip. Pinning is presentation state; it never changes the page URL.
+    var isPinned: Bool
+    /// Explicitly mutes this tab's page audio without muting other tabs.
+    var isMuted: Bool
 
     init(id: UUID = UUID(), title: String, urlString: String, alias: String = "",
-         usesCustomIcon: Bool = false) {
+         usesCustomIcon: Bool = false, isPinned: Bool = false, isMuted: Bool = false) {
         self.id = id
         self.title = title
         self.urlString = urlString
         self.alias = alias
         self.usesCustomIcon = usesCustomIcon
+        self.isPinned = isPinned
+        self.isMuted = isMuted
     }
 
-    // Tolerate older app lists that predate `alias` / `usesCustomIcon`.
+    // Tolerate older app lists that predate `alias` / `usesCustomIcon` / `isPinned` / `isMuted`.
     // (Legacy per-app `panelWidth`/`panelHeight` keys, if present, are ignored —
     // panel size is now a single global value in Settings.)
     private enum CodingKeys: String, CodingKey {
-        case id, title, urlString, alias, usesCustomIcon
+        case id, title, urlString, alias, usesCustomIcon, isPinned, isMuted
     }
 
     init(from decoder: Decoder) throws {
@@ -35,6 +42,8 @@ struct WebApp: Identifiable, Codable, Hashable {
         urlString = try c.decode(String.self, forKey: .urlString)
         alias = try c.decodeIfPresent(String.self, forKey: .alias) ?? ""
         usesCustomIcon = try c.decodeIfPresent(Bool.self, forKey: .usesCustomIcon) ?? false
+        isPinned = try c.decodeIfPresent(Bool.self, forKey: .isPinned) ?? false
+        isMuted = try c.decodeIfPresent(Bool.self, forKey: .isMuted) ?? false
     }
 
     var url: URL? { URL(string: urlString) }

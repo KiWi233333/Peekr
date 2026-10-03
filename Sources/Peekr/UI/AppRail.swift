@@ -16,6 +16,7 @@ struct AppRail: View {
     var onWorkspaceSwitched: () -> Void
     var onOpenSpaces: () -> Void
     var onReopenClosedTab: () -> Void
+    var onToggleMute: (UUID) -> Void
     var onTabFocusChange: (Bool) -> Void
     var onCollapse: () -> Void
 
@@ -221,6 +222,14 @@ struct AppRail: View {
                             .offset(x: 5, y: -5)
                     }
                 }
+                .overlay(alignment: .bottomTrailing) {
+                    if app.isPinned {
+                        Image(systemName: "pin.fill")
+                            .font(.system(size: 8, weight: .bold))
+                            .foregroundStyle(.secondary)
+                            .offset(x: 3, y: 3)
+                    }
+                }
                 .frame(width: 40, height: 34)
                 .background(
                     RoundedRectangle(cornerRadius: 9, style: .continuous)
@@ -234,9 +243,29 @@ struct AppRail: View {
         .contextMenu {
             Button { onEdit(app) } label: { Label(loc.edit, systemImage: "pencil") }
             Button { renamingTab = app.id } label: { Label(loc.rename, systemImage: "character.cursor.ibeam") }
+            Button { model.togglePin(app.id) } label: {
+                Label(app.isPinned ? loc.unpinTab : loc.pinTab,
+                      systemImage: app.isPinned ? "pin.slash" : "pin")
+            }
+            Button { onToggleMute(app.id) } label: {
+                Label(app.isMuted ? loc.unmuteTab : loc.muteTab,
+                      systemImage: app.isMuted ? "speaker.wave.2" : "speaker.slash")
+            }
             Button {
                 if let copy = model.duplicateTab(app.id) { onSelect(copy.id) }
             } label: { Label(loc.duplicateTab, systemImage: "plus.square.on.square") }
+            if model.apps.count > 1 {
+                Divider()
+                Button { model.closeOtherTabs(keeping: app.id); onSelect(app.id) } label: {
+                    Label(loc.closeOtherTabs, systemImage: "rectangle.on.rectangle.slash")
+                }
+                if let index = model.apps.firstIndex(where: { $0.id == app.id }),
+                   index < model.apps.count - 1 {
+                    Button { model.closeTabsToRight(of: app.id); onSelect(app.id) } label: {
+                        Label(loc.closeTabsToRight, systemImage: "rectangle.rightthird.inset.filled")
+                    }
+                }
+            }
             Divider()
             Button(role: .destructive) { close(app) } label: {
                 Label(loc.closeTab, systemImage: "xmark")
@@ -650,6 +679,7 @@ struct AppRail: View {
             isRenaming: renamingTab == app.id,
             unread: badges.count(for: app.id),
             closeLabel: loc.closeTab,
+            mutedLabel: loc.mutedTab,
             onSelect: { if renamingTab == nil { onSelect(app.id) } },
             onFocusChange: onTabFocusChange,
             onClose: { close(app) },
@@ -685,6 +715,14 @@ struct AppRail: View {
         .contextMenu {
             Button { onEdit(app) } label: { Label(loc.edit, systemImage: "pencil") }
             Button { renamingTab = app.id } label: { Label(loc.rename, systemImage: "character.cursor.ibeam") }
+            Button { model.togglePin(app.id) } label: {
+                Label(app.isPinned ? loc.unpinTab : loc.pinTab,
+                      systemImage: app.isPinned ? "pin.slash" : "pin")
+            }
+            Button { onToggleMute(app.id) } label: {
+                Label(app.isMuted ? loc.unmuteTab : loc.muteTab,
+                      systemImage: app.isMuted ? "speaker.wave.2" : "speaker.slash")
+            }
             Button {
                 if let copy = model.duplicateTab(app.id) { onSelect(copy.id) }
             } label: { Label(loc.duplicateTab, systemImage: "plus.square.on.square") }
@@ -714,6 +752,18 @@ struct AppRail: View {
             if group != nil {
                 Button { model.moveTabToRoot(app.id) } label: {
                     Label(loc.removeFromGroup, systemImage: "arrowshape.turn.up.left")
+                }
+            }
+            if model.apps.count > 1 {
+                Divider()
+                Button { model.closeOtherTabs(keeping: app.id); onSelect(app.id) } label: {
+                    Label(loc.closeOtherTabs, systemImage: "rectangle.on.rectangle.slash")
+                }
+                if let index = model.apps.firstIndex(where: { $0.id == app.id }),
+                   index < model.apps.count - 1 {
+                    Button { model.closeTabsToRight(of: app.id); onSelect(app.id) } label: {
+                        Label(loc.closeTabsToRight, systemImage: "rectangle.rightthird.inset.filled")
+                    }
                 }
             }
             Divider()
@@ -962,6 +1012,7 @@ private struct BrowserTabRow: View {
     let isRenaming: Bool
     let unread: Int?
     let closeLabel: String
+    let mutedLabel: String
     var onSelect: () -> Void
     var onFocusChange: (Bool) -> Void
     var onClose: () -> Void
@@ -1001,6 +1052,18 @@ private struct BrowserTabRow: View {
                     .lineLimit(1)
             }
             Spacer(minLength: 2)
+            if app.isPinned {
+                Image(systemName: "pin.fill")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(.secondary)
+                    .accessibilityLabel("Pinned")
+            }
+            if app.isMuted {
+                Image(systemName: "speaker.slash.fill")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(.secondary)
+                    .accessibilityLabel(mutedLabel)
+            }
             Button(action: onClose) {
                 Image(systemName: "xmark")
                     .font(.system(size: 9.5, weight: .bold))
@@ -1040,6 +1103,7 @@ private struct BrowserTabRow: View {
             }
         }
         .contentShape(Rectangle())
+        .overlay { MiddleClickCloseRegion(onMiddleClick: onClose) }
         .focusable()
         .focused($rowFocused)
         .noFocusRing()
@@ -1049,6 +1113,37 @@ private struct BrowserTabRow: View {
             rowFocused = true
             onSelect()
         }
+    }
+}
+
+/// Middle-click closes the tab, like Chrome's tab strip. The overlay claims
+/// only middle-button hits (buttonNumber 2); left clicks and drags fall
+/// through to the SwiftUI row beneath.
+private struct MiddleClickCloseRegion: NSViewRepresentable {
+    var onMiddleClick: () -> Void
+
+    func makeNSView(context: Context) -> MiddleClickCloseNSView {
+        MiddleClickCloseNSView()
+    }
+
+    func updateNSView(_ view: MiddleClickCloseNSView, context: Context) {
+        view.onMiddleClick = onMiddleClick
+    }
+}
+
+private final class MiddleClickCloseNSView: NSView {
+    var onMiddleClick: () -> Void = {}
+
+    /// `hitTest` carries no event, so inspect the one being dispatched: only
+    /// claim the hit while a middle-button press is being routed.
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        guard let event = NSApp.currentEvent,
+              event.type == .otherMouseDown, event.buttonNumber == 2 else { return nil }
+        return super.hitTest(point)
+    }
+
+    override func otherMouseDown(with event: NSEvent) {
+        if event.buttonNumber == 2 { onMiddleClick() }
     }
 }
 

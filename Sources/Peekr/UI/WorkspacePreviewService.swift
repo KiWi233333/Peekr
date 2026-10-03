@@ -1,143 +1,125 @@
 import AppKit
+import ImageIO
 import Observation
 
-/// Keeps small, recent workspace previews for the Spaces overview.
-///
-/// Windowed CEF views only render reliably while attached to a live window, so
-/// this service never tries to wake or reparent background browsers just to
-/// make a thumbnail. It samples the currently visible page at a bounded rate
-/// while the overview is open and lets cards fall back to their tab metadata
-/// when a frame is unavailable.
+/// Keeps one small, recent preview per workspace. Only the foreground CEF page
+/// is captured; background pages retain their last usable image or tab metadata.
 @MainActor
 @Observable
 final class WorkspacePreviewService {
     private(set) var previews: [UUID: NSImage] = [:]
 
-    private let interval: TimeInterval
-    private var timer: Timer?
-    private weak var model: AppModel?
-    private weak var manager: WebViewManager?
-
-    init(interval: TimeInterval = 0.5) {
-        self.interval = max(0.25, interval)
+    private struct PreviewSource: Equatable {
+        let tabID: UUID
+        let url: String
     }
+
+    @ObservationIgnored private var previewSources: [UUID: PreviewSource] = [:]
+    @ObservationIgnored private var captureTask: Task<Void, Never>?
+    @ObservationIgnored private var generation = 0
 
     func start(model: AppModel, manager: WebViewManager) {
         stop()
-        self.model = model
-        self.manager = manager
-        captureCurrentWorkspace()
-
-        timer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] timer in
-            guard self != nil else {
-                timer.invalidate()
-                return
-            }
-            Task { @MainActor [weak self] in
-                self?.captureCurrentWorkspace()
-            }
+        let previous = captureTask
+        let validSources = Dictionary(uniqueKeysWithValues: model.workspaces.compactMap { workspace -> (UUID, PreviewSource)? in
+            guard let tabID = workspace.selectedTabID ?? workspace.orderedTabIDs.first else { return nil }
+            let liveURL = (manager.view(for: tabID) as? CefSwiftBrowserHostView)?
+                .engine?.navState.url?.absoluteString
+            let source = PreviewSource(tabID: tabID, url: liveURL ?? model.tab(tabID)?.urlString ?? "")
+            return (workspace.id, source)
+        })
+        previews = previews.filter { id, _ in previewSources[id] == validSources[id] }
+        previewSources = previewSources.filter { id, source in validSources[id] == source }
+        let token = generation
+        captureTask = Task { @MainActor [weak self] in
+            // A rapid close/reopen waits for the former CEF request to settle;
+            // the browser never has overlapping screenshot requests from us.
+            await previous?.value
+            await self?.captureCurrentWorkspace(model: model, manager: manager, token: token)
         }
     }
 
     func stop() {
-        timer?.invalidate()
-        timer = nil
-        model = nil
-        manager = nil
+        generation &+= 1
     }
 
-    private func captureCurrentWorkspace() {
-        guard let model, let manager,
-              let workspace = model.workspaces.first(where: { $0.id == model.activeWorkspaceID }) else {
+    private func captureCurrentWorkspace(model: AppModel, manager: WebViewManager, token: Int) async {
+        guard let workspace = model.workspaces.first(where: { $0.id == model.activeWorkspaceID }),
+              let tabID = workspace.selectedTabID ?? workspace.orderedTabIDs.first,
+              let host = manager.view(for: tabID) as? CefSwiftBrowserHostView,
+              let engine = host.engine else { return }
+        let source = PreviewSource(tabID: tabID, url: engine.navState.url?.absoluteString ?? "")
+
+        // The first request runs before the overview hides the web layer.
+        // Two bounded retries cover a page that has not painted yet, with no
+        // permanent polling or background-browser wakeups.
+        for attempt in 0..<3 {
+            guard generation == token else { return }
+            if attempt > 0 {
+                try? await Task.sleep(for: .milliseconds(attempt == 1 ? 250 : 700))
+            }
+            guard generation == token else { return }
+            guard let payload = await engine.captureViewport() else { continue }
+            let thumbnail = await Task.detached(priority: .utility) {
+                Self.thumbnail(from: payload)
+            }.value
+            guard generation == token else { return }
+            guard let thumbnail else { continue }
+            // A workspace can be switched while the CEF request is in flight.
+            guard model.workspaces.first(where: { $0.id == workspace.id })?.selectedTabID == tabID,
+                  (engine.navState.url?.absoluteString ?? "") == source.url else { return }
+            previews[workspace.id] = NSImage(cgImage: thumbnail, size: CGSize(width: thumbnail.width, height: thumbnail.height))
+            previewSources[workspace.id] = source
             return
         }
-        let validWorkspaceIDs = Set(model.workspaces.map(\.id))
-        previews = previews.filter { validWorkspaceIDs.contains($0.key) }
-
-        guard let tabID = workspace.selectedTabID ?? workspace.orderedTabIDs.first,
-              let view = manager.view(for: tabID),
-              let image = Self.snapshot(of: view),
-              Self.isUsable(image) else {
-            previews.removeValue(forKey: workspace.id)
-            return
-        }
-
-        previews[workspace.id] = image
     }
 
-    private static func snapshot(of view: NSView) -> NSImage? {
-        guard view.window != nil,
-              view.superview != nil,
-              view.bounds.width > 1,
-              view.bounds.height > 1 else { return nil }
-
-        view.layoutSubtreeIfNeeded()
-        guard let representation = view.bitmapImageRepForCachingDisplay(in: view.bounds) else {
-            return nil
-        }
-        view.cacheDisplay(in: view.bounds, to: representation)
-
-        let image = NSImage(size: view.bounds.size)
-        image.addRepresentation(representation)
-        return resized(image, maxSize: CGSize(width: 640, height: 360))
+    nonisolated private static func thumbnail(from payload: Data) -> CGImage? {
+        guard let result = try? JSONSerialization.jsonObject(with: payload) as? [String: Any],
+              let encoded = result["data"] as? String,
+              let jpeg = Data(base64Encoded: encoded),
+              let source = CGImageSourceCreateWithData(jpeg as CFData, nil),
+              let image = CGImageSourceCreateThumbnailAtIndex(source, 0, [
+                  kCGImageSourceCreateThumbnailFromImageAlways: true,
+                  kCGImageSourceThumbnailMaxPixelSize: 480,
+                  kCGImageSourceShouldCacheImmediately: true,
+              ] as CFDictionary),
+              image.width > 1, image.height > 1 else { return nil }
+        let targetAspect = 440.0 / 224.0
+        let cropWidth = min(image.width, Int(Double(image.height) * targetAspect))
+        let cropHeight = min(image.height, Int(Double(image.width) / targetAspect))
+        guard let cropped = image.cropping(to: CGRect(x: 0, y: 0, width: cropWidth, height: cropHeight)),
+              isUsable(cropped) else { return nil }
+        return cropped
     }
 
-    private static func resized(_ image: NSImage, maxSize: CGSize) -> NSImage? {
-        guard image.size.width > 1, image.size.height > 1 else { return nil }
-        let scale = min(
-            1,
-            maxSize.width / image.size.width,
-            maxSize.height / image.size.height
-        )
-        let size = NSSize(width: image.size.width * scale, height: image.size.height * scale)
-        let result = NSImage(size: size)
-        result.lockFocus()
-        NSGraphicsContext.current?.imageInterpolation = .high
-        image.draw(
-            in: NSRect(origin: .zero, size: size),
-            from: NSRect(origin: .zero, size: image.size),
-            operation: .copy,
-            fraction: 1
-        )
-        result.unlockFocus()
-        return result
-    }
-
-    /// Reject transparent or uniform white frames, which are common when a
-    /// windowed CEF view has not painted yet. A real white page can still use
-    /// the metadata fallback; showing a blank card is less informative.
-    private static func isUsable(_ image: NSImage) -> Bool {
-        guard let representation = image.representations.compactMap({ $0 as? NSBitmapImageRep }).first else {
+    /// Sampling the final thumbnail catches transparent/blank captures without
+    /// decoding a second full-resolution image on the main thread.
+    nonisolated private static func isUsable(_ image: CGImage) -> Bool {
+        let width = 32, height = 18
+        var pixels = [UInt8](repeating: 0, count: width * height * 4)
+        let drew = pixels.withUnsafeMutableBytes { buffer -> Bool in
+            guard let context = CGContext(
+                data: buffer.baseAddress, width: width, height: height,
+                bitsPerComponent: 8, bytesPerRow: width * 4,
+                space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+            ) else { return false }
+            context.interpolationQuality = .medium
+            context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
             return true
         }
-
-        let width = representation.pixelsWide
-        let height = representation.pixelsHigh
-        guard width > 1, height > 1 else { return false }
-
-        var minLuminance: CGFloat = 1
-        var maxLuminance: CGFloat = 0
-        var hasOpaquePixel = false
-        let stepX = max(1, width / 8)
-        let stepY = max(1, height / 8)
-
-        for y in stride(from: 0, to: height, by: stepY) {
-            for x in stride(from: 0, to: width, by: stepX) {
-                guard let color = representation.colorAt(x: x, y: y)?.usingColorSpace(.sRGB) else {
-                    continue
-                }
-                let alpha = color.alphaComponent
-                guard alpha > 0.02 else { continue }
-                hasOpaquePixel = true
-                let luminance = 0.2126 * color.redComponent
-                    + 0.7152 * color.greenComponent
-                    + 0.0722 * color.blueComponent
-                minLuminance = min(minLuminance, luminance)
-                maxLuminance = max(maxLuminance, luminance)
-            }
+        guard drew else { return false }
+        var darkest = 1.0
+        var brightest = 0.0
+        for index in stride(from: 0, to: pixels.count, by: 4) {
+            guard pixels[index + 3] > 8 else { continue }
+            let luminance = (0.2126 * Double(pixels[index])
+                + 0.7152 * Double(pixels[index + 1])
+                + 0.0722 * Double(pixels[index + 2])) / 255
+            darkest = min(darkest, luminance)
+            brightest = max(brightest, luminance)
         }
-
-        guard hasOpaquePixel else { return false }
-        return maxLuminance - minLuminance >= 0.01 || minLuminance < 0.985
+        return brightest - darkest >= 0.01 || darkest < 0.985
     }
 }

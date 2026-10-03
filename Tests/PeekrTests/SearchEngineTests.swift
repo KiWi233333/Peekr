@@ -80,6 +80,32 @@ final class SearchEngineTests: XCTestCase {
         )
     }
 
+    func testOmniboxTreatsLocalAddressesAndExplicitSchemesAsNavigation() throws {
+        XCTAssertEqual(
+            WebViewManager.url(fromOmnibox: "localhost")?.absoluteString,
+            "http://localhost"
+        )
+        XCTAssertEqual(
+            WebViewManager.url(fromOmnibox: "localhost:3000/dev")?.absoluteString,
+            "http://localhost:3000/dev"
+        )
+        XCTAssertEqual(
+            WebViewManager.url(fromOmnibox: "127.0.0.1:8080")?.absoluteString,
+            "http://127.0.0.1:8080"
+        )
+        XCTAssertEqual(
+            WebViewManager.url(fromOmnibox: "[::1]:3000")?.absoluteString,
+            "http://[::1]:3000"
+        )
+        XCTAssertEqual(
+            WebViewManager.url(fromOmnibox: "file:///tmp/report.html")?.absoluteString,
+            "file:///tmp/report.html"
+        )
+        // …but bare words and dotted phrases still search.
+        let search = try XCTUnwrap(WebViewManager.url(fromOmnibox: "local host", searchEngine: .duckDuckGo))
+        XCTAssertEqual(search.host, "duckduckgo.com")
+    }
+
     func testOmniboxSuggestionIdentityIsStableAcrossRefreshes() {
         let first = OmniboxSuggestion(
             kind: .tab,
@@ -102,5 +128,61 @@ final class SearchEngineTests: XCTestCase {
 
         XCTAssertEqual(first.id, refreshed.id)
         XCTAssertNotEqual(first.id, bookmark.id)
+    }
+
+    func testOmniboxPrefersRecentHistoryBeforeSearchAction() {
+        let history = HistoryEntry(
+            urlString: "https://docs.example/guide",
+            title: "Guide",
+            lastVisited: Date()
+        )
+
+        let suggestions = OmniboxSuggestions.local(
+            for: "guide",
+            tabs: [],
+            bookmarks: [],
+            history: [history],
+            searchLabel: "Search with Google"
+        )
+
+        XCTAssertEqual(suggestions.first?.kind, .history)
+        XCTAssertEqual(suggestions.first?.target, history.urlString)
+        XCTAssertEqual(suggestions.dropFirst().first?.kind, .search)
+    }
+
+    func testOmniboxFallsBackToSearchWithoutMatchingHistory() {
+        let suggestions = OmniboxSuggestions.local(
+            for: "guide",
+            tabs: [],
+            bookmarks: [],
+            history: [HistoryEntry(
+                urlString: "https://news.example/home",
+                title: "News",
+                lastVisited: Date()
+            )],
+            searchLabel: "Search with Google"
+        )
+
+        XCTAssertEqual(suggestions.first?.kind, .search)
+        XCTAssertEqual(suggestions.first?.target, "guide")
+    }
+
+    func testOmniboxRanksCurrentTabBeforeOtherTabsAndSearchAction() {
+        let currentID = UUID()
+        let other = WebApp(title: "Home", urlString: "https://x.com/home")
+        let current = WebApp(id: currentID, title: "Profile", urlString: "https://x.com")
+
+        let suggestions = OmniboxSuggestions.local(
+            for: "x.com",
+            tabs: [other, current],
+            bookmarks: [],
+            currentTabID: currentID,
+            searchLabel: "Search with Google"
+        )
+
+        XCTAssertEqual(suggestions.prefix(2).map(\.kind), [.tab, .tab])
+        XCTAssertEqual(suggestions[0].target, current.urlString)
+        XCTAssertEqual(suggestions[1].target, other.urlString)
+        XCTAssertEqual(suggestions[2].kind, .openURL)
     }
 }

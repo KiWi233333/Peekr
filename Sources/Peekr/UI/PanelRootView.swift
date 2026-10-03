@@ -152,11 +152,8 @@ struct PanelRootView: View {
             }
         }
         .coordinateSpace(name: "panel")
-        .clipShape(RoundedRectangle(cornerRadius: Theme.panelCorner, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: Theme.panelCorner, style: .continuous)
-                .stroke(Theme.hairline, lineWidth: 1)
-        }
+        // The AppKit content host owns the single rounded clip for the window.
+        // Keeping a second SwiftUI clip here can create an antialiased rim.
         // Native-style resize border on the panel's free edges + corner.
         .overlay {
             ResizeBorder(zones: anchor.resizeZones, hint: settings.strings.resizeHint,
@@ -206,6 +203,7 @@ struct PanelRootView: View {
             onReopenClosedTab: {
                 if let app = model.reopenLastClosedTab() { manager.activate(app.id) }
             },
+            onToggleMute: { manager.toggleMute($0) },
             onTabFocusChange: onTabFocusChange,
             onCollapse: { isRailCollapsed = true }
         )
@@ -328,11 +326,8 @@ struct PanelRootView: View {
                     webCardFrame = frame
                 }
                 .clipShape(RoundedRectangle(cornerRadius: Theme.webCardCorner, style: .continuous))
-                .overlay {
-                    RoundedRectangle(cornerRadius: Theme.webCardCorner, style: .continuous)
-                        .stroke(Theme.hairline, lineWidth: 1)
-                }
-                .shadow(color: .black.opacity(0.045), radius: 10, y: 4)
+                // No extra border or drop shadow: the web content should blend
+                // into the panel background without a second rectangular rim.
                 // Top inset clears the floating omnibox and leaves a small gap
                 // between it and the web card.
                 .padding(.top, 54)
@@ -349,6 +344,48 @@ struct PanelRootView: View {
             )
             .padding(.horizontal, 12)
             .padding(.top, 8)
+
+            if let error = manager.state.loadError {
+                PageLoadErrorCard(
+                    error: error,
+                    canGoBack: manager.state.canGoBack,
+                    settings: settings,
+                    onRetry: manager.retryCurrentPage,
+                    onBack: manager.goBack
+                )
+                .padding(.top, 54)
+                .padding([.bottom, .horizontal], 10)
+                .zIndex(1)
+            } else if manager.state.rendererFailure != nil {
+                RendererFailureCard(
+                    canGoBack: manager.state.canGoBack,
+                    settings: settings,
+                    onRetry: manager.retryCurrentPage,
+                    onBack: manager.goBack
+                )
+                .padding(.top, 54)
+                .padding([.bottom, .horizontal], 10)
+                .zIndex(1)
+            }
+
+            if manager.findBar.isVisible {
+                FindBar(state: manager.findBar, manager: manager, settings: settings)
+                    .padding(.top, 60)
+                    .padding(.trailing, 18)
+                    .frame(maxWidth: .infinity, alignment: .topTrailing)
+                    .transition(
+                        reduceMotion
+                            ? .identity
+                            : .move(edge: .top).combined(with: .opacity)
+                    )
+                    .zIndex(2)
+            }
+        }
+        .animation(reduceMotion ? nil : Motion.dropdownOpen, value: manager.findBar.isVisible)
+        // Chrome keeps one find session across tabs: re-run the query on the
+        // newly activated page.
+        .onChange(of: manager.state.currentID) { _, _ in
+            if manager.findBar.isVisible { manager.findNext() }
         }
         .overlay(alignment: anchor.railOnLeft ? .leading : .trailing) {
             if !isRailCollapsed {
@@ -360,28 +397,175 @@ struct PanelRootView: View {
     }
 }
 
-/// Clean neutral backdrop. Translucency comes from the window's visual-effect
-/// view; this adds only a faint top highlight for depth.
+/// Native recovery surface for a failed main-frame load. The CEF error page
+/// remains available to CDP underneath; this surface keeps the common retry and
+/// history actions close to the page instead of forcing the user to use menus.
+private struct PageLoadErrorCard: View {
+    let error: WebLoadFailure
+    let canGoBack: Bool
+    let settings: Settings
+    let onRetry: () -> Void
+    let onBack: () -> Void
+
+    var body: some View {
+        VStack(spacing: 14) {
+            Image(systemName: "wifi.exclamationmark")
+                .font(.system(size: 30, weight: .light))
+                .foregroundStyle(.secondary)
+                .accessibilityHidden(true)
+            Text(settings.strings.pageLoadErrorTitle)
+                .font(.title3.weight(.semibold))
+            Text(settings.strings.pageLoadErrorMessage(error))
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .textSelection(.enabled)
+            if let url = error.url {
+                Text(url.absoluteString)
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+                    .lineLimit(2)
+                    .multilineTextAlignment(.center)
+                    .textSelection(.enabled)
+            }
+            HStack(spacing: 8) {
+                Button(settings.strings.retry, action: onRetry)
+                    .buttonStyle(.borderedProminent)
+                if canGoBack {
+                    Button(settings.strings.back, action: onBack)
+                        .buttonStyle(.bordered)
+                }
+            }
+        }
+        .padding(28)
+        .frame(maxWidth: 460)
+        .liquidGlass(in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(settings.strings.pageLoadErrorTitle)
+    }
+}
+
+private struct RendererFailureCard: View {
+    let canGoBack: Bool
+    let settings: Settings
+    let onRetry: () -> Void
+    let onBack: () -> Void
+
+    var body: some View {
+        VStack(spacing: 14) {
+            Image(systemName: "exclamationmark.triangle")
+                .font(.system(size: 30, weight: .light))
+                .foregroundStyle(.secondary)
+                .accessibilityHidden(true)
+            Text(settings.strings.rendererFailureTitle)
+                .font(.title3.weight(.semibold))
+            Text(settings.strings.rendererFailureMessage)
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+            HStack(spacing: 8) {
+                Button(settings.strings.retry, action: onRetry)
+                    .buttonStyle(.borderedProminent)
+                if canGoBack {
+                    Button(settings.strings.back, action: onBack)
+                        .buttonStyle(.bordered)
+                }
+            }
+        }
+        .padding(28)
+        .frame(maxWidth: 460)
+        .liquidGlass(in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(settings.strings.rendererFailureTitle)
+    }
+}
+
+/// Floating find-in-page bar (⌘F), pinned to the web card's top-trailing like
+/// Chrome's. Return steps forward, ⇧Return backward; Esc is handled by the
+/// panel's key monitor (find bar open beats hide-panel).
+private struct FindBar: View {
+    let state: FindBarState
+    let manager: WebViewManager
+    let settings: Settings
+
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        HStack(spacing: 4) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(.tertiary)
+            TextField(
+                settings.strings.findInPage,
+                text: Binding(get: { state.query }, set: { manager.updateFindQuery($0) })
+            )
+            .textFieldStyle(.plain)
+            .font(.system(size: 12.5))
+            .frame(width: 160)
+            .focused($focused)
+            .onKeyPress(.return, phases: .down) { press in
+                if press.modifiers.contains(.shift) {
+                    manager.findPrevious()
+                } else {
+                    manager.findNext()
+                }
+                return .handled
+            }
+            findButton("chevron.up", label: settings.strings.findPrevious) { manager.findPrevious() }
+            findButton("chevron.down", label: settings.strings.findNext) { manager.findNext() }
+            findButton("xmark", label: settings.strings.close) { manager.closeFindBar() }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .liquidGlass(in: Capsule(style: .continuous))
+        .onAppear { focused = true }
+        .onChange(of: state.focusToken) { _, _ in focused = true }
+    }
+
+    private func findButton(_ symbol: String, label: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.system(size: 11, weight: .semibold))
+                .frame(width: 22, height: 22)
+                .contentShape(Circle())
+        }
+        .buttonStyle(IconButtonStyle())
+        .foregroundStyle(.primary)
+        .help(label)
+        .accessibilityLabel(label)
+    }
+}
+
+/// Opaque theme backdrop for the panel. The light appearance starts from pure
+/// white; the dark appearance follows the system window background. The subtle
+/// top wash preserves depth without allowing the desktop or page underneath to
+/// bleed through the whole panel.
 struct PanelBackground: View {
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @Environment(\.colorSchemeContrast) private var contrast
+    @Environment(\.colorScheme) private var colorScheme
 
-    @ViewBuilder
+    private var baseColor: Color {
+        colorScheme == .dark ? Color(nsColor: .windowBackgroundColor) : .white
+    }
+
     var body: some View {
-        if reduceTransparency {
-            Color(nsColor: .windowBackgroundColor)
-                .allowsHitTesting(false)
-        } else {
-            LinearGradient(
-                colors: [
-                    .primary.opacity(contrast == .increased ? 0.08 : 0.16),
-                    .clear
-                ],
-                startPoint: .top,
-                endPoint: .center
-            )
-            .allowsHitTesting(false)
+        ZStack {
+            baseColor
+            if !reduceTransparency {
+                LinearGradient(
+                    colors: [
+                        .primary.opacity(contrast == .increased ? 0.08 : 0.04),
+                        .clear
+                    ],
+                    startPoint: .top,
+                    endPoint: .center
+                )
+            }
         }
+        .allowsHitTesting(false)
     }
 }
 
@@ -511,9 +695,10 @@ private struct ResizeHandleView: NSViewRepresentable {
 }
 
 /// Divider between the rail and page. The hit zone stays narrow and reserves
-/// almost no layout width; a quiet hairline marks the edge at rest and a short
-/// capsule appears on hover. AppKit owns the drag loop so width changes follow
-/// the pointer directly, then SwiftUI springs to the nearest stage on release.
+/// almost no layout width; a slim vertical capsule marks the edge without
+/// extending borders above or below it. AppKit owns the drag loop so width
+/// changes follow the pointer directly, then SwiftUI springs to the nearest
+/// stage on release.
 private struct SidebarResizeHandle: View {
     var onBegan: () -> Void
     var onChanged: (CGFloat) -> Void
@@ -525,15 +710,9 @@ private struct SidebarResizeHandle: View {
         SidebarResizeNSView(onBegan: onBegan, onChanged: onChanged, onEnded: onEnded)
             .frame(width: Self.hitWidth)
             .overlay {
-                ZStack {
-                    Rectangle()
-                        .fill(.primary.opacity(hovering ? 0.28 : 0.12))
-                        .frame(width: 1, height: 56)
-                    Capsule(style: .continuous)
-                        .fill(.primary.opacity(0.60))
-                        .frame(width: 3, height: 44)
-                        .opacity(hovering ? 1 : 0)
-                }
+                Capsule(style: .continuous)
+                    .fill(.primary.opacity(hovering ? 0.72 : 0.52))
+                    .frame(width: 3, height: 44)
                     .allowsHitTesting(false)
             }
             .onHover { hovering = $0 }

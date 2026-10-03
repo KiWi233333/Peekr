@@ -17,6 +17,16 @@ final class BookmarksModel {
 
     var isEmpty: Bool { roots.isEmpty }
 
+    /// Bookmark the current page (⌘D). Saving an already-bookmarked URL is a
+    /// no-op so the shortcut never creates duplicates.
+    @discardableResult
+    func add(title: String, urlString: String) -> Bool {
+        guard !urlString.isEmpty, !Self.containsURL(urlString, in: roots) else { return false }
+        roots.append(BookmarkNode(title: title, urlString: urlString))
+        persist()
+        return true
+    }
+
     /// Append imported nodes under a new folder named after the browser.
     func importNodes(_ nodes: [BookmarkNode], as folderName: String) {
         guard !nodes.isEmpty else { return }
@@ -85,6 +95,12 @@ final class BookmarksModel {
             var copy = node
             copy.children = removing(id, from: children)
             return copy
+        }
+    }
+
+    private static func containsURL(_ urlString: String, in nodes: [BookmarkNode]) -> Bool {
+        nodes.contains { node in
+            node.urlString == urlString || containsURL(urlString, in: node.children ?? [])
         }
     }
 }

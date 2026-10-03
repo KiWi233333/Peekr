@@ -5,7 +5,7 @@ import CefSwiftUI
 /// CefSwift installs its `NSApplication` subclass and initializes CEF before
 /// SwiftUI/AppKit touch `NSApp`. `CefSwiftApp` owns that bootstrap and the
 /// matching orderly shutdown; the existing delegate remains Peekr's composition
-/// root and the Settings-only scene keeps this an LSUIElement menu-bar app.
+/// root and the hidden placeholder scene keeps this an LSUIElement menu-bar app.
 @main
 struct PeekrApp: CefSwiftApp {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
@@ -67,8 +67,29 @@ struct PeekrApp: CefSwiftApp {
     }
 
     var body: some Scene {
-        SwiftUI.Settings {
-            EmptyView()
+        // Peekr owns its real preferences window in AppKit so it can share the
+        // already-created Settings/AppModel instances from AppDelegate. A
+        // SwiftUI.Settings scene with EmptyView would make macOS create a
+        // blank, user-visible "Peekr Settings" window on its own.
+        WindowGroup {
+            PeekrLifecyclePlaceholder()
+        }
+        .windowResizability(.contentSize)
+    }
+}
+
+/// SwiftUI needs one scene to anchor the app lifecycle, while Peekr's visible
+/// UI is the status item, slide-over panel, and AppKit-owned preferences window.
+/// Hide this placeholder from the moment its window is attached.
+private struct PeekrLifecyclePlaceholder: NSViewRepresentable {
+    func makeNSView(context: Context) -> PlaceholderView { PlaceholderView() }
+
+    func updateNSView(_ nsView: PlaceholderView, context: Context) {}
+
+    final class PlaceholderView: NSView {
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            window?.orderOut(nil)
         }
     }
 }

@@ -99,6 +99,9 @@ struct Workspace: Identifiable, Codable, Hashable {
     /// agent never identified itself.
     var ownership: WorkspaceOwnership = .user
     var agentOwner: String = ""
+    /// Pinned workspaces stay before the normal workspace list while each
+    /// section keeps its own drag order.
+    var isPinned: Bool = false
 
     init(
         id: UUID = UUID(),
@@ -109,7 +112,8 @@ struct Workspace: Identifiable, Codable, Hashable {
         sidebarItems: [SidebarItem]? = nil,
         selectedTabID: WebApp.ID? = nil,
         ownership: WorkspaceOwnership = .user,
-        agentOwner: String = ""
+        agentOwner: String = "",
+        isPinned: Bool = false
     ) {
         self.id = id
         self.name = name
@@ -120,12 +124,13 @@ struct Workspace: Identifiable, Codable, Hashable {
         self.selectedTabID = selectedTabID ?? tabs.first?.id
         self.ownership = ownership
         self.agentOwner = agentOwner
+        self.isPinned = isPinned
         normalizeSidebar()
     }
 
     private enum CodingKeys: String, CodingKey {
         case id, name, symbol, tabs, groups, sidebarItems, selectedTabID
-        case ownership, agentOwner
+        case ownership, agentOwner, isPinned
     }
 
     // Tolerant decode performs the v1 flat-list → v2 hierarchy migration in
@@ -144,6 +149,7 @@ struct Workspace: Identifiable, Codable, Hashable {
         ownership = (try? c.decodeIfPresent(WorkspaceOwnership.self, forKey: .ownership))
             .flatMap { $0 } ?? .user
         agentOwner = try c.decodeIfPresent(String.self, forKey: .agentOwner) ?? ""
+        isPinned = try c.decodeIfPresent(Bool.self, forKey: .isPinned) ?? false
         normalizeSidebar()
     }
 
@@ -180,6 +186,23 @@ struct Workspace: Identifiable, Codable, Hashable {
         for tab in tabs where !claimedTabs.contains(tab.id) {
             sidebarItems.append(.tab(tab.id))
             claimedTabs.insert(tab.id)
+        }
+
+        // Pinned tabs are always first-class top-level rail items. A legacy or
+        // hand-edited workspace may still contain one inside a group, so repair
+        // that shape on every normalization before the workspace is persisted.
+        let pinnedIDs = orderedTabIDs.filter { id in
+            tabs.first(where: { $0.id == id })?.isPinned == true
+        }
+        if !pinnedIDs.isEmpty {
+            let pinned = Set(pinnedIDs)
+            for index in groups.indices {
+                groups[index].tabIDs.removeAll { pinned.contains($0) }
+            }
+            sidebarItems.removeAll {
+                $0.kind == .tab && pinned.contains($0.referenceID)
+            }
+            sidebarItems.insert(contentsOf: pinnedIDs.map(SidebarItem.tab), at: 0)
         }
 
         if let selectedTabID, !validTabIDs.contains(selectedTabID) {

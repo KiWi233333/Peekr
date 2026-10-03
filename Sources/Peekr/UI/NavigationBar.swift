@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 import Inject
 
 /// Floating glass omnibox: drag grip, back/forward/reload, address field with a
@@ -33,7 +34,8 @@ struct NavigationBar: View {
     /// Without this guard, ⌘W after ⌘T leaves the closed tab's home-page
     /// URL over the newly activated page.
     @State private var shouldSyncFocusedAddress = false
-    @FocusState private var focused: Bool
+    @State private var focused = false
+    @State private var downloadsOpen = false
 
     private var showSuggestions: Bool { focused && !suggestions.isEmpty }
 
@@ -55,11 +57,10 @@ struct NavigationBar: View {
         )
         .onAppear { syncText() }
         .onChange(of: focused) { _, isFocused in
-            // Focus shows the full URL for editing. Blur only closes the dropdown
+            // The native field restores the full URL on focus. Blur closes the dropdown
             // — it keeps whatever's in the field (typed text or a chosen
             // candidate) rather than snapping back to the page address.
             if isFocused {
-                text = state.urlString
                 updateSuggestions()
             } else {
                 shouldSyncFocusedAddress = false
@@ -81,7 +82,6 @@ struct NavigationBar: View {
                 shouldSyncFocusedAddress = false
             }
         }
-        .onChange(of: state.focusOmniboxToken) { _, _ in focused = true }
         .enableInjection()
     }
 
@@ -92,6 +92,7 @@ struct NavigationBar: View {
             navButton("chevron.forward", enabled: state.canGoForward) { manager.goForward() }
             navButton(state.isLoading ? "xmark" : "arrow.clockwise", enabled: true) { manager.reloadOrStop() }
             omnibox
+            downloadButton
             navButton("bookmark", enabled: true) { onBookmarks() }
             navButton("safari", enabled: !state.urlString.isEmpty) { openExternally() }
             if showsSidebarToggle {
@@ -155,19 +156,49 @@ struct NavigationBar: View {
         .disabled(!enabled)
     }
 
+    private var downloadButton: some View {
+        let downloads = manager.downloads
+        return Button { downloadsOpen.toggle() } label: {
+            Image(systemName: downloads.activeCount > 0 ? "arrow.down.circle.fill" : "arrow.down.circle")
+                .font(.system(size: 12, weight: .semibold))
+                .frame(width: 26, height: 26)
+                .contentShape(Circle())
+                .overlay(alignment: .topTrailing) {
+                    if downloads.activeCount > 0 {
+                        Circle()
+                            .fill(Theme.accent)
+                            .frame(width: 6, height: 6)
+                            .offset(x: -2, y: 2)
+                    }
+                }
+        }
+        .buttonStyle(IconButtonStyle())
+        .foregroundStyle(.primary)
+        .help(settings.strings.downloads)
+        .accessibilityLabel(settings.strings.downloads)
+        .popover(isPresented: $downloadsOpen, arrowEdge: .bottom) {
+            DownloadCenter(
+                downloads: downloads,
+                settings: settings,
+                onCancel: manager.cancelDownload
+            )
+        }
+    }
+
     private var omnibox: some View {
-        TextField(settings.strings.omniboxPlaceholder, text: $text)
-            .textFieldStyle(.plain)
-            .font(.system(size: 12.5))
-            .lineLimit(1)
-            .focused($focused)
-            .onSubmit { commit() }
-            .onKeyPress(.downArrow) { moveSelection(1); return .handled }
-            .onKeyPress(.upArrow) { moveSelection(-1); return .handled }
-            .onKeyPress(.escape) {
-                guard showSuggestions else { return .ignored }
-                clearSuggestions(); return .handled
+        OmniboxTextField(
+            placeholder: settings.strings.omniboxPlaceholder,
+            address: state.urlString,
+            text: $text,
+            focused: $focused,
+            focusRequest: state.focusOmniboxToken,
+            onSubmit: { commit() },
+            onMoveSelection: { moveSelection($0) },
+            onEscape: {
+                guard showSuggestions else { return false }
+                clearSuggestions(); return true
             }
+        )
             .padding(.horizontal, 10)
             .frame(height: 26)
             .frame(maxWidth: .infinity)
@@ -267,6 +298,7 @@ struct NavigationBar: View {
         case .openURL: return "globe"
         case .tab: return "square.on.square"
         case .bookmark: return "bookmark"
+        case .history: return "clock"
         }
     }
 
@@ -285,7 +317,12 @@ struct NavigationBar: View {
         let target = selectedIndex.flatMap { suggestions.indices.contains($0) ? suggestions[$0].target : nil } ?? text
         clearSuggestions()
         focused = false
-        manager.loadAddress(target)
+        // ⌘Return opens in a background tab, like Chrome.
+        if NSEvent.modifierFlags.contains(.command) {
+            manager.loadAddressInBackgroundTab(target)
+        } else {
+            manager.loadAddress(target)
+        }
     }
 
     /// Arrow through candidates, filling the chosen one into the field so the bar
@@ -308,12 +345,14 @@ struct NavigationBar: View {
 
     private func updateSuggestions() {
         let query = text.trimmingCharacters(in: .whitespaces)
-        guard focused, !query.isEmpty, query != state.urlString else { clearSuggestions(); return }
+        guard focused, !query.isEmpty else { clearSuggestions(); return }
 
         suggestions = OmniboxSuggestions.local(
             for: query, tabs: model.allTabs, bookmarks: bookmarks.roots,
+            history: manager.historyEntries, currentTabID: state.currentID,
             searchLabel: settings.strings.searchWith(settings.searchEngine))
-        selectedIndex = nil
+        // Chrome keeps the first suggestion active when the omnibox opens.
+        selectedIndex = suggestions.isEmpty ? nil : 0
 
         suggestTask?.cancel()
         let engine = settings.searchEngine
@@ -341,5 +380,129 @@ struct NavigationBar: View {
         suggestTask?.cancel()
         suggestions = []
         selectedIndex = nil
+    }
+}
+
+private struct DownloadCenter: View {
+    let downloads: DownloadStore
+    let settings: Settings
+    let onCancel: (UInt32) -> Void
+
+    private var loc: Localized { settings.strings }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack {
+                Text(loc.downloads)
+                    .font(.headline)
+                Spacer()
+                if downloads.hasFinishedDownloads {
+                    Button(loc.clearCompletedDownloads) {
+                        downloads.clearFinished()
+                    }
+                    .buttonStyle(.plain)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                }
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 12)
+
+            Divider()
+
+            if downloads.records.isEmpty {
+                Text(loc.noDownloads)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, minHeight: 86)
+            } else {
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 2) {
+                        ForEach(downloads.records) { download in
+                            DownloadRow(download: download, settings: settings) {
+                                onCancel(download.id)
+                            }
+                        }
+                    }
+                    .padding(8)
+                }
+                .frame(maxHeight: 330)
+            }
+        }
+        .frame(width: 360)
+    }
+}
+
+private struct DownloadRow: View {
+    let download: WebDownload
+    let settings: Settings
+    let onCancel: () -> Void
+
+    private var loc: Localized { settings.strings }
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: iconName)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(download.state == .canceled ? .secondary : .primary)
+                .frame(width: 22, height: 22)
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(download.fileName)
+                    .font(.system(size: 12.5, weight: .medium))
+                    .lineLimit(1)
+                HStack(spacing: 7) {
+                    Text(statusText)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                    if download.state == .downloading {
+                        Button(loc.cancelDownload, action: onCancel)
+                            .buttonStyle(.plain)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                if let progress = download.progress, download.state == .downloading {
+                    ProgressView(value: progress)
+                        .progressViewStyle(.linear)
+                }
+                if download.state == .completed, let location = download.location {
+                    HStack(spacing: 10) {
+                        Button(loc.openDownloadedFile) {
+                            NSWorkspace.shared.open(location)
+                        }
+                        .buttonStyle(.plain)
+                        Button(loc.showDownloadedFile) {
+                            NSWorkspace.shared.activateFileViewerSelecting([location])
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 7)
+        .padding(.vertical, 7)
+        .background(.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+    }
+
+    private var iconName: String {
+        switch download.state {
+        case .downloading: return "arrow.down.circle"
+        case .completed: return "checkmark.circle"
+        case .canceled: return "xmark.circle"
+        case .failed: return "exclamationmark.circle"
+        }
+    }
+
+    private var statusText: String {
+        switch download.state {
+        case .downloading: return loc.downloadInProgress
+        case .completed: return loc.downloadComplete
+        case .canceled: return loc.downloadCanceled
+        case .failed: return loc.downloadFailed
+        }
     }
 }

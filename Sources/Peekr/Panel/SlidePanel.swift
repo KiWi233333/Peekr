@@ -18,6 +18,8 @@ final class SlidePanel: NSPanel {
         isMovable = false
         backgroundColor = .clear
         isOpaque = false
+        // Keep the native floating-window separation. The content host owns
+        // the rounded clip; this shadow is the only outer elevation effect.
         hasShadow = true
         isReleasedWhenClosed = false
         animationBehavior = .none
