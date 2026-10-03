@@ -4,13 +4,16 @@
 build:
 	swift build
 
-# CEF requires a real app bundle and helper processes; build a debug bundle.
+# CEF requires a real app bundle and helper processes. Build the bundle, then
+# launch the Xcode/InjectionIII-compatible Debug app for SwiftUI hot reload.
+# Follow Chromium's log after launch; Ctrl+C stops tail, not the app.
 dev:
 	./scripts/bundle.sh debug
-	open build/Peekr.app
+	./scripts/dev-inject.sh
+	@echo "Following Chromium log (Ctrl+C stops log output; Peekr keeps running):"
+	@tail -F "$${HOME}/Library/Application Support/Peekr/Chromium/debug.log"
 
-# InjectionIII hot reload: xcodebuild + relaunch the bundled app from
-# DerivedData. Requires InjectionIII running with this repo as its project.
+# Rebuild and relaunch the injection-ready Debug app without rebuilding CEF.
 inject:
 	./scripts/dev-inject.sh
 

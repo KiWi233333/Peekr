@@ -39,7 +39,7 @@ body:
       label: How did you run Peekr?
       options:
         - "make run (.app bundle)"
-        - "make dev (swift run)"
+        - "make dev (InjectionIII hot-reload Debug app)"
         - "A downloaded release"
     validations:
       required: true
