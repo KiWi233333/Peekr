@@ -88,6 +88,9 @@ struct SidebarItem: Codable, Hashable, Identifiable {
 /// order. `selectedTabID` lets every space remember where the user left off.
 struct Workspace: Identifiable, Codable, Hashable {
     let id: UUID
+    /// Stable storage/session identity shared by all tabs in this Workspace.
+    /// The display name of a Profile is never persisted here.
+    var profileID: BrowserProfile.ID
     var name: String
     var symbol: String
     var tabs: [WebApp]
@@ -105,6 +108,7 @@ struct Workspace: Identifiable, Codable, Hashable {
 
     init(
         id: UUID = UUID(),
+        profileID: BrowserProfile.ID = BrowserProfile.defaultID,
         name: String = "",
         symbol: String = "square.stack",
         tabs: [WebApp] = [],
@@ -116,6 +120,7 @@ struct Workspace: Identifiable, Codable, Hashable {
         isPinned: Bool = false
     ) {
         self.id = id
+        self.profileID = profileID
         self.name = name
         self.symbol = symbol
         self.tabs = tabs
@@ -129,7 +134,7 @@ struct Workspace: Identifiable, Codable, Hashable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, name, symbol, tabs, groups, sidebarItems, selectedTabID
+        case id, profileID, name, symbol, tabs, groups, sidebarItems, selectedTabID
         case ownership, agentOwner, isPinned
     }
 
@@ -138,6 +143,8 @@ struct Workspace: Identifiable, Codable, Hashable {
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id = try c.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        profileID = try c.decodeIfPresent(BrowserProfile.ID.self, forKey: .profileID)
+            ?? BrowserProfile.defaultID
         name = try c.decodeIfPresent(String.self, forKey: .name) ?? ""
         symbol = try c.decodeIfPresent(String.self, forKey: .symbol) ?? "square.stack"
         tabs = try c.decodeIfPresent([WebApp].self, forKey: .tabs) ?? []
@@ -237,7 +244,7 @@ struct Workspace: Identifiable, Codable, Hashable {
 /// Persisted shape of the complete browser sidebar. `schemaVersion` is
 /// advisory—the tolerant nested decoders remain the source of migration truth.
 struct WorkspacesData: Codable {
-    static let currentSchemaVersion = 2
+    static let currentSchemaVersion = 3
 
     var schemaVersion: Int
     var workspaces: [Workspace]

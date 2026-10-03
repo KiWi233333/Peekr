@@ -8,6 +8,7 @@ import Observation
 final class AppModel {
     var workspaces: [Workspace]
     var activeWorkspaceID: UUID
+    var profiles: [BrowserProfile]
     var isPinned: Bool = false
 
     /// Called after a tab record leaves the model, allowing the composition root
@@ -32,6 +33,7 @@ final class AppModel {
     private static let provisionalGroupLifetime: TimeInterval = 8
 
     private let store: AppStore
+    private let profileStore: ProfileStore
     private let searchEngine: () -> SearchEngine
     private let provisionalNow: () -> TimeInterval
     private var recentlyClosed: [ClosedTab] = []
@@ -41,14 +43,23 @@ final class AppModel {
 
     init(
         store: AppStore,
+        profileStore: ProfileStore = ProfileStore(),
         searchEngine: @escaping () -> SearchEngine = { .google },
         provisionalNow: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }
     ) {
         self.store = store
+        self.profileStore = profileStore
         self.searchEngine = searchEngine
         self.provisionalNow = provisionalNow
+        let profileRegistry = profileStore.load()
+        let availableProfiles = profileRegistry.profiles
+        profiles = availableProfiles
         let data = store.load(fallback: AppStore.defaults(searchEngine: searchEngine()))
-        let loadedWorkspaces = data.workspaces.isEmpty ? [Workspace()] : data.workspaces
+        var loadedWorkspaces = data.workspaces.isEmpty ? [Workspace()] : data.workspaces
+        let knownProfileIDs = Set(availableProfiles.map(\.id))
+        for index in loadedWorkspaces.indices where !knownProfileIDs.contains(loadedWorkspaces[index].profileID) {
+            loadedWorkspaces[index].profileID = BrowserProfile.defaultID
+        }
         let validActiveID = data.activeWorkspaceID.flatMap { id in
             loadedWorkspaces.contains { $0.id == id } ? id : nil
         }
@@ -565,6 +576,54 @@ final class AppModel {
 
     // MARK: - Spaces
 
+    var defaultProfile: BrowserProfile {
+        profiles.first(where: \.isDefault) ?? .defaultProfile
+    }
+
+    func profile(_ id: BrowserProfile.ID) -> BrowserProfile? {
+        profiles.first { $0.id == id }
+    }
+
+    @discardableResult
+    func createProfile(name: String) -> BrowserProfile? {
+        guard let profile = profileStore.create(name: name) else { return nil }
+        profiles = profileStore.load().profiles
+        return profile
+    }
+
+    @discardableResult
+    func renameProfile(_ id: BrowserProfile.ID, to name: String) -> BrowserProfile? {
+        guard let renamed = profileStore.rename(id, to: name) else { return nil }
+        profiles = profileStore.load().profiles
+        return renamed
+    }
+
+    @discardableResult
+    func archiveProfile(_ id: BrowserProfile.ID) -> Bool {
+        guard profileStore.archive(id) else { return false }
+        profiles = profileStore.load().profiles
+        return true
+    }
+
+    @discardableResult
+    func deleteProfile(_ id: BrowserProfile.ID) -> Bool {
+        let boundWorkspaceIDs = Set(workspaces.filter { $0.profileID == id }.map(\.id))
+        guard profileStore.delete(id, boundWorkspaceIDs: boundWorkspaceIDs) else { return false }
+        profiles = profileStore.load().profiles
+        return true
+    }
+
+    @discardableResult
+    func rebindWorkspace(_ workspaceID: Workspace.ID, to profileID: BrowserProfile.ID) -> Bool {
+        guard profiles.contains(where: { $0.id == profileID && !$0.isArchived }),
+              let index = workspaces.firstIndex(where: { $0.id == workspaceID }) else {
+            return false
+        }
+        workspaces[index].profileID = profileID
+        persist()
+        return true
+    }
+
     func selectWorkspace(_ id: UUID) {
         guard id != activeWorkspaceID, workspaces.contains(where: { $0.id == id }) else { return }
         activeWorkspaceID = id
@@ -574,13 +633,16 @@ final class AppModel {
     }
 
     @discardableResult
-    func addWorkspace() -> Workspace {
+    func addWorkspace(profileID: BrowserProfile.ID? = nil) -> Workspace {
         let provider = searchEngine()
         let tab = WebApp(
             title: provider.displayName,
             urlString: provider.homepageURL.absoluteString
         )
-        let workspace = Workspace(tabs: [tab])
+        let workspace = Workspace(
+            profileID: resolvedProfileID(profileID),
+            tabs: [tab]
+        )
         workspaces.append(workspace)
         activeWorkspaceID = workspace.id
         recordSelection(tab.id)
@@ -646,13 +708,18 @@ final class AppModel {
     /// "Claude Code"); empty means unidentified. The user can take the space
     /// over at any time — see `takeOverWorkspace(_:)`.
     @discardableResult
-    func addAgentWorkspace(owner agentName: String = "", name: String = "") -> Workspace {
+    func addAgentWorkspace(
+        owner agentName: String = "",
+        name: String = "",
+        profileID: BrowserProfile.ID? = nil
+    ) -> Workspace {
         let provider = searchEngine()
         let tab = WebApp(
             title: provider.displayName,
             urlString: provider.homepageURL.absoluteString
         )
         let workspace = Workspace(
+            profileID: resolvedProfileID(profileID),
             name: name,
             tabs: [tab],
             ownership: .agent,
@@ -703,6 +770,14 @@ final class AppModel {
     }
 
     // MARK: - Persistence and helpers
+
+    private func resolvedProfileID(_ requested: BrowserProfile.ID?) -> BrowserProfile.ID {
+        guard let requested,
+              profiles.contains(where: { $0.id == requested && !$0.isArchived }) else {
+            return BrowserProfile.defaultID
+        }
+        return requested
+    }
 
     func persist() {
         pendingPersist?.cancel()

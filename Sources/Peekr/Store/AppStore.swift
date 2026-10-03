@@ -20,18 +20,35 @@ struct AppStore {
         // Current format: a workspaces object.
         if let decoded = try? JSONDecoder().decode(WorkspacesData.self, from: data),
            !decoded.workspaces.isEmpty {
-            return decoded
+            let migrated = WorkspacesData(
+                workspaces: decoded.workspaces,
+                activeWorkspaceID: decoded.activeWorkspaceID
+            )
+            if decoded.schemaVersion != WorkspacesData.currentSchemaVersion {
+                save(migrated)
+            }
+            return migrated
         }
         // Legacy format: a bare `[WebApp]` array → wrap into one workspace.
         if let legacy = try? JSONDecoder().decode([WebApp].self, from: data), !legacy.isEmpty {
-            return WorkspacesData(workspaces: [Workspace(tabs: legacy)])
+            let migrated = WorkspacesData(workspaces: [Workspace(tabs: legacy)])
+            save(migrated)
+            return migrated
         }
         return fallback
     }
 
     func save(_ data: WorkspacesData) {
-        guard let encoded = try? JSONEncoder().encode(data) else { return }
-        try? encoded.write(to: fileURL, options: .atomic)
+        do {
+            try FileManager.default.createDirectory(
+                at: fileURL.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            let encoded = try JSONEncoder().encode(data)
+            try encoded.write(to: fileURL, options: .atomic)
+        } catch {
+            // Keep the model usable; the next persistence attempt retries.
+        }
     }
 
     static func defaults(searchEngine: SearchEngine = .google) -> WorkspacesData {
