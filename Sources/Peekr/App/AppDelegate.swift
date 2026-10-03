@@ -67,6 +67,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.edge.setArmed(!visible)
             self?.manager.setPanelVisible(visible)
         }
+        // The panel starts hidden; agent-created pages should still enter the
+        // ordinary idle lifecycle schedule before the first manual show.
+        manager.setPanelVisible(false)
 
         // Hover the docked edge/corner to peek the panel out.
         edge = EdgeTrigger(settings: settings)

@@ -81,6 +81,38 @@ final class WebViewManagerLifecycleTests: XCTestCase {
         XCTAssertEqual(factory.profiles.first?.storageKey, profile.storageKey)
     }
 
+    func testRebindingWorkspaceClosesOldEngineAndRecreatesWithNewProfile() throws {
+        let storeURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("peekr-manager-rebind-\(UUID().uuidString).json")
+        let profileURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("peekr-manager-rebind-profiles-\(UUID().uuidString).json")
+        let model = AppModel(
+            store: AppStore(fileURL: storeURL),
+            profileStore: ProfileStore(fileURL: profileURL)
+        )
+        let profile = try XCTUnwrap(model.createProfile(name: "Work"))
+        let workspaceID = model.activeWorkspaceID
+        let tabID = try XCTUnwrap(model.apps.first?.id)
+        let factory = FakeFactory()
+        let manager = WebViewManager(
+            model: model,
+            factory: factory,
+            badges: BadgeStore(),
+            icons: IconStore()
+        )
+        model.onWorkspaceProfileChange = { workspaceID, _, _ in
+            manager.prepareForProfileChange(workspaceID: workspaceID)
+        }
+
+        manager.activate(tabID)
+        XCTAssertTrue(model.rebindWorkspace(workspaceID, to: profile.id))
+        XCTAssertEqual(factory.engines[0].closeCount, 1)
+        XCTAssertNil(manager.view(for: tabID))
+
+        manager.activate(tabID)
+        XCTAssertEqual(factory.profiles.map(\.id), [BrowserProfile.defaultID, profile.id])
+    }
+
     func testHiddenIdleSilentBackgroundTabSleepsAndWakesWithItsURL() {
         let storeURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("peekr-manager-sleep-\(UUID().uuidString).json")
