@@ -176,6 +176,13 @@ struct Localized {
     var collapseSidebar: String { t("Collapse Sidebar", "折叠侧栏") }
     var expandSidebar: String { t("Expand Sidebar", "展开侧栏") }
     var newWorkspace: String { t("New Workspace", "新建工作区") }
+    var profile: String { t("Profile", "Profile") }
+    var profiles: String { t("Profiles", "Profiles") }
+    var chooseProfile: String { t("Choose Profile", "选择 Profile") }
+    var newProfile: String { t("New Profile", "新建 Profile") }
+    var renameProfile: String { t("Rename Profile", "重命名 Profile") }
+    var archiveProfile: String { t("Archive Profile", "归档 Profile") }
+    var profileName: String { t("Profile name", "Profile 名称") }
     var spaces: String { t("Spaces", "工作区") }
     var openSpaces: String { t("Open Spaces", "打开工作区") }
     var defaultWorkspace: String { t("Workspace", "工作区") }

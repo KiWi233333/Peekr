@@ -61,6 +61,21 @@ final class WebViewManager {
 
     func view(for id: UUID) -> NSView? { engines[id]?.hostView }
 
+    /// Close engines owned by a Workspace before the model changes the active
+    /// binding. The next activation creates a fresh engine lazily under the
+    /// destination Workspace's Profile.
+    func prepareForWorkspaceSwitch(from oldWorkspaceID: UUID, to newWorkspaceID: UUID) {
+        let ids = model.workspaces.first(where: { $0.id == oldWorkspaceID })?.tabs.map(\.id) ?? []
+        for id in ids { closeEngine(id, clearPresentation: false) }
+        if ids.contains(state.currentID ?? UUID()) { state.currentID = nil }
+    }
+
+    func prepareForProfileChange(workspaceID: UUID) {
+        let ids = model.workspaces.first(where: { $0.id == workspaceID })?.tabs.map(\.id) ?? []
+        for id in ids { closeEngine(id, clearPresentation: false) }
+        if ids.contains(state.currentID ?? UUID()) { state.currentID = nil }
+    }
+
     /// Mount background agent pages once so the rail later reuses the exact same CEF view.
     func prepareAgentTab(_ id: UUID) {
         guard let app = model.tab(id) else { return }
@@ -80,16 +95,7 @@ final class WebViewManager {
 
     func discard(_ id: UUID) {
         let wasCurrent = state.currentID == id
-        engines[id]?.close()
-        engines[id]?.hostView.removeFromSuperview()
-        engines[id] = nil
-        agentHosts.removeValue(forKey: id)?.close()
-        lastTitles[id] = nil
-        lastHosts[id] = nil
-        lastHistoryURLs[id] = nil
-        downloadEngines = downloadEngines.filter { $0.value != id }
-        icons.discardNavigation(for: id)
-        badges.clear(id)
+        closeEngine(id, clearPresentation: true)
         if wasCurrent {
             state.currentID = nil
             if let nextID = model.selectedID, nextID != id { activate(nextID) }
@@ -248,6 +254,21 @@ final class WebViewManager {
     // MARK: - Private
 
     private var current: WebEngine? { state.currentID.flatMap { engines[$0] } }
+
+    private func closeEngine(_ id: UUID, clearPresentation: Bool) {
+        engines[id]?.close()
+        engines[id]?.hostView.removeFromSuperview()
+        engines[id] = nil
+        agentHosts.removeValue(forKey: id)?.close()
+        downloadEngines = downloadEngines.filter { $0.value != id }
+        if clearPresentation {
+            lastTitles[id] = nil
+            lastHosts[id] = nil
+            lastHistoryURLs[id] = nil
+            icons.discardNavigation(for: id)
+            badges.clear(id)
+        }
+    }
 
     private func engine(for app: WebApp) -> WebEngine {
         if let existing = engines[app.id] { return existing }

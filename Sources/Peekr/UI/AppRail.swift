@@ -25,6 +25,8 @@ struct AppRail: View {
     @State private var renamingTab: UUID?
     @State private var renamingGroup: UUID?
     @State private var renamingWorkspace: UUID?
+    @State private var profileAction: ProfileAction?
+    @State private var profileDraft = ""
     @State private var groupDraft = ""
     @State private var workspaceDraft = ""
     @ObserveInjection private var inject
@@ -32,6 +34,11 @@ struct AppRail: View {
     @FocusState private var groupFieldFocused: UUID?
     @FocusState private var workspaceFieldFocused: Bool
     @Namespace private var sidebarMotionNamespace
+
+    private enum ProfileAction {
+        case create
+        case rename
+    }
 
     private var loc: Localized { settings.strings }
     /// Keep the compact presentation stable while the divider is dragged. The
@@ -58,6 +65,14 @@ struct AppRail: View {
         // scheme or painting a uniform tint here breaks both contrast and depth.
         .foregroundStyle(.primary)
         .enableInjection()
+        .alert(profileAlertTitle, isPresented: Binding(
+            get: { profileAction != nil },
+            set: { if !$0 { profileAction = nil } }
+        )) {
+            TextField(loc.profileName, text: $profileDraft)
+            Button(loc.cancel, role: .cancel) { profileAction = nil }
+            Button(loc.save) { commitProfileAction() }
+        }
     }
 
     private var expandedRail: some View {
@@ -119,6 +134,8 @@ struct AppRail: View {
 
     @ViewBuilder
     private var compactHeaderActions: some View {
+        profileMenu
+        Divider()
         Button { model.addGroup(name: loc.tabGroup, color: .blue) } label: {
             Label(loc.newTabGroup, systemImage: "rectangle.3.group")
         }
@@ -320,6 +337,7 @@ struct AppRail: View {
                         .onSubmit(commitRenameWorkspace)
                         .onExitCommand { renamingWorkspace = nil }
                 }
+                profileMenu
                 Spacer(minLength: 4)
                 Button(action: onOpenSpaces) {
                     Image(systemName: "square.grid.2x2")
@@ -381,6 +399,77 @@ struct AppRail: View {
         }
         .padding(.horizontal, 13)
         .padding(.bottom, 14)
+    }
+
+    private var activeProfile: BrowserProfile {
+        model.profile(model.activeWorkspace.profileID) ?? model.defaultProfile
+    }
+
+    private var profileAlertTitle: String {
+        profileAction == .create ? loc.newProfile : loc.renameProfile
+    }
+
+    private var profileMenu: some View {
+        Menu {
+            Section(loc.chooseProfile) {
+                ForEach(model.profiles.filter { !$0.isArchived }) { profile in
+                    Button {
+                        if model.rebindWorkspace(model.activeWorkspaceID, to: profile.id) {
+                            onWorkspaceSwitched()
+                        }
+                    } label: {
+                        Label {
+                            Text(profile.name)
+                        } icon: {
+                            Image(systemName: profile.id == activeProfile.id
+                                  ? "checkmark.circle.fill" : "circle")
+                        }
+                    }
+                }
+            }
+            Divider()
+            Button {
+                profileDraft = ""
+                profileAction = .create
+            } label: {
+                Label(loc.newProfile, systemImage: "plus")
+            }
+            if !activeProfile.isDefault {
+                Button {
+                    profileDraft = activeProfile.name
+                    profileAction = .rename
+                } label: {
+                    Label(loc.renameProfile, systemImage: "pencil")
+                }
+                Button(role: .destructive) {
+                    _ = model.archiveProfile(activeProfile.id)
+                } label: {
+                    Label(loc.archiveProfile, systemImage: "archivebox")
+                }
+            }
+        } label: {
+            Label(activeProfile.name, systemImage: "person.crop.circle")
+                .lineLimit(1)
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize(horizontal: false, vertical: true)
+        .help(loc.profile)
+        .accessibilityLabel(loc.profile)
+    }
+
+    private func commitProfileAction() {
+        let name = profileDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty, let action = profileAction else {
+            profileAction = nil
+            return
+        }
+        switch action {
+        case .create:
+            _ = model.createProfile(name: name)
+        case .rename:
+            _ = model.renameProfile(activeProfile.id, to: name)
+        }
+        profileAction = nil
     }
 
     private func beginRenameWorkspace(_ workspace: Workspace) {

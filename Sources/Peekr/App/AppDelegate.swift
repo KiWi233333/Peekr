@@ -53,6 +53,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             icons: icons,
             searchEngine: currentSearchEngine
         )
+        model.onWorkspaceSwitch = { [weak self] oldID, newID in
+            self?.manager.prepareForWorkspaceSwitch(from: oldID, to: newID)
+        }
+        model.onWorkspaceProfileChange = { [weak self] workspaceID, _, _ in
+            self?.manager.prepareForProfileChange(workspaceID: workspaceID)
+        }
         // Tear down a deleted tab's web engine (stops background media, frees the
         // process) and its badge — the model itself stays web-agnostic.
         model.onRemove = { [weak self] id in self?.manager.discard(id) }

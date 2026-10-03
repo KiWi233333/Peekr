@@ -14,6 +14,12 @@ final class AppModel {
     /// Called after a tab record leaves the model, allowing the composition root
     /// to tear down its cached engine and badge without coupling this layer to UI.
     var onRemove: ((WebApp.ID) -> Void)?
+    /// Called before the active Workspace changes so live engines can be
+    /// closed before the model points the UI at another Profile/context.
+    var onWorkspaceSwitch: ((Workspace.ID, Workspace.ID) -> Void)?
+    /// Called before a Workspace changes Profile, while the old binding is
+    /// still readable and its engines can be closed deterministically.
+    var onWorkspaceProfileChange: ((Workspace.ID, BrowserProfile.ID, BrowserProfile.ID) -> Void)?
 
     private struct ClosedTab {
         let app: WebApp
@@ -628,6 +634,9 @@ final class AppModel {
               let index = workspaces.firstIndex(where: { $0.id == workspaceID }) else {
             return false
         }
+        let previousProfileID = workspaces[index].profileID
+        guard previousProfileID != profileID else { return true }
+        onWorkspaceProfileChange?(workspaceID, previousProfileID, profileID)
         workspaces[index].profileID = profileID
         persist()
         return true
@@ -635,6 +644,8 @@ final class AppModel {
 
     func selectWorkspace(_ id: UUID) {
         guard id != activeWorkspaceID, workspaces.contains(where: { $0.id == id }) else { return }
+        let previousID = activeWorkspaceID
+        onWorkspaceSwitch?(previousID, id)
         activeWorkspaceID = id
         if selectedID == nil { selectedID = activeWorkspace.orderedTabIDs.first }
         if let selectedID { recordSelection(selectedID) }
@@ -652,6 +663,7 @@ final class AppModel {
             profileID: resolvedProfileID(profileID),
             tabs: [tab]
         )
+        onWorkspaceSwitch?(activeWorkspaceID, workspace.id)
         workspaces.append(workspace)
         activeWorkspaceID = workspace.id
         recordSelection(tab.id)
@@ -700,6 +712,10 @@ final class AppModel {
     func removeWorkspace(_ id: UUID) {
         guard workspaces.count > 1,
               let index = workspaces.firstIndex(where: { $0.id == id }) else { return }
+        if activeWorkspaceID == id,
+           let nextID = workspaces.first(where: { $0.id != id })?.id {
+            onWorkspaceSwitch?(id, nextID)
+        }
         let removedIDs = workspaces[index].tabs.map(\.id)
         let removedGroupIDs = workspaces[index].groups.map(\.id)
         workspaces.remove(at: index)
@@ -734,6 +750,7 @@ final class AppModel {
             ownership: .agent,
             agentOwner: agentName.trimmingCharacters(in: .whitespaces)
         )
+        onWorkspaceSwitch?(activeWorkspaceID, workspace.id)
         workspaces.append(workspace)
         activeWorkspaceID = workspace.id
         recordSelection(tab.id)
