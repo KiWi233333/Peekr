@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The panel edge no longer stacks hand-drawn layers: the window border stroke and
   the web card's drop shadow are gone, so the edge is the panel material plus the
   system window shadow instead of reading as a shadow/border band.
+- Quitting with ⌘Q now actually terminates the app. Closing a Chromium page left
+  its CEF browser registered because the embedding panel never completes CEF's
+  windowed close, so a confirmed quit waited forever and the process (plus its
+  helper processes) stayed alive in the background.
 
 ## [0.2.2]
 

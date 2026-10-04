@@ -144,6 +144,15 @@ final class CefSwiftEngine: WebEngine {
         isClosed = true
         browser?.delegate = nil
         browser?.close(force: true)
+        // CEF hosts a windowed browser inside an app-owned view/window. Its
+        // default `do_close` handling sends a close notification to that hosting
+        // NSWindow — Peekr's slide panel, which deliberately stays alive — so the
+        // browser never finishes tearing down and `on_before_close` never fires.
+        // The browser then stays registered with `CefRuntime`, and any quit that
+        // waits for the registry to empty hangs forever. Removing the browser's
+        // native view from the hierarchy completes the close: CEF destroys the
+        // browser, fires `on_before_close`, and unregisters it from the runtime.
+        browser?.nativeView?.removeFromSuperview()
         browser = nil
         pendingURL = nil
         faviconURLs = []
