@@ -4,6 +4,13 @@ import AppKit
 /// Non-activating means peeking it out won't steal focus from your current app,
 /// yet it can still become key so you can type into web apps.
 final class SlidePanel: NSPanel {
+    /// Called only after the responder chain declines the tab-close equivalent.
+    /// Peekr deliberately has no window-close action for this shortcut.
+    var onCloseTabShortcut: (() -> Void)?
+    /// Called only after the responder chain and the application menu decline
+    /// the quit equivalent.
+    var onQuitShortcut: (() -> Void)?
+
     init(contentRect: NSRect) {
         super.init(
             contentRect: contentRect,
@@ -28,4 +35,47 @@ final class SlidePanel: NSPanel {
 
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
+
+    /// Give the browser's own responder chain first chance at ⌘W. If it does
+    /// not handle the equivalent, fall back to closing Peekr's active tab.
+    /// Never fall through to a window-close operation: the panel is not a
+    /// user-manageable browser window.
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        if super.performKeyEquivalent(with: event) { return true }
+        if Self.isPlainCommandKeyEquivalent(
+            flags: event.modifierFlags,
+            charactersIgnoringModifiers: event.charactersIgnoringModifiers,
+            character: "q"
+        ) {
+            onQuitShortcut?()
+            return true
+        }
+        guard Self.isCloseTabKeyEquivalent(
+            flags: event.modifierFlags,
+            charactersIgnoringModifiers: event.charactersIgnoringModifiers
+        ) else { return false }
+        onCloseTabShortcut?()
+        return true
+    }
+
+    static func isPlainCommandKeyEquivalent(
+        flags: NSEvent.ModifierFlags,
+        charactersIgnoringModifiers: String?,
+        character: String
+    ) -> Bool {
+        let normalizedFlags = flags.intersection(.deviceIndependentFlagsMask)
+        return normalizedFlags == [.command]
+            && charactersIgnoringModifiers?.lowercased() == character.lowercased()
+    }
+
+    static func isCloseTabKeyEquivalent(
+        flags: NSEvent.ModifierFlags,
+        charactersIgnoringModifiers: String?
+    ) -> Bool {
+        isPlainCommandKeyEquivalent(
+            flags: flags,
+            charactersIgnoringModifiers: charactersIgnoringModifiers,
+            character: "w"
+        )
+    }
 }

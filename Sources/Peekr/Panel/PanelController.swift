@@ -17,6 +17,7 @@ final class PanelController {
     let bookmarks: BookmarksModel
 
     var onVisibilityChange: ((Bool) -> Void)?
+    var onQuitShortcut: (() -> Void)?
 
     private let panel: SlidePanel
     private var hosting: NSHostingView<PanelRootView>!
@@ -68,6 +69,8 @@ final class PanelController {
         panelSurface.frame = NSRect(origin: .zero, size: panel.frame.size)
         panelSurface.autoresizingMask = [.width, .height]
         panel.contentView = panelSurface
+        panel.onCloseTabShortcut = { [weak self] in self?.closeSelectedTab() }
+        panel.onQuitShortcut = { [weak self] in self?.onQuitShortcut?() }
 
         // Real callbacks once self is fully initialised.
         hosting.rootView = PanelRootView(
@@ -231,6 +234,9 @@ final class PanelController {
                     self.manager.closeFindBar()
                     return nil
                 }
+                // Interactive overlays own Escape before the panel's hide
+                // behavior. Their SwiftUI `onExitCommand` closes the overlay.
+                if self.autoHideSuspended { return event }
                 // A focused text field (omnibox, find bar, tab rename) owns Esc —
                 // let its own handling run instead of hiding the panel.
                 if self.panel.firstResponder is NSTextView { return event }
@@ -327,21 +333,24 @@ final class PanelController {
                 manager.activate(app.id)
                 manager.state.focusOmniboxToken += 1
             }
-        case "w":
-            guard tabRailFocused else { hide(); return true }
-            tabRailFocused = false
-            guard let id = model.selectedID else { hide(); return true }
-            model.removeApp(id)
-            if let nextID = model.selectedID {
-                manager.activate(nextID)
-            } else {
-                manager.state.currentID = nil
-            }
         default:
             guard let n = Int(chars), let id = model.selectShortcutTab(n) else { return false }
             manager.activate(id)
         }
         return true
+    }
+
+    /// Closes only the active Peekr tab. The panel itself remains visible; a
+    /// Cmd+W shortcut must never be interpreted as closing the window.
+    private func closeSelectedTab() {
+        tabRailFocused = false
+        guard let id = model.selectedID else { return }
+        model.removeApp(id)
+        if let nextID = model.selectedID {
+            manager.activate(nextID)
+        } else {
+            manager.state.currentID = nil
+        }
     }
 
     private func handleControlTab(reverse: Bool) {

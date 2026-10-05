@@ -43,6 +43,9 @@ enum Motion {
     static let iconSwap = Animation.easeInOut(duration: Duration.iconSwap)
     static let dropdownOpen = standard(Duration.dropdownOpen)
     static let dropdownClose = standard(Duration.dropdownClose)
+    /// Short grace period that lets an omnibox suggestion receive a click after
+    /// AppKit ends editing on the native text field.
+    static let suggestionDismissGrace = Swift.Duration.milliseconds(120)
     static let badgePop = Animation.spring(response: 0.42, dampingFraction: 0.62)
     static let tileSelection = Animation.spring(response: 0.28, dampingFraction: 0.72)
     static let spacesMorph = standard(Duration.spacesMorph)

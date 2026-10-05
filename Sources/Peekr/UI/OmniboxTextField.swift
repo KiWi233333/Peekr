@@ -5,12 +5,15 @@ import SwiftUI
 struct OmniboxTextField: NSViewRepresentable {
     let placeholder: String
     let address: String
+    var pasteAndGoLabel: String = "Paste and Go"
+    var pasteAndSearchLabel: String = "Paste and Search"
     @Binding var text: String
     @Binding var focused: Bool
     let focusRequest: Int
     var onSubmit: () -> Void
     var onMoveSelection: (Int) -> Void
     var onEscape: () -> Bool
+    var onPasteAndGo: (String) -> Void = { _ in }
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
@@ -23,16 +26,16 @@ struct OmniboxTextField: NSViewRepresentable {
         field.textColor = .labelColor
         field.usesSingleLineMode = true
         field.cell?.isScrollable = true
+        field.cell?.wraps = false
         field.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         field.setAccessibilityIdentifier("omnibox")
         field.delegate = context.coordinator
         field.onBeginFocus = { [weak coordinator = context.coordinator, weak field] in
             guard let coordinator, let field else { return }
-            // Replace the abbreviated display URL before the click selects text.
             coordinator.parent.text = coordinator.parent.address
             coordinator.parent.focused = true
             field.stringValue = coordinator.parent.address
-            field.prepareForFocusSelection()
+            field.currentEditor()?.selectAll(nil)
         }
         return field
     }
@@ -42,18 +45,29 @@ struct OmniboxTextField: NSViewRepresentable {
         coordinator.parent = self
         field.placeholderString = placeholder
         field.setAccessibilityLabel(placeholder)
-        if field.stringValue != text { field.stringValue = text }
+
+        let editor = field.currentEditor() as? NSTextView
+        let isComposing = editor?.hasMarkedText() == true
+
+        // Protect IME composition: never overwrite stringValue while user is composing.
+        if !isComposing && field.stringValue != text {
+            field.stringValue = text
+        }
 
         if coordinator.focusRequest != focusRequest {
             coordinator.focusRequest = focusRequest
-            // Leave SwiftUI's update pass before changing the first responder.
             DispatchQueue.main.async { [weak field, weak coordinator] in
                 guard let field, let coordinator,
                     coordinator.focusRequest == focusRequest,
                     let window = field.window
                 else { return }
-                if field.currentEditor() == nil { window.makeFirstResponder(field) }
-                field.prepareForFocusSelection()
+                coordinator.parent.text = coordinator.parent.address
+                coordinator.parent.focused = true
+                field.stringValue = coordinator.parent.address
+                if field.currentEditor() == nil {
+                    window.makeFirstResponder(field)
+                }
+                field.currentEditor()?.selectAll(nil)
             }
         } else if !focused, field.currentEditor() != nil {
             DispatchQueue.main.async { [weak field, weak coordinator] in
@@ -70,7 +84,7 @@ struct OmniboxTextField: NSViewRepresentable {
     }
 
     @MainActor
-    final class Coordinator: NSObject, NSTextFieldDelegate {
+    final class Coordinator: NSObject, NSTextFieldDelegate, NSTextViewDelegate {
         var parent: OmniboxTextField
         var focusRequest: Int
 
@@ -92,56 +106,62 @@ struct OmniboxTextField: NSViewRepresentable {
             // Let an input method finish composition before handling navigation.
             guard !textView.hasMarkedText() else { return false }
             switch commandSelector {
-            case #selector(NSResponder.insertNewline(_:)), #selector(NSResponder.insertNewlineIgnoringFieldEditor(_:)):
+            case #selector(NSResponder.insertNewline(_:)),
+                 #selector(NSResponder.insertNewlineIgnoringFieldEditor(_:)):
                 parent.onSubmit()
+                return true
             case #selector(NSResponder.moveDown(_:)):
                 parent.onMoveSelection(1)
+                return true
             case #selector(NSResponder.moveUp(_:)):
                 parent.onMoveSelection(-1)
+                return true
+            case #selector(NSResponder.insertTab(_:)):
+                parent.onMoveSelection(1)
+                return true
+            case #selector(NSResponder.insertBacktab(_:)):
+                parent.onMoveSelection(-1)
+                return true
             case #selector(NSResponder.cancelOperation(_:)):
                 return parent.onEscape()
             default:
                 return false
             }
-            return true
+        }
+
+        func textView(_ view: NSTextView, menu: NSMenu, for event: NSEvent, at charIndex: Int) -> NSMenu? {
+            guard let clip = NSPasteboard.general.string(forType: .string)?
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+                !clip.isEmpty
+            else {
+                return menu
+            }
+            let isURL = clip.lowercased().hasPrefix("http://")
+                || clip.lowercased().hasPrefix("https://")
+                || (!clip.contains(" ") && clip.contains("."))
+            let title = isURL ? parent.pasteAndGoLabel : parent.pasteAndSearchLabel
+            let item = NSMenuItem(title: title, action: #selector(pasteAndGoAction(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = clip
+
+            if let pasteIndex = menu.items.firstIndex(where: { $0.action == #selector(NSText.paste(_:)) }) {
+                menu.insertItem(item, at: pasteIndex + 1)
+            } else {
+                menu.addItem(item)
+            }
+            return menu
+        }
+
+        @objc private func pasteAndGoAction(_ sender: NSMenuItem) {
+            guard let text = sender.representedObject as? String else { return }
+            parent.onPasteAndGo(text)
         }
     }
 }
 
 final class OmniboxNativeTextField: NSTextField {
     var onBeginFocus: (() -> Void)?
-    private var selectionRequest = 0
-
-    func selectAllText() {
-        currentEditor()?.selectAll(nil)
-    }
-
-    /// AppKit can create the field editor and apply its click selection in
-    /// separate turns. Select immediately, then retry once the editor exists so
-    /// a first click cannot leave only a caret or partial selection behind.
-    func prepareForFocusSelection() {
-        selectionRequest &+= 1
-        let request = selectionRequest
-        selectAllText()
-        selectAllTextWhenReady(request: request, attempts: 3)
-    }
-
-    private func selectAllTextWhenReady(request: Int, attempts: Int) {
-        DispatchQueue.main.async { [weak self] in
-            guard let self, self.selectionRequest == request else { return }
-            guard let editor = self.currentEditor() else {
-                guard attempts > 0 else { return }
-                self.selectAllTextWhenReady(request: request, attempts: attempts - 1)
-                return
-            }
-            guard self.window?.firstResponder === editor else { return }
-            editor.selectAll(nil)
-        }
-    }
-
-    private func cancelPendingSelection() {
-        selectionRequest &+= 1
-    }
+    private var wasEditingOnMouseDown = false
 
     override func becomeFirstResponder() -> Bool {
         let accepted = super.becomeFirstResponder()
@@ -151,16 +171,12 @@ final class OmniboxNativeTextField: NSTextField {
 
     override func mouseDown(with event: NSEvent) {
         let editor = currentEditor()
-        let isEditing = editor != nil && window?.firstResponder === editor
-        let selectsOnClick =
-            !isEditing && event.clickCount == 1
-            && event.modifierFlags.intersection([.shift, .control, .option, .command]).isEmpty
-        cancelPendingSelection()
+        wasEditingOnMouseDown = (editor != nil && window?.firstResponder === editor)
         super.mouseDown(with: event)
-        // AppKit finishes its click tracking first. A drag or double-click keeps
-        // its own selection; subsequent clicks keep ordinary caret placement.
-        if selectsOnClick {
-            prepareForFocusSelection()
+        if !wasEditingOnMouseDown && event.clickCount == 1 {
+            if let ed = currentEditor(), ed.selectedRange.length == 0 {
+                ed.selectAll(nil)
+            }
         }
     }
 }

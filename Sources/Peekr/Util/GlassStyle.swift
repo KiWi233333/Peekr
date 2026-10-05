@@ -28,6 +28,20 @@ enum Theme {
     static let iconCorner: CGFloat = 10
     static let panelCorner: CGFloat = 18
     static let tileCorner: CGFloat = 12
+    /// Shared corner and spacing tokens for anchored popover-like surfaces.
+    static let popoverCorner: CGFloat = 18
+    static let popoverGap: CGFloat = 8
+    static let popoverPadding: CGFloat = 6
+    static let popoverContentInset: CGFloat = 8
+    static let popoverRowSpacing: CGFloat = 8
+    static let popoverHeaderHeight: CGFloat = 36
+    static let popoverRowCorner: CGFloat = 12
+    static let suggestionCorner: CGFloat = 14
+    static let suggestionRowCorner: CGFloat = 8
+    static let controlCorner: CGFloat = 8
+    static let controlPressScale: CGFloat = 0.96
+    static let downloadCenterWidth: CGFloat = 360
+    static let downloadCenterMaxHeight: CGFloat = 330
     /// Corner of the inset web "card" (between the rail-tile and panel radii).
     static let webCardCorner: CGFloat = 14
 }
@@ -124,7 +138,7 @@ struct IconButtonStyle: ButtonStyle {
                 Circle().fill(.primary.opacity(configuration.isPressed ? 0.16 : (hovering ? 0.08 : 0)))
                     .transaction { $0.animation = nil }
             }
-            .scaleEffect(configuration.isPressed ? 0.94 : 1)
+            .scaleEffect(configuration.isPressed ? Theme.controlPressScale : 1)
             .onHover { hovering = $0 }
             .animation(
                 reduceMotion ? nil : Motion.controlFeedback,

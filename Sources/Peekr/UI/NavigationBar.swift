@@ -19,8 +19,19 @@ struct NavigationBar: View {
     var onMoveEnded: () -> Void
     var onBookmarks: () -> Void
     var onToggleSidebar: () -> Void
+    /// Reports download-center visibility so the panel can suspend auto-hide
+    /// while the popover is interactive (same treatment as sheets).
+    var onDownloadsOpenChange: (Bool) -> Void = { _ in }
 
     private struct OmniboxBoundsKey: PreferenceKey {
+        static var defaultValue: Anchor<CGRect>?
+
+        static func reduce(value: inout Anchor<CGRect>?, nextValue: () -> Anchor<CGRect>?) {
+            value = nextValue() ?? value
+        }
+    }
+
+    private struct DownloadButtonBoundsKey: PreferenceKey {
         static var defaultValue: Anchor<CGRect>?
 
         static func reduce(value: inout Anchor<CGRect>?, nextValue: () -> Anchor<CGRect>?) {
@@ -32,6 +43,8 @@ struct NavigationBar: View {
     @State private var isDragging = false
     @State private var suggestions: [OmniboxSuggestion] = []
     @State private var selectedIndex: Int?
+    @State private var originalTypedText: String?
+    @State private var userHasEdited = false
     @ObserveInjection private var inject
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var suggestTask: Task<Void, Never>?
@@ -45,10 +58,11 @@ struct NavigationBar: View {
     @State private var focused = false
     @State private var suggestionsHovered = false
     @State private var suggestionDismissTask: Task<Void, Never>?
+    @State private var suggestionDismissPending = false
     @State private var downloadsOpen = false
 
     private var showSuggestions: Bool {
-        !suggestions.isEmpty && (focused || suggestionsHovered)
+        !suggestions.isEmpty && (focused || suggestionsHovered || suggestionDismissPending)
     }
 
     var body: some View {
@@ -60,7 +74,7 @@ struct NavigationBar: View {
                             .frame(width: proxy[anchor].width)
                             .offset(
                                 x: proxy[anchor].minX,
-                                y: proxy[anchor].maxY + 6
+                                y: proxy[anchor].maxY + Theme.popoverGap
                             )
                             .transition(
                                 reduceMotion
@@ -75,24 +89,31 @@ struct NavigationBar: View {
                 reduceMotion ? nil : (showSuggestions ? Motion.dropdownOpen : Motion.dropdownClose),
                 value: showSuggestions
             )
-        .overlay(alignment: .topTrailing) {
-            if downloadsOpen {
-                DownloadCenter(
-                    downloads: manager.downloads,
-                    settings: settings,
-                    onCancel: manager.cancelDownload,
-                    onRemove: manager.downloads.remove
-                )
-                .offset(y: 48)
-                .transition(
-                    reduceMotion
-                        ? .opacity
-                        : .scale(scale: 0.96, anchor: .topTrailing).combined(with: .opacity)
-                )
-                .zIndex(1)
+            .overlayPreferenceValue(DownloadButtonBoundsKey.self) { anchor in
+                GeometryReader { proxy in
+                    if downloadsOpen, let anchor {
+                        DownloadCenter(
+                            downloads: manager.downloads,
+                            settings: settings,
+                            onCancel: manager.cancelDownload,
+                            onRemove: manager.downloads.remove,
+                            onDismiss: { downloadsOpen = false }
+                        )
+                        .offset(
+                            x: proxy[anchor].maxX - Theme.downloadCenterWidth,
+                            y: proxy[anchor].maxY + Theme.popoverGap
+                        )
+                        .transition(
+                            reduceMotion
+                                ? .opacity
+                                : .scale(scale: 0.96, anchor: .topTrailing).combined(with: .opacity)
+                        )
+                        .zIndex(20)
+                    }
+                }
             }
-        }
         .animation(reduceMotion ? nil : Motion.dropdownOpen, value: downloadsOpen)
+        .onChange(of: downloadsOpen) { _, open in onDownloadsOpenChange(open) }
         .onAppear { syncText() }
         .onChange(of: focused) { _, isFocused in
             // The native field restores the full URL on focus. Blur closes the dropdown
@@ -103,6 +124,8 @@ struct NavigationBar: View {
                 // top chrome space; never leave two popovers competing there.
                 downloadsOpen = false
                 suggestionDismissTask?.cancel()
+                suggestionDismissTask = nil
+                suggestionDismissPending = false
                 updateSuggestions()
             } else {
                 shouldSyncFocusedAddress = false
@@ -218,6 +241,7 @@ struct NavigationBar: View {
         .foregroundStyle(.primary)
         .help(settings.strings.downloads)
         .accessibilityLabel(settings.strings.downloads)
+        .anchorPreference(key: DownloadButtonBoundsKey.self, value: .bounds) { $0 }
     }
 
     private var omnibox: some View {
@@ -267,12 +291,14 @@ struct NavigationBar: View {
                     .onHover { if $0 { selectedIndex = index } }
             }
         }
-        .padding(5)
-        .liquidGlass(in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .padding(Theme.popoverPadding)
+        .liquidGlass(in: RoundedRectangle(cornerRadius: Theme.suggestionCorner, style: .continuous))
         .onHover { isHovered in
             suggestionsHovered = isHovered
             if isHovered {
                 suggestionDismissTask?.cancel()
+                suggestionDismissTask = nil
+                suggestionDismissPending = false
             } else if !focused {
                 scheduleSuggestionDismissal()
             }
@@ -293,10 +319,10 @@ struct NavigationBar: View {
             }
             Spacer(minLength: 0)
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 6)
+        .padding(.horizontal, Theme.popoverContentInset)
+        .padding(.vertical, Theme.popoverPadding)
         .background(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
+            RoundedRectangle(cornerRadius: Theme.suggestionRowCorner, style: .continuous)
                 .fill(.primary.opacity(highlighted ? 0.1 : 0))
         )
     }
@@ -401,7 +427,7 @@ struct NavigationBar: View {
         let engine = settings.searchEngine
         suggestTask = Task {
             do {
-                try await Task.sleep(for: .milliseconds(120))
+                try await Task.sleep(for: Motion.suggestionDismissGrace)
             } catch {
                 return
             }
@@ -423,6 +449,7 @@ struct NavigationBar: View {
         suggestTask?.cancel()
         suggestionDismissTask?.cancel()
         suggestionDismissTask = nil
+        suggestionDismissPending = false
         suggestionsHovered = false
         suggestions = []
         selectedIndex = nil
@@ -433,13 +460,20 @@ struct NavigationBar: View {
     /// receive the click, while clicks outside the dropdown still close it.
     private func scheduleSuggestionDismissal() {
         suggestionDismissTask?.cancel()
+        suggestionDismissPending = true
         suggestionDismissTask = Task { @MainActor in
             do {
-                try await Task.sleep(for: .milliseconds(120))
+                try await Task.sleep(for: Motion.suggestionDismissGrace)
             } catch {
                 return
             }
-            guard !Task.isCancelled, !focused, !suggestionsHovered else { return }
+            guard !Task.isCancelled, !focused, !suggestionsHovered else {
+                suggestionDismissPending = false
+                suggestionDismissTask = nil
+                return
+            }
+            suggestionDismissPending = false
+            suggestionDismissTask = nil
             clearSuggestions()
         }
     }

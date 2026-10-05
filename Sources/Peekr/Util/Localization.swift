@@ -276,6 +276,8 @@ struct Localized {
 
     // Omnibox
     var omniboxPlaceholder: String { t("Search or enter address", "搜索或输入网址") }
+    var pasteAndGo: String { t("Paste and Go", "粘贴并访问") }
+    var pasteAndSearch: String { t("Paste and Search", "粘贴并搜索") }
     func searchWith(_ engine: SearchEngine) -> String {
         t("Search with \(engine.displayName)", "使用 \(engine.displayName) 搜索")
     }

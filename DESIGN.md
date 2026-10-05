@@ -50,6 +50,19 @@ Apple Human Interface Guidelines 是平台行为基线；本文件是 Peekr 对�
 | `tile` | 44 pt | 主要图标操作的基础尺寸 |
 | `iconCorner` | 10 pt | 图标容器 |
 | `tileCorner` | 12 pt | 应用 tile |
+| `popoverCorner` | 18 pt | 下载中心和其他锚定浮层 |
+| `popoverGap` | 8 pt | 浮层与触发控件之间的间距 |
+| `popoverPadding` | 6 pt | 浮层外层内边距 |
+| `popoverContentInset` | 8 pt | 浮层标题和列表内容内缩 |
+| `popoverRowSpacing` | 8 pt | 浮层列表行间距 |
+| `popoverHeaderHeight` | 36 pt | 浮层标题栏最小高度 |
+| `popoverRowCorner` | 12 pt | 浮层列表行背景 |
+| `suggestionCorner` | 14 pt | 地址栏候选浮层 |
+| `suggestionRowCorner` | 8 pt | 地址栏候选行高亮背景 |
+| `controlCorner` | 8 pt | 浮层内输入框和紧凑控件 |
+| `controlPressScale` | 0.96 | 图标按钮按压反馈 |
+| `downloadCenterWidth` | 360 pt | 下载中心宽度 |
+| `downloadCenterMaxHeight` | 330 pt | 下载中心列表最大高度 |
 | `webCardCorner` | 14 pt | 内嵌网页卡片 |
 | `panelCorner` | 18 pt | 面板外轮廓 |
 

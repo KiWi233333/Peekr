@@ -23,7 +23,9 @@ import Foundation
 ///    Chromium apply the correct semantics inside `<input>`, `<textarea>`,
 ///    `contentEditable`, and the page's own selection — exactly as in a real
 ///    browser. App-global shortcuts (Cmd+Q/W/M/H/`/,/Tab/Space and the
-///    function/media keys) are *not* consumed; they fall through to the app/OS.
+///    function/media keys) are *not* consumed; they fall through to the app or
+///    system. Cmd+W is resolved by the hosting window after this responder
+///    chain, where Peekr closes its active tab and never closes the window.
 extension CefMetalHostView: NSMenuItemValidation, NSUserInterfaceValidations {
 
     // MARK: performKeyEquivalent policy
@@ -40,7 +42,7 @@ extension CefMetalHostView: NSMenuItemValidation, NSUserInterfaceValidations {
     /// - Cmd+Shift+V (paste & match style — handled by the renderer)
     ///
     /// Passed through (NOT consumed), so the app/OS handles them:
-    /// - Cmd+Q (quit), Cmd+W (close), Cmd+M (minimize), Cmd+H (hide),
+    /// - Cmd+Q (quit), Cmd+W (close tab), Cmd+M (minimize), Cmd+H (hide),
     ///   Cmd+` (cycle windows), Cmd+, (preferences), Cmd+Tab, Cmd+Space
     ///   (Spotlight) — and any combo while no browser is focused.
     /// - Plain function keys / media keys (no Cmd) — AppKit/system own these.
@@ -69,7 +71,8 @@ extension CefMetalHostView: NSMenuItemValidation, NSUserInterfaceValidations {
     ///
     /// Rule:
     /// - Pass through any Command combo in ``appGlobalCommandKeys`` (Cmd+Q/W/M/
-    ///   H/`/,/Space/Tab) — these belong to the app/OS.
+    ///   H/`/,/Space/Tab) — these belong to the app/OS. Cmd+W is then resolved
+    ///   by the hosting window as a tab-close fallback, never as window close.
     /// - Forward any other combo that carries Command or Control (the web
     ///   editing/navigation shortcuts: A/C/V/X/Z, arrows, etc.).
     /// - Pass through everything else (plain keys arrive via `keyDown`;
@@ -92,7 +95,7 @@ extension CefMetalHostView: NSMenuItemValidation, NSUserInterfaceValidations {
     /// must never be swallowed by the page.
     static let appGlobalCommandKeys: Set<String> = [
         "q",  // Quit
-        "w",  // Close window/tab
+        "w",  // Close the host app's tab; never close the window
         "m",  // Minimize
         "h",  // Hide
         "`",  // Cycle windows

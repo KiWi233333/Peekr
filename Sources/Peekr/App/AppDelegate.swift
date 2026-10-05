@@ -63,6 +63,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // process) and its badge — the model itself stays web-agnostic.
         model.onRemove = { [weak self] id in self?.manager.discard(id) }
         panel = PanelController(model: model, settings: settings, manager: manager, icons: icons, badges: badges, bookmarks: bookmarks)
+        panel.onQuitShortcut = { [weak self] in self?.requestQuit() }
         panel.onVisibilityChange = { [weak self] visible in
             self?.edge.setArmed(!visible)
             self?.manager.setPanelVisible(visible)

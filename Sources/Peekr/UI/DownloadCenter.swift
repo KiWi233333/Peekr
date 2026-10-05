@@ -9,6 +9,7 @@ struct DownloadCenter: View {
     let settings: Settings
     let onCancel: (UInt32) -> Void
     let onRemove: (UInt32) -> Void
+    let onDismiss: () -> Void
 
     @State private var searchText = ""
     @State private var searchVisible = false
@@ -32,7 +33,7 @@ struct DownloadCenter: View {
                     .frame(maxWidth: .infinity, minHeight: 88)
             } else {
                 ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 8) {
+                    LazyVStack(alignment: .leading, spacing: Theme.popoverRowSpacing) {
                         ForEach(visibleDownloads) { download in
                             DownloadRow(
                                 download: download,
@@ -42,25 +43,31 @@ struct DownloadCenter: View {
                             )
                         }
                     }
-                    .padding(.horizontal, 8)
-                    .padding(.bottom, 8)
+                    .padding(.horizontal, Theme.popoverContentInset)
+                    .padding(.bottom, Theme.popoverContentInset)
                 }
-                .frame(maxHeight: 330)
+                .frame(maxHeight: Theme.downloadCenterMaxHeight)
             }
         }
-        .padding(6)
-        .frame(width: 360)
+        .padding(Theme.popoverPadding)
+        .frame(width: Theme.downloadCenterWidth)
         .liquidGlass(
-            in: RoundedRectangle(cornerRadius: 22, style: .continuous),
+            in: RoundedRectangle(cornerRadius: Theme.popoverCorner, style: .continuous),
             tint: .primary.opacity(0.025),
             interactive: true
         )
+        // Keep this custom surface visually integrated with the panel while
+        // giving it the same outside-click dismissal semantics as a popover.
+        .background {
+            DownloadCenterOutsideClickMonitor(onDismiss: onDismiss)
+        }
+        .onExitCommand(perform: onDismiss)
     }
 
     private var header: some View {
         HStack(alignment: .center, spacing: 8) {
             if searchVisible {
-                HStack(spacing: 6) {
+                HStack(spacing: Theme.popoverPadding) {
                     Image(systemName: "magnifyingglass")
                         .font(.system(size: 12, weight: .medium))
                         .foregroundStyle(.secondary)
@@ -68,9 +75,12 @@ struct DownloadCenter: View {
                         .textFieldStyle(.plain)
                         .font(.system(size: 13, weight: .medium))
                 }
-                .padding(.horizontal, 8)
+                .padding(.horizontal, Theme.popoverContentInset)
                 .frame(maxWidth: .infinity, minHeight: 28)
-                .background(.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .background(
+                    .primary.opacity(0.06),
+                    in: RoundedRectangle(cornerRadius: Theme.controlCorner, style: .continuous)
+                )
                 .transition(.opacity)
             } else {
                 Text(loc.downloads)
@@ -112,9 +122,9 @@ struct DownloadCenter: View {
                 .accessibilityLabel(loc.moreActions)
             }
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 5)
-        .frame(maxWidth: .infinity, minHeight: 36)
+        .padding(.horizontal, Theme.popoverContentInset)
+        .padding(.vertical, Theme.popoverPadding)
+        .frame(maxWidth: .infinity, minHeight: Theme.popoverHeaderHeight)
     }
 
     private func toggleSearch() {
@@ -134,6 +144,86 @@ struct DownloadCenter: View {
 
     private func clearFinished() {
         downloads.clearFinished()
+    }
+}
+
+/// Observes mouse-down events without becoming a hit-test surface. Returning
+/// the original event preserves the normal click for the button or web page
+/// underneath; the dismissal is deferred so an anchor-button click cannot
+/// immediately reopen the center after it closes.
+private struct DownloadCenterOutsideClickMonitor: NSViewRepresentable {
+    let onDismiss: () -> Void
+
+    func makeNSView(context: Context) -> DownloadCenterOutsideClickNSView {
+        let view = DownloadCenterOutsideClickNSView()
+        view.onDismiss = onDismiss
+        return view
+    }
+
+    func updateNSView(_ view: DownloadCenterOutsideClickNSView, context: Context) {
+        view.onDismiss = onDismiss
+    }
+}
+
+@MainActor
+private final class DownloadCenterOutsideClickNSView: NSView {
+    var onDismiss: (() -> Void)?
+
+    private var localMonitor: Any?
+    private var globalMonitor: Any?
+    private var dismissalScheduled = false
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        removeMonitors()
+        guard window != nil else { return }
+
+        let mouseDownEvents: NSEvent.EventTypeMask = [
+            .leftMouseDown, .rightMouseDown, .otherMouseDown,
+        ]
+        localMonitor = NSEvent.addLocalMonitorForEvents(matching: mouseDownEvents) {
+            [weak self] event in
+            guard let self, let window = self.window, event.window === window else {
+                return event
+            }
+            let point = self.convert(event.locationInWindow, from: nil)
+            if !self.bounds.contains(point) {
+                self.scheduleDismissal()
+            }
+            return event
+        }
+        globalMonitor = NSEvent.addGlobalMonitorForEvents(matching: mouseDownEvents) {
+            [weak self] _ in
+            self?.dismissIfMouseIsOutside()
+        }
+    }
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        nil
+    }
+
+    private func removeMonitors() {
+        if let localMonitor { NSEvent.removeMonitor(localMonitor) }
+        if let globalMonitor { NSEvent.removeMonitor(globalMonitor) }
+        localMonitor = nil
+        globalMonitor = nil
+    }
+
+    private func dismissIfMouseIsOutside() {
+        guard let window else { return }
+        let popoverFrame = window.convertToScreen(convert(bounds, to: nil))
+        guard !popoverFrame.contains(NSEvent.mouseLocation) else { return }
+        scheduleDismissal()
+    }
+
+    private func scheduleDismissal() {
+        guard !dismissalScheduled else { return }
+        dismissalScheduled = true
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.dismissalScheduled = false
+            self.onDismiss?()
+        }
     }
 }
 
@@ -204,21 +294,27 @@ private struct DownloadRow: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
-        .background(.primary.opacity(0.07), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .background(
+            .primary.opacity(0.07),
+            in: RoundedRectangle(cornerRadius: Theme.popoverRowCorner, style: .continuous)
+        )
     }
 
     @ViewBuilder
     private var fileIcon: some View {
-        if let location = download.location, download.state == .completed {
-            Image(nsImage: NSWorkspace.shared.icon(forFile: location.path))
-                .resizable()
-                .interpolation(.high)
-                .aspectRatio(contentMode: .fit)
-        } else {
-            Image(systemName: iconName)
-                .font(.system(size: 18, weight: .medium))
-                .foregroundStyle(download.state == .canceled ? .secondary : .primary)
+        Group {
+            if let location = download.location, download.state == .completed {
+                Image(nsImage: NSWorkspace.shared.icon(forFile: location.path))
+                    .resizable()
+                    .interpolation(.high)
+                    .aspectRatio(contentMode: .fit)
+            } else {
+                Image(systemName: iconName)
+                    .font(.system(size: 18, weight: .medium))
+                    .foregroundStyle(download.state == .canceled ? .secondary : .primary)
+            }
         }
+        .frame(width: 32, height: 32)
     }
 
     @ViewBuilder

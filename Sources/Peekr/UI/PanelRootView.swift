@@ -23,6 +23,7 @@ struct PanelRootView: View {
 
     @State private var editTarget: EditTarget?
     @State private var bookmarksOpen = false
+    @State private var downloadCenterOpen = false
     @State private var isRailCollapsed = false
     @State private var sidebarStage: SidebarStage = .normal
     @State private var sidebarDragStart: CGFloat?
@@ -50,7 +51,10 @@ struct PanelRootView: View {
         )
     }
 
-    private var isModalOpen: Bool { editTarget != nil || bookmarksOpen }
+    /// Sheets and the download center count as interactive overlays: while any
+    /// is open the panel must not auto-hide on focus loss, or the popover's
+    /// contents (e.g. the download list) vanish mid-interaction.
+    private var isModalOpen: Bool { editTarget != nil || bookmarksOpen || downloadCenterOpen }
     private var anchor: PanelAnchor { settings.anchor }
 
     /// Shared-element transition stages between the browser layer and the
@@ -173,6 +177,10 @@ struct PanelRootView: View {
         }
         .onChange(of: editTarget != nil) { _, _ in onModalChange(isModalOpen) }
         .onChange(of: bookmarksOpen) { _, _ in onModalChange(isModalOpen) }
+        .onChange(of: downloadCenterOpen) { _, _ in onModalChange(isModalOpen) }
+        .onExitCommand {
+            if downloadCenterOpen { downloadCenterOpen = false }
+        }
         // Moving the sidebar between edges must not tween the embedded browser
         // across the window. The real NSPanel already performs the dock snap;
         // swapping this layout atomically avoids a second expensive web redraw.
@@ -348,7 +356,8 @@ struct PanelRootView: View {
                 sidebarOnLeft: anchor.railOnLeft,
                 onMoveBegan: onMoveBegan, onMoveChanged: onMoveChanged, onMoveEnded: onMoveEnded,
                 onBookmarks: { bookmarksOpen = true },
-                onToggleSidebar: { isRailCollapsed = false }
+                onToggleSidebar: { isRailCollapsed = false },
+                onDownloadsOpenChange: { downloadCenterOpen = $0 }
             )
             .padding(.horizontal, 12)
             .padding(.top, 8)
