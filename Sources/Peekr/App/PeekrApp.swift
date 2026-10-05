@@ -24,9 +24,30 @@ struct PeekrApp: CefSwiftApp {
             let home = FileManager.default.homeDirectoryForCurrentUser
             let profiles = ChromeCookieImporter.discoverProfiles()
             let books = BookmarkImporter.availableSources()
+            let root = ChromeCookieImporter.chromeRoot
+            let fm = FileManager.default
+            let rootExists = fm.fileExists(atPath: root.path)
+            var listError = "-"
+            do {
+                _ = try fm.contentsOfDirectory(atPath: root.path)
+            } catch {
+                let ns = error as NSError
+                listError = "\(ns.domain)/\(ns.code): \(ns.localizedDescription)"
+            }
+            var readError = "-"
+            do {
+                _ = try Data(contentsOf: root.appendingPathComponent("Local State"))
+            } catch {
+                let ns = error as NSError
+                readError = "\(ns.domain)/\(ns.code): \(ns.localizedDescription)"
+            }
             let report = """
             home=\(home.path)
             sandbox=\(ProcessInfo.processInfo.environment["APP_SANDBOX_CONTAINER_ID"] ?? "-")
+            chromeRoot=\(root.path)
+            chromeRootExists=\(rootExists)
+            listError=\(listError)
+            readError=\(readError)
             profiles=\(profiles.map { "\($0.id)|\($0.name)|\($0.directoryURL.path)" })
             bookmarks=\(books.map { "\($0.name)|\($0.fileURL.path)" })
             """
