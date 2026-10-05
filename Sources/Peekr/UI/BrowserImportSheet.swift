@@ -119,6 +119,7 @@ struct BrowserImportSheet: View {
     @State private var outcomes: [BrowserImportOutcome] = []
     @State private var showCookieConfirmation = false
     @State private var finished = false
+    @State private var accessDenied = false
 
     private var loc: Localized { settings.strings }
     private var selectedProfile: ChromeProfile? {
@@ -134,6 +135,7 @@ struct BrowserImportSheet: View {
                 noBrowsersState
             } else {
                 picker
+                if accessDenied { accessDeniedBanner }
                 if source == .chrome { chromeProfileSection }
                 typeList
             }
@@ -206,6 +208,22 @@ struct BrowserImportSheet: View {
             }
             .pickerStyle(.menu)
         }
+    }
+
+    private var accessDeniedBanner: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label(loc.importAccessDeniedTitle, systemImage: "lock.trianglebadge.exclamationmark")
+                .font(.callout.weight(.semibold))
+            Text(loc.importAccessDeniedMessage)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Button(loc.importOpenPrivacySettings) { openPrivacySettings() }
+                .controlSize(.small)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
     }
 
     private var typeList: some View {
@@ -318,9 +336,26 @@ struct BrowserImportSheet: View {
         if !profiles.contains(where: { $0.id == selectedProfileID }) {
             selectedProfileID = profiles.first?.id ?? ""
         }
+        accessDenied = Self.dataAccessDenied()
         outcomes = []
         finished = false
         applyAvailableDefaults()
+    }
+
+    /// macOS gates other apps' data behind the App Data / Full Disk Access TCC
+    /// policy; surface that as the real reason when reads are blocked.
+    private static func dataAccessDenied() -> Bool {
+        if ChromeCookieImporter.chromeDataAccessDenied() { return true }
+        return BookmarkImporter.availableSources().contains {
+            BookmarkImporter.accessDenied(for: $0)
+        }
+    }
+
+    private func openPrivacySettings() {
+        guard let url = URL(
+            string: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles"
+        ) else { return }
+        NSWorkspace.shared.open(url)
     }
 
     // MARK: - Import
@@ -383,6 +418,12 @@ struct BrowserImportSheet: View {
         }
         let nodes = BookmarkImporter.importBookmarks(from: source)
         guard !nodes.isEmpty else {
+            if BookmarkImporter.accessDenied(for: source) {
+                return BrowserImportOutcome(
+                    message: loc.importBookmarksDenied(browser.displayName),
+                    success: false
+                )
+            }
             return BrowserImportOutcome(
                 message: loc.importBookmarksEmpty(browser.displayName),
                 success: false

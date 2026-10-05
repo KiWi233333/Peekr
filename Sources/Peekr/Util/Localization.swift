@@ -205,6 +205,21 @@ struct Localized {
         t("No Chrome session snapshot was found.",
           "未发现 Chrome 会话快照。")
     }
+    var importAccessDeniedTitle: String {
+        t("Access blocked by macOS privacy protection",
+          "被系统隐私保护阻止读取")
+    }
+    var importAccessDeniedMessage: String {
+        t("Peekr needs permission to read other apps' data (Chrome, Edge, Safari profiles). Open System Settings → Privacy & Security → Full Disk Access, enable Peekr, then reopen this window. Running Peekr from a terminal may also inherit your existing grant.",
+          "Peekr 需要权限才能读取其他 App 的数据（Chrome、Edge、Safari 的 Profile）。请打开 系统设置 → 隐私与安全性 → 完全磁盘访问权限，勾选 Peekr，然后重新打开此窗口。（从终端启动 Peekr 也可能继承你已有的授权。）")
+    }
+    var importOpenPrivacySettings: String {
+        t("Open Privacy Settings", "打开隐私设置")
+    }
+    func importBookmarksDenied(_ browser: String) -> String {
+        t("Couldn't read \(browser) bookmarks: blocked by macOS privacy protection.",
+          "无法读取 \(browser) 书签：被系统隐私保护阻止。")
+    }
     var open: String { t("Open", "打开") }
     var downloads: String { t("Downloads", "下载") }
     var noDownloads: String { t("No downloads yet", "暂无下载") }

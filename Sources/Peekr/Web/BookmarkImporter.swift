@@ -35,6 +35,15 @@ enum BookmarkImporter {
         source.isSafari ? safariBookmarks(source.fileURL) : chromiumBookmarks(source.fileURL)
     }
 
+    /// Whether the bookmark file exists but macOS privacy protection blocks
+    /// reading it (another app's data). Distinguishes "no bookmarks" from
+    /// "not allowed to read bookmarks".
+    static func accessDenied(for source: Source) -> Bool {
+        let fileManager = FileManager.default
+        guard fileManager.fileExists(atPath: source.fileURL.path) else { return false }
+        return (try? Data(contentsOf: source.fileURL)) == nil
+    }
+
     // MARK: - Chromium ( { roots: { bookmark_bar: {…}, other: {…} } } )
 
     private static func chromiumBookmarks(_ url: URL) -> [BookmarkNode] {

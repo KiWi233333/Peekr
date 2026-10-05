@@ -101,6 +101,24 @@ enum ChromeCookieImporter {
     static let chromeRoot = FileManager.default.homeDirectoryForCurrentUser
         .appendingPathComponent("Library/Application Support/Google/Chrome", isDirectory: true)
 
+    /// Whether macOS privacy protection denies reading Chrome's profile data.
+    ///
+    /// Recent macOS gates other apps' data (Chrome lives under Application
+    /// Support) behind the App Data / Full Disk Access TCC policy: `stat`
+    /// succeeds but enumerating or reading the directory throws
+    /// `NSFileReadNoPermissionError`. Detect that so the UI can explain the
+    /// real reason instead of reporting "no Chrome profile".
+    static func chromeDataAccessDenied() -> Bool {
+        let fileManager = FileManager.default
+        guard fileManager.fileExists(atPath: chromeRoot.path) else { return false }
+        do {
+            _ = try fileManager.contentsOfDirectory(atPath: chromeRoot.path)
+            return false
+        } catch {
+            return true
+        }
+    }
+
     static func discoverProfiles(in root: URL = chromeRoot) -> [ChromeProfile] {
         let fileManager = FileManager.default
         let localStateURL = root.appendingPathComponent("Local State")
