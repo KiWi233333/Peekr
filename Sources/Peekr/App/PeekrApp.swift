@@ -20,44 +20,6 @@ struct PeekrApp: CefSwiftApp {
     /// real user settings on disk.
     @MainActor
     static func makeCefConfiguration(_ data: SettingsData) -> CefConfiguration {
-        if ProcessInfo.processInfo.environment["PEEKR_IMPORT_PROBE"] == "1" {
-            let home = FileManager.default.homeDirectoryForCurrentUser
-            let profiles = ChromeCookieImporter.discoverProfiles()
-            let books = BookmarkImporter.availableSources()
-            let root = ChromeCookieImporter.chromeRoot
-            let fm = FileManager.default
-            let rootExists = fm.fileExists(atPath: root.path)
-            var listError = "-"
-            do {
-                _ = try fm.contentsOfDirectory(atPath: root.path)
-            } catch {
-                let ns = error as NSError
-                listError = "\(ns.domain)/\(ns.code): \(ns.localizedDescription)"
-            }
-            var readError = "-"
-            do {
-                _ = try Data(contentsOf: root.appendingPathComponent("Local State"))
-            } catch {
-                let ns = error as NSError
-                readError = "\(ns.domain)/\(ns.code): \(ns.localizedDescription)"
-            }
-            let report = """
-            home=\(home.path)
-            sandbox=\(ProcessInfo.processInfo.environment["APP_SANDBOX_CONTAINER_ID"] ?? "-")
-            chromeRoot=\(root.path)
-            chromeRootExists=\(rootExists)
-            listError=\(listError)
-            readError=\(readError)
-            profiles=\(profiles.map { "\($0.id)|\($0.name)|\($0.directoryURL.path)" })
-            bookmarks=\(books.map { "\($0.name)|\($0.fileURL.path)" })
-            """
-            try? report.write(
-                to: URL(fileURLWithPath: "/private/tmp/peekr-import-probe.txt"),
-                atomically: true,
-                encoding: .utf8
-            )
-            exit(0)
-        }
         let unresolvedRoot =
             AppPaths.supportDirectory.appendingPathComponent("Chromium", isDirectory: true)
         // Canonicalize /tmp → /private/tmp (and other symlink/firmlink parents)
