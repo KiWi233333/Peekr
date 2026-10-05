@@ -86,6 +86,7 @@ struct Localized {
     var importTitle: String { t("Import Browser Data", "导入浏览器数据") }
     var importTabsMode: String { t("Open Tabs", "标签页") }
     var importCookiesMode: String { t("Chrome Cookies", "Chrome Cookie") }
+    var importSessionMode: String { t("Chrome Session", "Chrome 会话") }
     var importEmpty: String {
         t("No open tabs found. Make sure Safari, Chrome, or Edge is running, and allow automation access when prompted.",
           "未发现打开的标签。请确认 Safari、Chrome 或 Edge 正在运行，并在提示时允许自动化访问。")
@@ -117,6 +118,25 @@ struct Localized {
     }
     var importChromeCookies: String { t("Import Cookies", "导入 Cookie") }
     var importingChromeCookies: String { t("Importing Chrome cookies…", "正在导入 Chrome Cookie…") }
+    var readChromeSession: String { t("Read Chrome Session", "读取 Chrome 会话") }
+    var rereadChromeSession: String { t("Read Again", "重新读取") }
+    var chromeSessionHint: String {
+        t("Reads Chrome's latest session snapshot, including open tabs, tab groups, pinning and the active tab. Chrome can stay open.",
+          "读取 Chrome 最近的会话快照，包括打开的标签、标签组、固定状态和活动标签。Chrome 可以保持打开。")
+    }
+    func chromeSessionSummary(windows: Int, tabs: Int, groups: Int) -> String {
+        if isChinese {
+            return "发现 \(windows) 个窗口、\(tabs) 个标签和 \(groups) 个标签组。"
+        }
+        return "Found \(windows) windows, \(tabs) tabs and \(groups) tab groups."
+    }
+    func importChromeSessionResult(windows: Int, tabs: Int, groups: Int) -> String {
+        if isChinese {
+            return "已导入 \(windows) 个窗口中的 \(tabs) 个标签和 \(groups) 个标签组。"
+        }
+        return "Imported \(tabs) tabs and \(groups) tab groups from \(windows) windows."
+    }
+    var importingChromeSession: String { t("Importing Chrome session…", "正在导入 Chrome 会话…") }
     var cookieConfirmTitle: String { t("Import Chrome cookies?", "导入 Chrome Cookie？") }
     func cookieConfirmMessage(_ profile: String) -> String {
         t("Cookies from “\(profile)” will be copied into Peekr's persistent Chromium profile. macOS may ask for keychain access.",
@@ -130,6 +150,60 @@ struct Localized {
     }
     func cookieImportFailed(_ message: String) -> String {
         t("Import failed: \(message)", "导入失败：\(message)")
+    }
+
+    // Unified browser-data import
+    var importBrowserLabel: String { t("Browser", "浏览器") }
+    var importButton: String { t("Import", "导入") }
+    var importRunning: String { t("Importing…", "正在导入…") }
+    var importUnsupported: String { t("Not supported", "暂不支持") }
+    var importNoBrowsers: String {
+        t("No importable browser was found on this Mac.",
+          "未发现可导入的浏览器。")
+    }
+    var importOptionBookmarks: String { t("Bookmarks", "书签") }
+    var importOptionOpenTabs: String { t("Open Tabs", "打开的标签页") }
+    var importOptionCookies: String { t("Session Cookies", "Session Cookie") }
+    var importOptionSession: String { t("Session (windows & tab groups)", "会话（窗口与标签组）") }
+    var importOptionBookmarksHint: String {
+        t("Read the browser's bookmark file, keeping folder structure.",
+          "读取浏览器书签文件，保留文件夹结构。")
+    }
+    var importOptionOpenTabsHint: String {
+        t("Read the tabs open right now through Automation.",
+          "通过自动化读取当前打开的标签页。")
+    }
+    var importOptionCookiesHint: String {
+        t("Decrypt Chrome cookies and write them to Peekr's local Chromium profile.",
+          "解密 Chrome Cookie 并写入 Peekr 本地 Chromium Profile。")
+    }
+    var importOptionSessionHint: String {
+        t("Read Chrome's latest session: tabs, tab groups, pinning and the active tab.",
+          "读取 Chrome 最近的会话，含标签、标签组、固定状态和活动标签。")
+    }
+    func importBookmarksDone(count: Int, browser: String) -> String {
+        t("Imported \(count) bookmarks from \(browser).",
+          "已从 \(browser) 导入 \(count) 个书签。")
+    }
+    func importBookmarksUnavailable(_ browser: String) -> String {
+        t("No \(browser) bookmark file was found.",
+          "未发现 \(browser) 的书签文件。")
+    }
+    func importBookmarksEmpty(_ browser: String) -> String {
+        t("\(browser) has no bookmarks to import.",
+          "\(browser) 没有可导入的书签。")
+    }
+    func importOpenTabsDone(count: Int, browser: String) -> String {
+        t("Imported \(count) open tabs from \(browser).",
+          "已从 \(browser) 导入 \(count) 个打开的标签页。")
+    }
+    func importOpenTabsEmpty(_ browser: String) -> String {
+        t("No open \(browser) tabs were found. Make sure \(browser) is running, and allow Automation access when prompted.",
+          "未发现 \(browser) 打开的标签页。请确认 \(browser) 正在运行，并在提示时允许自动化访问。")
+    }
+    var importSessionEmpty: String {
+        t("No Chrome session snapshot was found.",
+          "未发现 Chrome 会话快照。")
     }
     var open: String { t("Open", "打开") }
     var downloads: String { t("Downloads", "下载") }

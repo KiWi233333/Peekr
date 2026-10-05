@@ -20,6 +20,23 @@ struct PeekrApp: CefSwiftApp {
     /// real user settings on disk.
     @MainActor
     static func makeCefConfiguration(_ data: SettingsData) -> CefConfiguration {
+        if ProcessInfo.processInfo.environment["PEEKR_IMPORT_PROBE"] == "1" {
+            let home = FileManager.default.homeDirectoryForCurrentUser
+            let profiles = ChromeCookieImporter.discoverProfiles()
+            let books = BookmarkImporter.availableSources()
+            let report = """
+            home=\(home.path)
+            sandbox=\(ProcessInfo.processInfo.environment["APP_SANDBOX_CONTAINER_ID"] ?? "-")
+            profiles=\(profiles.map { "\($0.id)|\($0.name)|\($0.directoryURL.path)" })
+            bookmarks=\(books.map { "\($0.name)|\($0.fileURL.path)" })
+            """
+            try? report.write(
+                to: URL(fileURLWithPath: "/private/tmp/peekr-import-probe.txt"),
+                atomically: true,
+                encoding: .utf8
+            )
+            exit(0)
+        }
         let unresolvedRoot =
             AppPaths.supportDirectory.appendingPathComponent("Chromium", isDirectory: true)
         // Canonicalize /tmp → /private/tmp (and other symlink/firmlink parents)

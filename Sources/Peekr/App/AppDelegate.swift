@@ -87,17 +87,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         browserImports = BrowserImportWindowController(
             model: model,
+            bookmarks: bookmarks,
             settings: settings,
             icons: icons
         )
 
         prefs = PreferencesWindowController(
             model: model,
+            bookmarks: bookmarks,
             settings: settings,
             icons: icons,
             onApply: { [weak self] effect in self?.applyPreference(effect) },
-            onImportCookies: { [weak self] in self?.browserImports.showCookies() },
-            onImportBookmarks: { [weak self] in self?.importChromeBookmarks() },
+            onImportBrowserData: { [weak self] in self?.browserImports.show() },
             onInstallAgentCLI: { [weak self] in self?.installAgentCLI() }
         )
 
@@ -107,8 +108,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             isPanelVisible: { [weak self] in self?.panel.isVisible ?? false },
             onToggle: { [weak self] in self?.panel.toggle() },
             onTogglePin: { [weak self] in self?.model.isPinned.toggle() },
-            onImportCookies: { [weak self] in self?.browserImports.showCookies() },
-            onImportBookmarks: { [weak self] in self?.importChromeBookmarks() },
+            onImportBrowserData: { [weak self] in self?.browserImports.show() },
             onPreferences: { [weak self] in self?.prefs.show() },
             onQuit: { [weak self] in self?.requestQuit() }
         )
@@ -266,76 +266,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case .bookmarkSync:
             applyBookmarkSync()
         }
-    }
-
-    private func importChromeBookmarks() {
-        let loc = settings.strings
-        let profiles: [(profile: ChromeProfile, fileURL: URL)] =
-            ChromeCookieImporter.discoverProfiles().compactMap { profile in
-                let fileURL = profile.directoryURL.appendingPathComponent("Bookmarks")
-                guard FileManager.default.fileExists(atPath: fileURL.path) else {
-                    return nil
-                }
-                return (profile: profile, fileURL: fileURL)
-            }
-        guard !profiles.isEmpty else {
-            showImportAlert(
-                title: loc.chromeBookmarksUnavailableTitle,
-                message: loc.chromeBookmarksUnavailableMessage
-            )
-            return
-        }
-
-        let profilePicker = NSPopUpButton(
-            frame: NSRect(x: 0, y: 0, width: 300, height: 26),
-            pullsDown: false
-        )
-        for candidate in profiles {
-            profilePicker.addItem(
-                withTitle: "\(candidate.profile.name) — \(candidate.profile.id)"
-            )
-        }
-
-        let confirmation = NSAlert()
-        confirmation.alertStyle = .informational
-        confirmation.messageText = loc.chromeBookmarksConfirmTitle
-        confirmation.informativeText = loc.chromeBookmarksConfirmMessage(
-            profiles.count == 1 ? profiles[0].profile.name : loc.chromeProfile
-        )
-        if profiles.count > 1 {
-            confirmation.accessoryView = profilePicker
-        }
-        confirmation.addButton(withTitle: loc.importChromeBookmarks)
-        confirmation.addButton(withTitle: loc.cancel)
-        NSApp.activate(ignoringOtherApps: true)
-        guard confirmation.runModal() == .alertFirstButtonReturn else { return }
-
-        let selectedIndex = profiles.count > 1
-            ? max(0, profilePicker.indexOfSelectedItem)
-            : 0
-        let selected = profiles[selectedIndex]
-        let source = BookmarkImporter.Source(
-            name: "Chrome",
-            fileURL: selected.fileURL,
-            isSafari: false
-        )
-        let imported = BookmarkImporter.importBookmarks(from: source)
-        guard !imported.isEmpty else {
-            showImportAlert(
-                title: loc.chromeBookmarksEmptyTitle,
-                message: loc.chromeBookmarksEmptyMessage
-            )
-            return
-        }
-
-        let folderName = selected.profile.id == "Default"
-            ? "Chrome"
-            : "Chrome — \(selected.profile.name)"
-        bookmarks.importOrRefreshNodes(imported, as: folderName)
-        showImportAlert(
-            title: loc.chromeBookmarksImportedTitle,
-            message: loc.chromeBookmarksImportedMessage
-        )
     }
 
     /// Register the bundled peekr harness on PATH (`~/.local/bin/peekr`) so

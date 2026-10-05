@@ -471,6 +471,96 @@ final class AppModel {
         return app
     }
 
+    /// Imports a Chrome session into one Space in Chrome's window/tab order.
+    /// Peekr Spaces do not have a second window hierarchy, so multiple Chrome
+    /// windows are flattened while their tab order, groups, pinning and active
+    /// tab are retained.
+    @discardableResult
+    func importChromeSession(
+        _ session: ChromeSessionSnapshot,
+        intoWorkspace workspaceID: Workspace.ID? = nil
+    ) -> ChromeSessionImportResult {
+        let targetID = workspaceID ?? activeWorkspaceID
+        guard let workspaceIndex = workspaces.firstIndex(where: { $0.id == targetID }) else {
+            return ChromeSessionImportResult(
+                importedTabIDs: [],
+                importedWindowCount: 0,
+                importedGroupCount: 0,
+                selectedTabID: nil
+            )
+        }
+
+        var groupIndexes: [ChromeSessionGroupID: Int] = [:]
+        var importedTabIDs: [WebApp.ID] = []
+        var selectedTabID: WebApp.ID?
+
+        for window in session.windows {
+            for (tabIndex, importedTab) in window.tabs.enumerated() {
+                let title = importedTab.title.isEmpty
+                    ? (URL(string: importedTab.urlString)?.displayHost ?? importedTab.urlString)
+                    : importedTab.title
+                let app = WebApp(
+                    title: title,
+                    urlString: importedTab.urlString,
+                    isPinned: importedTab.isPinned
+                )
+                workspaces[workspaceIndex].tabs.append(app)
+                importedTabIDs.append(app.id)
+
+                if let chromeGroupID = importedTab.groupID {
+                    let groupIndex: Int
+                    if let existing = groupIndexes[chromeGroupID] {
+                        groupIndex = existing
+                    } else {
+                        let group = TabGroup(
+                            name: "Tab Group",
+                            color: .blue,
+                            isCollapsed: false,
+                            tabIDs: []
+                        )
+                        workspaces[workspaceIndex].groups.append(group)
+                        groupIndex = workspaces[workspaceIndex].groups.count - 1
+                        groupIndexes[chromeGroupID] = groupIndex
+                        workspaces[workspaceIndex].sidebarItems.append(.group(group.id))
+                    }
+                    workspaces[workspaceIndex].groups[groupIndex].tabIDs.append(app.id)
+                } else {
+                    workspaces[workspaceIndex].sidebarItems.append(.tab(app.id))
+                }
+
+                if window.isActive,
+                   tabIndex == window.selectedTabIndex {
+                    selectedTabID = app.id
+                }
+            }
+        }
+
+        // Replace the placeholder group visuals with the metadata from Chrome.
+        // Metadata is associated with a group through the first tab carrying
+        // that group's opaque session ID.
+        for (chromeGroupID, groupIndex) in groupIndexes {
+            if let group = session.groups.first(where: { $0.id == chromeGroupID }) {
+                workspaces[workspaceIndex].groups[groupIndex].name = group.name.isEmpty ? "Tab Group" : group.name
+                workspaces[workspaceIndex].groups[groupIndex].color = group.color
+                workspaces[workspaceIndex].groups[groupIndex].isCollapsed = group.isCollapsed
+            }
+        }
+
+        if let selectedTabID {
+            workspaces[workspaceIndex].selectedTabID = selectedTabID
+            if workspaceIndex == activeIndex { recordSelection(selectedTabID) }
+        }
+        workspaces[workspaceIndex].normalizeSidebar()
+        persist()
+
+        return ChromeSessionImportResult(
+            importedTabIDs: importedTabIDs,
+            importedWindowCount: session.windows.count,
+            importedGroupCount: groupIndexes.count,
+            selectedTabID: selectedTabID
+        )
+    }
+
     // MARK: - Groups
 
     @discardableResult

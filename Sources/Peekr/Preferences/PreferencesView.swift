@@ -10,11 +10,11 @@ enum PreferenceEffect {
 
 struct PreferencesView: View {
     let model: AppModel
+    let bookmarks: BookmarksModel
     @Bindable var settings: Settings
     let icons: IconStore
     var onApply: (PreferenceEffect) -> Void
-    var onImportCookies: () -> Void
-    var onImportBookmarks: () -> Void
+    var onImportBrowserData: () -> Void
     var onInstallAgentCLI: () -> Void
 
     @State private var persistTask: Task<Void, Never>?
@@ -27,12 +27,11 @@ struct PreferencesView: View {
                 .tabItem { Label(loc.general, systemImage: "gearshape") }
             BrowserTab(
                 settings: settings,
-                onImportCookies: onImportCookies,
-                onImportBookmarks: onImportBookmarks,
+                onImportBrowserData: onImportBrowserData,
                 onInstallAgentCLI: onInstallAgentCLI
             )
             .tabItem { Label(loc.browser, systemImage: "globe") }
-            AppsTab(model: model, settings: settings, icons: icons)
+            AppsTab(model: model, bookmarks: bookmarks, settings: settings, icons: icons)
                 .tabItem { Label(loc.apps, systemImage: "square.grid.2x2") }
             AboutTab(settings: settings)
                 .tabItem { Label(loc.about, systemImage: "info.circle") }
@@ -251,8 +250,7 @@ private struct HotKeyRecorder: View {
 
 private struct BrowserTab: View {
     @Bindable var settings: Settings
-    var onImportCookies: () -> Void
-    var onImportBookmarks: () -> Void
+    var onImportBrowserData: () -> Void
     var onInstallAgentCLI: () -> Void
 
     private var loc: Localized { settings.strings }
@@ -280,14 +278,9 @@ private struct BrowserTab: View {
                     .fixedSize(horizontal: false, vertical: true)
 
                 HStack {
-                    Label(loc.importChromeCookies, systemImage: "person.badge.key")
+                    Label(loc.importOpenTabs, systemImage: "square.and.arrow.down.on.square")
                     Spacer()
-                    Button(loc.importAction, action: onImportCookies)
-                }
-                HStack {
-                    Label(loc.importChromeBookmarks, systemImage: "book.closed")
-                    Spacer()
-                    Button(loc.importAction, action: onImportBookmarks)
+                    Button(loc.importAction, action: onImportBrowserData)
                 }
             }
 
@@ -359,6 +352,7 @@ private struct BrowserTab: View {
 
 private struct AppsTab: View {
     let model: AppModel
+    let bookmarks: BookmarksModel
     let settings: Settings
     let icons: IconStore
     @State private var editTarget: EditTarget?
@@ -409,7 +403,12 @@ private struct AppsTab: View {
             EditAppSheet(target: target, model: model, settings: settings, icons: icons) { editTarget = nil }
         }
         .sheet(isPresented: $importing) {
-            ImportTabsSheet(model: model, settings: settings, icons: icons) { importing = false }
+            BrowserImportSheet(
+                model: model,
+                bookmarks: bookmarks,
+                settings: settings,
+                icons: icons
+            ) { importing = false }
         }
     }
 }

@@ -11,8 +11,7 @@ final class StatusBarController: NSObject {
     private let isPanelVisible: () -> Bool
     private let onToggle: () -> Void
     private let onTogglePin: () -> Void
-    private let onImportCookies: () -> Void
-    private let onImportBookmarks: () -> Void
+    private let onImportBrowserData: () -> Void
     private let onPreferences: () -> Void
     private let onQuit: () -> Void
 
@@ -20,9 +19,7 @@ final class StatusBarController: NSObject {
     private var pinItem: NSMenuItem!
     private var autoHideItem: NSMenuItem!
     private var autoHideItems: [AutoHidePolicy: NSMenuItem] = [:]
-    private var importChromeItem: NSMenuItem!
-    private var importCookiesItem: NSMenuItem!
-    private var importBookmarksItem: NSMenuItem!
+    private var importItem: NSMenuItem!
     private var prefsItem: NSMenuItem!
     private var quitItem: NSMenuItem!
 
@@ -32,8 +29,7 @@ final class StatusBarController: NSObject {
         isPanelVisible: @escaping () -> Bool,
         onToggle: @escaping () -> Void,
         onTogglePin: @escaping () -> Void,
-        onImportCookies: @escaping () -> Void,
-        onImportBookmarks: @escaping () -> Void,
+        onImportBrowserData: @escaping () -> Void,
         onPreferences: @escaping () -> Void,
         onQuit: @escaping () -> Void
     ) {
@@ -42,8 +38,7 @@ final class StatusBarController: NSObject {
         self.isPanelVisible = isPanelVisible
         self.onToggle = onToggle
         self.onTogglePin = onTogglePin
-        self.onImportCookies = onImportCookies
-        self.onImportBookmarks = onImportBookmarks
+        self.onImportBrowserData = onImportBrowserData
         self.onPreferences = onPreferences
         self.onQuit = onQuit
         item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -74,20 +69,7 @@ final class StatusBarController: NSObject {
 
         menu.addItem(.separator())
 
-        importChromeItem = NSMenuItem()
-        let importChromeMenu = NSMenu()
-        importCookiesItem = addItem(
-            to: importChromeMenu,
-            action: #selector(importCookiesAction),
-            key: ""
-        )
-        importBookmarksItem = addItem(
-            to: importChromeMenu,
-            action: #selector(importBookmarksAction),
-            key: ""
-        )
-        importChromeItem.submenu = importChromeMenu
-        menu.addItem(importChromeItem)
+        importItem = addItem(to: menu, action: #selector(importAction), key: "")
 
         menu.addItem(.separator())
         prefsItem = addItem(to: menu, action: #selector(prefsAction), key: ",")
@@ -132,8 +114,7 @@ final class StatusBarController: NSObject {
         settings.autoHidePolicy = policy
         settings.persist()
     }
-    @objc private func importCookiesAction() { onImportCookies() }
-    @objc private func importBookmarksAction() { onImportBookmarks() }
+    @objc private func importAction() { onImportBrowserData() }
     @objc private func prefsAction() { onPreferences() }
     @objc private func quitAction() { onQuit() }
 }
@@ -151,9 +132,7 @@ extension StatusBarController: NSMenuDelegate {
             autoHideItems[policy]?.state =
                 settings.autoHidePolicy == policy ? .on : .off
         }
-        importChromeItem.title = loc.importFromChrome
-        importCookiesItem.title = loc.importChromeCookies
-        importBookmarksItem.title = loc.importChromeBookmarks
+        importItem.title = loc.importOpenTabs
         prefsItem.title = loc.preferences
         quitItem.title = loc.quit
     }

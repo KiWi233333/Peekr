@@ -6,29 +6,29 @@ import SwiftUI
 @MainActor
 final class PreferencesWindowController {
     private let model: AppModel
+    private let bookmarks: BookmarksModel
     private let settings: Settings
     private let icons: IconStore
     private let onApply: (PreferenceEffect) -> Void
-    private let onImportCookies: () -> Void
-    private let onImportBookmarks: () -> Void
+    private let onImportBrowserData: () -> Void
     private let onInstallAgentCLI: () -> Void
     private var window: NSWindow?
 
     init(
         model: AppModel,
+        bookmarks: BookmarksModel,
         settings: Settings,
         icons: IconStore,
         onApply: @escaping (PreferenceEffect) -> Void,
-        onImportCookies: @escaping () -> Void,
-        onImportBookmarks: @escaping () -> Void,
+        onImportBrowserData: @escaping () -> Void,
         onInstallAgentCLI: @escaping () -> Void
     ) {
         self.model = model
+        self.bookmarks = bookmarks
         self.settings = settings
         self.icons = icons
         self.onApply = onApply
-        self.onImportCookies = onImportCookies
-        self.onImportBookmarks = onImportBookmarks
+        self.onImportBrowserData = onImportBrowserData
         self.onInstallAgentCLI = onInstallAgentCLI
     }
 
@@ -36,11 +36,11 @@ final class PreferencesWindowController {
         if window == nil {
             let view = PreferencesView(
                 model: model,
+                bookmarks: bookmarks,
                 settings: settings,
                 icons: icons,
                 onApply: onApply,
-                onImportCookies: onImportCookies,
-                onImportBookmarks: onImportBookmarks,
+                onImportBrowserData: onImportBrowserData,
                 onInstallAgentCLI: onInstallAgentCLI
             )
             let window = NSWindow(

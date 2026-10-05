@@ -21,6 +21,10 @@ struct ChromeProfile: Identifiable, Hashable, Sendable {
         ]
         return candidates.first { fileManager.fileExists(atPath: $0.path) }
     }
+
+    var sessionsDirectoryURL: URL {
+        directoryURL.appendingPathComponent("Sessions", isDirectory: true)
+    }
 }
 
 /// A decrypted Chrome cookie ready to be copied into CEF.
@@ -110,30 +114,40 @@ enum ChromeCookieImporter {
             if let infoCache = profile["info_cache"] as? [String: Any] {
                 for (directory, rawInfo) in infoCache {
                     guard let info = rawInfo as? [String: Any] else { continue }
-                    names[directory] =
-                        info["name"] as? String
-                        ?? info["shortcut_name"] as? String
+                    let displayName = (info["name"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+                    let shortcutName = (info["shortcut_name"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+                    names[directory] = displayName.flatMap { $0.isEmpty ? nil : $0 }
+                        ?? shortcutName.flatMap { $0.isEmpty ? nil : $0 }
                         ?? directory
                 }
             }
         }
 
-        if names.isEmpty,
-           let children = try? fileManager.contentsOfDirectory(
-               at: root,
-               includingPropertiesForKeys: [.isDirectoryKey],
-               options: [.skipsHiddenFiles]
-           ) {
+        // Local State can retain deleted profiles and can also lag while Chrome
+        // is migrating a profile. Always merge the actual profile directories
+        // instead of treating a non-empty info_cache as authoritative.
+        if let children = try? fileManager.contentsOfDirectory(
+                at: root,
+                includingPropertiesForKeys: [.isDirectoryKey],
+                options: [.skipsHiddenFiles]
+            ) {
             for child in children {
                 let directory = child.lastPathComponent
-                if directory == "Default" || directory.hasPrefix("Profile ") {
-                    names[directory] = directory
+                let values = try? child.resourceValues(forKeys: [.isDirectoryKey])
+                if (values?.isDirectory == true)
+                    && (directory == "Default" || directory.hasPrefix("Profile ")) {
+                    if names[directory] == nil { names[directory] = directory }
                 }
             }
         }
 
-        return names.map { directory, displayName in
-            ChromeProfile(
+        return names.compactMap { directory, displayName in
+            var isDirectory: ObjCBool = false
+            guard fileManager.fileExists(
+                atPath: root.appendingPathComponent(directory).path,
+                isDirectory: &isDirectory
+            ), isDirectory.boolValue else { return nil }
+            return ChromeProfile(
                 id: directory,
                 name: displayName,
                 directoryURL: root.appendingPathComponent(directory, isDirectory: true)

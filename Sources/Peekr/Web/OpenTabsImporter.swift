@@ -35,10 +35,14 @@ enum OpenTabsImporter {
         Source(bundleID: "com.brave.Browser", displayName: "Brave", appName: "Brave Browser", titleKey: "title"),
     ]
 
-    /// Open tabs across every running, scriptable browser. Call off-main.
-    static func readOpenTabs() -> [ImportedTab] {
+    /// Open tabs across every running, scriptable browser. Pass `only` to
+    /// restrict the read (and its Automation prompt) to specific browsers by
+    /// display name. Call off-main.
+    static func readOpenTabs(only displayNames: Set<String>? = nil) -> [ImportedTab] {
         let running = Set(NSWorkspace.shared.runningApplications.compactMap(\.bundleIdentifier))
-        let active = sources.filter { running.contains($0.bundleID) }
+        let active = sources
+            .filter { running.contains($0.bundleID) }
+            .filter { displayNames?.contains($0.displayName) ?? true }
         var log = ["scriptable browsers running: \(active.map(\.displayName))"]
         var all: [ImportedTab] = []
         for source in active {
