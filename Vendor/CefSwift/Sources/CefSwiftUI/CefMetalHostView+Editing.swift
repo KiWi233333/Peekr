@@ -25,7 +25,7 @@ import Foundation
 ///    browser. App-global shortcuts (Cmd+Q/W/M/H/`/,/Tab/Space and the
 ///    function/media keys) are *not* consumed; they fall through to the app or
 ///    system. Cmd+W is resolved by the hosting window after this responder
-///    chain, where Peekr closes its active tab and never closes the window.
+///    chain, where Peekr closes its active tab or hides a single-tab panel.
 extension CefMetalHostView: NSMenuItemValidation, NSUserInterfaceValidations {
 
     // MARK: performKeyEquivalent policy
@@ -72,7 +72,7 @@ extension CefMetalHostView: NSMenuItemValidation, NSUserInterfaceValidations {
     /// Rule:
     /// - Pass through any Command combo in ``appGlobalCommandKeys`` (Cmd+Q/W/M/
     ///   H/`/,/Space/Tab) — these belong to the app/OS. Cmd+W is then resolved
-    ///   by the hosting window as a tab-close fallback, never as window close.
+    ///   by the hosting window as a tab close or single-tab window close.
     /// - Forward any other combo that carries Command or Control (the web
     ///   editing/navigation shortcuts: A/C/V/X/Z, arrows, etc.).
     /// - Pass through everything else (plain keys arrive via `keyDown`;
@@ -95,7 +95,7 @@ extension CefMetalHostView: NSMenuItemValidation, NSUserInterfaceValidations {
     /// must never be swallowed by the page.
     static let appGlobalCommandKeys: Set<String> = [
         "q",  // Quit
-        "w",  // Close the host app's tab; never close the window
+        "w",  // Close the host app's tab or single-tab window
         "m",  // Minimize
         "h",  // Hide
         "`",  // Cycle windows

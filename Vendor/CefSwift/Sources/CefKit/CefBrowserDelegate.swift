@@ -83,6 +83,12 @@ public protocol CefBrowserDelegate: AnyObject {
         callback: CefDownloadItemCallback
     )
 
+    // MARK: Find
+
+    /// Find-in-page progress for ``CefBrowser/find(_:forward:matchCase:)``.
+    /// `finalUpdate` marks the last notification for the active search.
+    func browser(_ b: CefBrowser, didUpdateFindResult result: CefFindResult)
+
     // MARK: JavaScript dialogs
 
     /// The page wants to show a JavaScript dialog (`alert`/`confirm`/`prompt`).
@@ -203,6 +209,8 @@ extension CefBrowserDelegate {
     ) {
         browser(b, downloadDidProgress: download)
     }
+
+    public func browser(_ b: CefBrowser, didUpdateFindResult result: CefFindResult) {}
 
     public func browser(_ b: CefBrowser, runJSDialog dialog: CefJSDialog, callback: CefJSDialogCallback) -> Bool { false }
     public func browser(_ b: CefBrowser, runBeforeUnloadDialog message: String, isReload: Bool, callback: CefJSDialogCallback) -> Bool { false }

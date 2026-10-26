@@ -29,6 +29,15 @@ public final class CefProfile {
 
     let kind: Kind
 
+    /// True when this profile is backed by CEF's global request context.
+    /// Read-only and public so the app layer can deduplicate the global
+    /// context when clearing browsing data.
+    public var isGlobal: Bool { kind == .global }
+
+    /// True when this profile lives only in memory for the current session.
+    /// Public so the app layer can leave private-space profiles untouched.
+    public var isIncognito: Bool { kind == .incognito }
+
     /// Owned +1 reference to the underlying `cef_request_context_t`, created
     /// lazily on first use. `nil` for ``default`` until first accessed.
     /// `nonisolated(unsafe)`: only mutated on the main actor; the nonisolated
@@ -107,6 +116,38 @@ public final class CefProfile {
             cefAddRef(UnsafeMutableRawPointer(raw))
             return raw
         }
+    }
+
+    /// The cookie store backing this profile: the runtime-wide manager for
+    /// ``default``, the request context's manager for isolated kinds.
+    func cookieManager() -> CefCookieManager? {
+        switch kind {
+        case .global:
+            return CefCookieManager.global()
+        case .incognito, .persistent:
+            guard let context = makeRequestContext() else { return nil }
+            defer { cefRelease(UnsafeMutableRawPointer(context)) }
+            guard let manager = context.pointee.get_cookie_manager?(context, nil) else { return nil }
+            return CefCookieManager(raw: manager)
+        }
+    }
+
+    /// Clears this profile's HTTP cache. `completion` runs on the main actor
+    /// once CEF finishes, or immediately when no context can be created.
+    func clearHTTPCache(completion: @escaping () -> Void) {
+        let context: UnsafeMutablePointer<cef_request_context_t>?
+        switch kind {
+        case .global:
+            context = cef_request_context_get_global_context()
+        case .incognito, .persistent:
+            context = makeRequestContext()
+        }
+        guard let context else {
+            completion()
+            return
+        }
+        defer { cefRelease(UnsafeMutableRawPointer(context)) }
+        context.clearHTTPCache(completion: completion)
     }
 
     private func createContext() -> UnsafeMutablePointer<cef_request_context_t>? {

@@ -26,6 +26,7 @@ final class BrowserClient {
     nonisolated(unsafe) private var loadPointer: UnsafeMutablePointer<cef_load_handler_t>?
     nonisolated(unsafe) private var displayPointer: UnsafeMutablePointer<cef_display_handler_t>?
     nonisolated(unsafe) private var downloadPointer: UnsafeMutablePointer<cef_download_handler_t>?
+    nonisolated(unsafe) private var findPointer: UnsafeMutablePointer<cef_find_handler_t>?
     nonisolated(unsafe) var jsDialogPointer: UnsafeMutablePointer<cef_jsdialog_handler_t>?
     nonisolated(unsafe) var contextMenuPointer: UnsafeMutablePointer<cef_context_menu_handler_t>?
     nonisolated(unsafe) var permissionPointer: UnsafeMutablePointer<cef_permission_handler_t>?
@@ -351,6 +352,21 @@ final class BrowserClient {
         }
         downloadPointer = download
 
+        let find = cefAllocate(cef_find_handler_t.self, owner: self)
+        find.pointee.on_find_result = { handlerSelf, browser, identifier, count, _, activeMatchOrdinal, finalUpdate in
+            cefRelease(browser.map(UnsafeMutableRawPointer.init))
+            let result = CefFindResult(
+                identifier: Int(identifier),
+                matches: Int(count),
+                activeMatchOrdinal: Int(activeMatchOrdinal),
+                finalUpdate: finalUpdate != 0
+            )
+            BrowserClientCallbacks.run(handlerSelf, default: ()) { _, cefBrowser in
+                cefBrowser.delegate?.browser(cefBrowser, didUpdateFindResult: result)
+            }
+        }
+        findPointer = find
+
         makeExtendedHandlers()
 
         // OSR browsers get a render handler; windowed browsers leave
@@ -387,6 +403,12 @@ final class BrowserClient {
         client.pointee.get_download_handler = { clientSelf in
             guard let me = BrowserClient.owner(clientSelf.map(UnsafeMutableRawPointer.init)),
                   let handler = me.downloadPointer else { return nil }
+            cefAddRef(UnsafeMutableRawPointer(handler))
+            return handler
+        }
+        client.pointee.get_find_handler = { clientSelf in
+            guard let me = BrowserClient.owner(clientSelf.map(UnsafeMutableRawPointer.init)),
+                  let handler = me.findPointer else { return nil }
             cefAddRef(UnsafeMutableRawPointer(handler))
             return handler
         }

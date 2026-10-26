@@ -118,6 +118,12 @@ public final class CefMenuModel {
         }
     }
 
+    /// Enables or disables a command while preserving its position in the menu.
+    @discardableResult
+    public func setEnabled(commandID: Int, enabled: Bool) -> Bool {
+        (raw.pointee.set_enabled?(raw, Int32(commandID), enabled ? 1 : 0) ?? 0) != 0
+    }
+
     /// Appends a separator.
     public func addSeparator() {
         _ = raw.pointee.add_separator?(raw)
