@@ -135,9 +135,18 @@ if [ "${PEEKR_SIGN_IDENTITY+x}" = "x" ]; then
     *) IDENTITY="$PEEKR_SIGN_IDENTITY" ;;
   esac
 else
+  # Prefer Developer ID: its Team ID is stable, so macOS privacy grants survive
+  # rebuilds, and (unlike a bare Apple Development identity) it does not need an
+  # embedded provisioning profile to launch. Fall back to Apple Development,
+  # then ad-hoc.
   IDENTITY="$(security find-identity -v -p codesigning 2>/dev/null \
-    | grep -oE '"(Apple Development|Developer ID Application)[^"]*"' \
+    | grep -oE '"Developer ID Application[^"]*"' \
     | head -1 | tr -d '"' || true)"
+  if [ -z "$IDENTITY" ]; then
+    IDENTITY="$(security find-identity -v -p codesigning 2>/dev/null \
+      | grep -oE '"Apple Development[^"]*"' \
+      | head -1 | tr -d '"' || true)"
+  fi
 fi
 
 if [ -n "$IDENTITY" ]; then
@@ -145,6 +154,11 @@ if [ -n "$IDENTITY" ]; then
   if [ "${PEEKR_HARDENED:-0}" = "1" ]; then
     BASE+=(--options runtime)
     [ "${PEEKR_NO_TIMESTAMP:-0}" = "1" ] || BASE+=(--timestamp)
+  else
+    # A Developer ID identity makes codesign contact Apple's timestamp service
+    # by default. A local, non-notarized build needs no timestamp, and offline
+    # machines would otherwise fail here.
+    BASE+=(--timestamp=none)
   fi
 else
   echo "Note: no stable signing identity found; using an ad-hoc signature." >&2
@@ -154,17 +168,24 @@ fi
 # Chromium's macOS Touch ID WebAuthn backend requires the app identifier
 # prefix on its two keychain groups. Keep the checked-in entitlement portable
 # and resolve the prefix from the selected signing identity at bundle time.
+# This is a restricted entitlement: without an embedded provisioning profile
+# AMFI kills the process. Only the hardened distribution path is expected to
+# carry a profile, so local (non-hardened) builds omit it and lose Touch ID
+# WebAuthn. PEEKR_SKIP_KEYCHAIN_GROUPS=1 forces it off even when hardened.
 APP_ENT_RESOLVED=""
 if [ -n "$IDENTITY" ]; then
   TEAM_ID="$(printf '%s' "$IDENTITY" | sed -n 's/.*(\([A-Z0-9][A-Z0-9]*\))$/\1/p')"
-  if [ -n "$TEAM_ID" ]; then
-    APP_ENT_RESOLVED="$(mktemp "${TMPDIR:-/tmp}/peekr-app-entitlements.XXXXXX")"
-    cp "$APP_ENT" "$APP_ENT_RESOLVED"
+  APP_ENT_RESOLVED="$(mktemp "${TMPDIR:-/tmp}/peekr-app-entitlements.XXXXXX")"
+  cp "$APP_ENT" "$APP_ENT_RESOLVED"
+  if [ -n "$TEAM_ID" ] \
+    && [ "${PEEKR_HARDENED:-0}" = "1" ] \
+    && [ "${PEEKR_SKIP_KEYCHAIN_GROUPS:-0}" != "1" ]; then
     /usr/bin/plutil -replace keychain-access-groups -xml \
       "<array><string>${TEAM_ID}.org.chromium.Chromium.webauthn</string><string>${TEAM_ID}.org.chromium.Chromium.webauthn-uvk</string></array>" \
       "$APP_ENT_RESOLVED"
   else
-    echo "Warning: could not derive a team ID from signing identity; Touch ID WebAuthn will remain unavailable." >&2
+    /usr/bin/plutil -remove keychain-access-groups "$APP_ENT_RESOLVED" 2>/dev/null || true
+    echo "[sign] keychain-access-groups omitted; Touch ID WebAuthn unavailable." >&2
   fi
 fi
 

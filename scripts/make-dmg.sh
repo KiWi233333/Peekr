@@ -11,6 +11,23 @@ OUT="${2:-dist/Peekr.dmg}"
 VOLNAME="${3:-Peekr}"
 BG="assets/dmg/background.tiff"
 
+# The background art is exactly 600x400 points and Finder draws it 1:1 from the
+# top-left of the window's content area. The item positions below are expressed
+# in that same content space, so the content area must be at least as tall as
+# the art; if the window frame is only 400 tall the content area is ~368 and
+# Finder re-lays the icons out lower, which visibly breaks the arrow alignment.
+# Frame height is therefore art height + a title bar allowance (32pt on current
+# macOS, with a few points of slack for other versions).
+ART_W=600
+ART_H=400
+FRAME_H=$((ART_H + 40))
+ICON_Y=212
+# Finder adds a fixed 45pt vertical inset when it renders item positions it
+# reads back from .DS_Store (verified against a fresh mount: stored 37 shows at
+# 82, stored 212 shows at 257, and the inset does not change with window size).
+# Store the position pre-offset so the icons land on the arrow's y.
+ICON_Y_STORED=$((ICON_Y - 45))
+
 [ -d "$APP" ] || { echo "make-dmg: app not found: $APP" >&2; exit 1; }
 [ -f "$BG" ]  || { echo "make-dmg: background not found: $BG (run rsvg-convert + tiffutil)" >&2; exit 1; }
 
@@ -45,14 +62,14 @@ tell application "Finder"
     set current view of container window to icon view
     set toolbar visible of container window to false
     set statusbar visible of container window to false
-    set the bounds of container window to {300, 140, 900, 540}
+    set the bounds of container window to {300, 120, $((300 + ART_W)), $((120 + FRAME_H))}
     set theViewOptions to the icon view options of container window
     set arrangement of theViewOptions to not arranged
     set icon size of theViewOptions to 128
     set text size of theViewOptions to 12
     set background picture of theViewOptions to file ".background:background.tiff"
-    set position of item "$APP_NAME" of container window to {178, 212}
-    set position of item "Applications" of container window to {422, 212}
+    set position of item "$APP_NAME" of container window to {178, $ICON_Y_STORED}
+    set position of item "Applications" of container window to {422, $ICON_Y_STORED}
     update without registering applications
     delay 1
     close
