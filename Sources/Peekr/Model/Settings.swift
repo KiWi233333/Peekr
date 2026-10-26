@@ -56,6 +56,24 @@ enum BookmarkSyncInterval: String, Codable, CaseIterable, Identifiable {
     }
 }
 
+/// What Peekr opens when the panel's first tab is created at launch.
+enum StartupBehavior: String, Codable, CaseIterable, Identifiable {
+    case newTab
+    case continueWhereLeftOff
+    case homePage
+    var id: String { rawValue }
+}
+
+/// Shared bounds for persisted CEF zoom levels (step -5…5).
+enum ZoomLevelBounds {
+    static let minimum = -5.0
+    static let maximum = 5.0
+
+    static func clamp(_ level: Double) -> Double {
+        min(max(level, minimum), maximum)
+    }
+}
+
 /// Codable snapshot of all preferences — drives persistence + change detection.
 /// `panelWidth`/`panelHeight` of 0 mean "auto" (a ratio of the screen).
 struct SettingsData: Codable, Equatable {
@@ -77,6 +95,21 @@ struct SettingsData: Codable, Equatable {
     /// only exists when the user opts in to agent automation.
     var agentAccessEnabled: Bool = false
     var agentDebugPort: Int = 9223
+    var homePage: String = ""
+    var startupBehavior: StartupBehavior = .newTab
+    var downloadDirectory: String = ""
+    var askWhereToSave: Bool = false
+    var defaultZoom: Double = 0
+    var rememberPermissions: Bool = true
+    var blockPopups: Bool = true
+    var historyRetentionDays: Int = 0
+    var newTabWallpaperEnabled: Bool = true
+    var newTabWallpaperID: String = NewTabWallpaperCatalog.defaultID
+    var newTabCustomWallpaperPath: String = ""
+    var newTabUsesCustomWallpaper: Bool = false
+    var newTabWallpaperOverlay: Double = 0.38
+    var newTabShowBookmarks: Bool = true
+    var newTabShowRecent: Bool = true
 
     init() {}
 
@@ -102,6 +135,21 @@ struct SettingsData: Codable, Equatable {
         searchEngine = v(.searchEngine, .google)
         agentAccessEnabled = v(.agentAccessEnabled, false)
         agentDebugPort = v(.agentDebugPort, 9223)
+        homePage = v(.homePage, "")
+        startupBehavior = v(.startupBehavior, .newTab)
+        downloadDirectory = v(.downloadDirectory, "")
+        askWhereToSave = v(.askWhereToSave, false)
+        defaultZoom = ZoomLevelBounds.clamp(v(.defaultZoom, 0))
+        rememberPermissions = v(.rememberPermissions, true)
+        blockPopups = v(.blockPopups, true)
+        historyRetentionDays = max(0, v(.historyRetentionDays, 0))
+        newTabWallpaperEnabled = v(.newTabWallpaperEnabled, true)
+        newTabWallpaperID = v(.newTabWallpaperID, NewTabWallpaperCatalog.defaultID)
+        newTabCustomWallpaperPath = v(.newTabCustomWallpaperPath, "")
+        newTabUsesCustomWallpaper = v(.newTabUsesCustomWallpaper, false)
+        newTabWallpaperOverlay = min(max(v(.newTabWallpaperOverlay, 0.38), 0), 0.85)
+        newTabShowBookmarks = v(.newTabShowBookmarks, true)
+        newTabShowRecent = v(.newTabShowRecent, true)
     }
 }
 
@@ -126,6 +174,21 @@ final class Settings {
     var searchEngine: SearchEngine
     var agentAccessEnabled: Bool
     var agentDebugPort: Int
+    var homePage: String
+    var startupBehavior: StartupBehavior
+    var downloadDirectory: String
+    var askWhereToSave: Bool
+    var defaultZoom: Double
+    var rememberPermissions: Bool
+    var blockPopups: Bool
+    var historyRetentionDays: Int
+    var newTabWallpaperEnabled: Bool
+    var newTabWallpaperID: String
+    var newTabCustomWallpaperPath: String
+    var newTabUsesCustomWallpaper: Bool
+    var newTabWallpaperOverlay: Double
+    var newTabShowBookmarks: Bool
+    var newTabShowRecent: Bool
 
     private let store: SettingsStore
 
@@ -148,6 +211,21 @@ final class Settings {
         searchEngine = d.searchEngine
         agentAccessEnabled = d.agentAccessEnabled
         agentDebugPort = d.agentDebugPort
+        homePage = d.homePage
+        startupBehavior = d.startupBehavior
+        downloadDirectory = d.downloadDirectory
+        askWhereToSave = d.askWhereToSave
+        defaultZoom = ZoomLevelBounds.clamp(d.defaultZoom)
+        rememberPermissions = d.rememberPermissions
+        blockPopups = d.blockPopups
+        historyRetentionDays = max(0, d.historyRetentionDays)
+        newTabWallpaperEnabled = d.newTabWallpaperEnabled
+        newTabWallpaperID = d.newTabWallpaperID
+        newTabCustomWallpaperPath = d.newTabCustomWallpaperPath
+        newTabUsesCustomWallpaper = d.newTabUsesCustomWallpaper
+        newTabWallpaperOverlay = d.newTabWallpaperOverlay
+        newTabShowBookmarks = d.newTabShowBookmarks
+        newTabShowRecent = d.newTabShowRecent
     }
 
     var snapshot: SettingsData {
@@ -160,6 +238,18 @@ final class Settings {
         s.bookmarkSync = bookmarkSync
         s.searchEngine = searchEngine
         s.agentAccessEnabled = agentAccessEnabled; s.agentDebugPort = agentDebugPort
+        s.homePage = homePage; s.startupBehavior = startupBehavior
+        s.downloadDirectory = downloadDirectory; s.askWhereToSave = askWhereToSave
+        s.defaultZoom = ZoomLevelBounds.clamp(defaultZoom)
+        s.rememberPermissions = rememberPermissions; s.blockPopups = blockPopups
+        s.historyRetentionDays = max(0, historyRetentionDays)
+        s.newTabWallpaperEnabled = newTabWallpaperEnabled
+        s.newTabWallpaperID = newTabWallpaperID
+        s.newTabCustomWallpaperPath = newTabCustomWallpaperPath
+        s.newTabUsesCustomWallpaper = newTabUsesCustomWallpaper
+        s.newTabWallpaperOverlay = min(max(newTabWallpaperOverlay, 0), 0.85)
+        s.newTabShowBookmarks = newTabShowBookmarks
+        s.newTabShowRecent = newTabShowRecent
         return s
     }
 

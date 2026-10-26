@@ -63,6 +63,7 @@ final class CefSwiftEngine: WebEngine {
     private var downloadNames: [UInt32: String] = [:]
     private var downloadCallbacks: [UInt32: CefDownloadItemCallback] = [:]
     private var requestedAudioMuted: Bool
+    private var measuredAudio: WebAudioActivity = .unknown
     private var isClosed = false
     #if DEBUG
     private var didRunInputSmoke = false
@@ -71,14 +72,17 @@ final class CefSwiftEngine: WebEngine {
 
     var hostView: NSView { host }
     private(set) var navState: NavState
-    /// CefSwift 0.1.0 does not expose a reliable audible-media signal. An
-    /// explicitly muted page is nevertheless known to be silent; every
-    /// unmuted page remains protected as unknown instead of risking playback.
+    /// CefSwift 0.1.0 exposes no audible-media signal, so the page reports it
+    /// through a console probe. Until the probe answers, an unmuted page stays
+    /// `.unknown` and is protected from automatic hibernation; an explicitly
+    /// muted page is known to be silent regardless of the probe.
     var activity: WebActivitySnapshot {
-        WebActivitySnapshot(audio: isAudioMuted ? .silent : .unknown)
+        WebActivitySnapshot(audio: isAudioMuted ? .silent : measuredAudio)
     }
     var onNavStateChange: ((NavState) -> Void)?
     var onDownloadChange: ((WebDownload) -> Void)?
+    var onFindResult: ((FindResult) -> Void)?
+    var onAudioActivityChange: ((WebAudioActivity) -> Void)?
 
     /// The page asked for a new tab (⌘-click, middle-click, target=_blank,
     /// window.open). The flag is the foreground/background intent Chromium
@@ -86,6 +90,11 @@ final class CefSwiftEngine: WebEngine {
     var onOpenNewTab: ((URL, Bool) -> Void)?
     /// Live string table for context-menu labels.
     var strings: () -> Localized = { Localized(isChinese: false) }
+    /// Whether permission prompts may offer to remember the decision.
+    var allowsPermissionMemory: () -> Bool = { true }
+    /// Whether script-initiated popups without a user gesture are blocked.
+    var blocksPopups: () -> Bool = { true }
+    var onBlockedPopup: ((URL?) -> Void)?
     /// Live search engine for the selection-search menu item.
     var searchEngine: () -> SearchEngine = { .google }
 
@@ -131,13 +140,36 @@ final class CefSwiftEngine: WebEngine {
         downloadCallbacks[id]?.cancel()
     }
 
+    func pauseDownload(_ id: UInt32) {
+        downloadCallbacks[id]?.pause()
+    }
+
+    func resumeDownload(_ id: UInt32) {
+        downloadCallbacks[id]?.resume()
+    }
+
     func find(_ text: String, forward: Bool, matchCase: Bool) {
         browser?.find(text, forward: forward, matchCase: matchCase)
     }
 
-    /// CefSwift 0.1.0 doesn't wrap `cef_browser_host_t.stop_finding`; an empty
-    /// search ends CEF's find session and clears its highlights.
-    func stopFinding() { browser?.find("", forward: true, matchCase: false) }
+    func stopFinding() { browser?.stopFinding() }
+
+    func toggleDevTools() {
+        browser?.toggleDevTools()
+    }
+
+    func viewSource() {
+        guard let sourceURL = Self.viewSourceURL(for: navState.url ?? browser?.url) else { return }
+        onOpenNewTab?(sourceURL, true)
+    }
+
+    static func viewSourceURL(for url: URL?) -> URL? {
+        guard let url,
+              let scheme = url.scheme?.lowercased(),
+              scheme == "http" || scheme == "https"
+        else { return nil }
+        return URL(string: "view-source:" + url.absoluteString)
+    }
 
     func close() {
         guard !isClosed else { return }
@@ -282,6 +314,54 @@ final class CefSwiftEngine: WebEngine {
 
     static func isCanceledNavigationError(_ code: Int) -> Bool { code == -3 }
 
+    static func findResult(from result: CefFindResult) -> FindResult {
+        FindResult(
+            matches: result.matches,
+            activeMatchOrdinal: result.activeMatchOrdinal,
+            finalUpdate: result.finalUpdate
+        )
+    }
+
+    private static let audioConsolePrefix = "__PEEKR_AUDIO__:"
+
+    static func audioActivity(fromConsoleMessage message: String) -> WebAudioActivity? {
+        guard message.hasPrefix(Self.audioConsolePrefix) else { return nil }
+        switch message.dropFirst(Self.audioConsolePrefix.count) {
+        case "1": return .audible
+        case "0": return .silent
+        default: return nil
+        }
+    }
+
+    private static let audioProbeScript = """
+    (function() {
+        if (window.__peekrAudioHook) return;
+        window.__peekrAudioHook = true;
+        var last = null;
+        function isAudible() {
+            var media = document.querySelectorAll('audio,video');
+            for (var i = 0; i < media.length; i++) {
+                var el = media[i];
+                if (!el.paused && !el.ended && el.readyState > 2 && !el.muted && el.volume > 0) {
+                    return true;
+                }
+            }
+            return false;
+        }
+        function report(force) {
+            var value = isAudible() ? 1 : 0;
+            if (!force && value === last) return;
+            last = value;
+            console.log('__PEEKR_AUDIO__:' + value);
+        }
+        ['play', 'playing', 'pause', 'ended', 'volumechange', 'emptied'].forEach(function(name) {
+            document.addEventListener(name, function() { setTimeout(report, 0); }, true);
+        });
+        report(true);
+        setInterval(report, 2000);
+    })();
+    """
+
     private func updateNavState(_ update: (inout NavState) -> Void) {
         var next = navState
         update(&next)
@@ -310,7 +390,11 @@ extension CefSwiftEngine: CefBrowserDelegate {
         _ browser: CefBrowser,
         requestsPermission request: CefPermissionRequest
     ) -> CefPermissionDecision {
-        CefPermissionPrompt.decide(request)
+        CefPermissionPrompt.decide(
+            request,
+            strings: strings(),
+            canRemember: allowsPermissionMemory()
+        )
     }
 
     func browser(
@@ -336,6 +420,12 @@ extension CefSwiftEngine: CefBrowserDelegate {
         canGoForward: Bool
     ) {
         applyLoading(isLoading, canGoBack: canGoBack, canGoForward: canGoForward)
+        if isLoading {
+            measuredAudio = .unknown
+            onAudioActivityChange?(.unknown)
+        } else {
+            browser.executeJavaScript(Self.audioProbeScript)
+        }
         #if DEBUG
         if !isLoading,
            !didRunInputSmoke,
@@ -373,6 +463,10 @@ extension CefSwiftEngine: CefBrowserDelegate {
         faviconURLs = urls
     }
 
+    func browser(_ browser: CefBrowser, didUpdateFindResult result: CefFindResult) {
+        onFindResult?(Self.findResult(from: result))
+    }
+
     func browser(
         _ browser: CefBrowser,
         didReceiveConsoleMessage message: String,
@@ -380,6 +474,12 @@ extension CefSwiftEngine: CefBrowserDelegate {
         source: String,
         line: Int
     ) {
+        if message.hasPrefix(Self.audioConsolePrefix) {
+            guard let activity = Self.audioActivity(fromConsoleMessage: message) else { return }
+            measuredAudio = activity
+            onAudioActivityChange?(activity)
+            return
+        }
         #if DEBUG
         if message.hasPrefix("__PEEKR_CODEC_SMOKE__") {
             recordSmokeMessage(message, fileName: "codec-smoke.log")
@@ -479,11 +579,32 @@ extension CefSwiftEngine: CefBrowserDelegate {
         applyRendererFailure(reason: String(describing: reason), errorCode: errorCode)
     }
 
+    func browser(_ browser: CefBrowser, didEncounterCertificateError url: URL?, errorCode: Int) -> Bool {
+        confirmCertificateError(url: url, errorCode: errorCode)
+    }
+
     private func clearLoadError() {
         updateNavState {
             $0.loadError = nil
             $0.rendererFailure = nil
         }
+    }
+
+    private func confirmCertificateError(url: URL?, errorCode: Int) -> Bool {
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "Your connection is not private"
+        let target = url?.host ?? url?.absoluteString ?? "this site"
+        alert.informativeText = """
+            The certificate for \(target) is not trusted (error \(errorCode)). \
+            Continuing may expose your data to an attacker.
+            """
+        alert.addButton(withTitle: "Go Back")
+        alert.addButton(withTitle: "Continue")
+        alert.buttons[1].hasDestructiveAction = true
+        alert.window.level = .floating
+        NSApp.activate(ignoringOtherApps: true)
+        return alert.runModal() == .alertSecondButtonReturn
     }
 
     /// ⌘-click / middle-click / target=_blank / window.open all arrive here.
@@ -497,6 +618,11 @@ extension CefSwiftEngine: CefBrowserDelegate {
 
     func routeWindowOpen(_ request: CefWindowOpenRequest) -> CefWindowOpenAction {
         guard let url = request.targetURL else { return .deny }
+        let isPopup = request.disposition == .newPopup || request.disposition == .newWindow
+        if isPopup, !request.userGesture, blocksPopups() {
+            onBlockedPopup?(url)
+            return .deny
+        }
         switch request.disposition {
         case .newBackgroundTab:
             onOpenNewTab?(url, false)
@@ -513,82 +639,168 @@ extension CefSwiftEngine: CefBrowserDelegate {
 
     // MARK: Context menu
 
-    /// Custom command IDs inside CEF's user range (26500...28500). Built-in
-    /// commands (reload) are executed by CEF itself; these need a handler in
-    /// `contextMenuCommand`.
-    private enum ContextMenuID {
+    /// Custom command IDs inside CEF's user range (26500...28500).
+    enum ContextMenuID {
         static let inspect = CefMenuModel.userCommandIDFirst
         static let openLinkInNewTab = inspect + 1
         static let copyLinkAddress = inspect + 2
         static let openImageInNewTab = inspect + 3
         static let copyImageAddress = inspect + 4
         static let searchSelection = inspect + 5
+        static let openLinkInNewBackgroundTab = inspect + 6
+        static let viewSource = inspect + 7
+        static let copyImage = inspect + 8
+        static let saveImage = inspect + 9
+        static let copySelection = inspect + 10
+        static let print = inspect + 11
+        static let back = inspect + 12
+        static let forward = inspect + 13
+        static let saveLink = inspect + 14
+        static let openMediaInNewTab = inspect + 15
+        static let saveMedia = inspect + 16
+        static let copyMediaAddress = inspect + 17
     }
 
     func browser(_ browser: CefBrowser, configureContextMenu menu: CefMenuModel, params: CefContextMenuParams) {
         // Editable nodes keep CEF's default menu (spellcheck, undo, paste…).
         guard !params.isEditable else { return }
+        menu.clear()
         let strings = strings()
-
-        var index = 0
-        func insert(_ commandID: Int, _ title: String) {
-            menu.insertItem(at: index, commandID: commandID, title: title)
-            index += 1
-        }
+        var sections: [[(commandID: Int, title: String)]] = []
 
         if params.linkURL != nil {
-            insert(ContextMenuID.openLinkInNewTab, strings.openLinkInNewTab)
-            insert(ContextMenuID.copyLinkAddress, strings.copyLinkAddress)
-            menu.insertSeparator(at: index); index += 1
+            sections.append([
+                (ContextMenuID.openLinkInNewTab, strings.openLinkInNewTab),
+                (ContextMenuID.openLinkInNewBackgroundTab, strings.openLinkInNewBackgroundTab),
+                (ContextMenuID.saveLink, strings.saveLinkAs),
+                (ContextMenuID.copyLinkAddress, strings.copyLinkAddress),
+            ])
         }
-        if params.mediaType == .image, params.sourceURL != nil {
-            insert(ContextMenuID.openImageInNewTab, strings.openImageInNewTab)
-            insert(ContextMenuID.copyImageAddress, strings.copyImageAddress)
-            menu.insertSeparator(at: index); index += 1
+        if params.sourceURL != nil {
+            switch params.mediaType {
+            case .image:
+                sections.append([
+                    (ContextMenuID.openImageInNewTab, strings.openImageInNewTab),
+                    (ContextMenuID.saveImage, strings.saveImageAs),
+                    (ContextMenuID.copyImage, strings.copyImage),
+                    (ContextMenuID.copyImageAddress, strings.copyImageAddress),
+                ])
+            case .video:
+                sections.append([
+                    (ContextMenuID.openMediaInNewTab, strings.openVideoInNewTab),
+                    (ContextMenuID.saveMedia, strings.saveVideoAs),
+                    (ContextMenuID.copyMediaAddress, strings.copyVideoAddress),
+                ])
+            case .audio:
+                sections.append([
+                    (ContextMenuID.openMediaInNewTab, strings.openAudioInNewTab),
+                    (ContextMenuID.saveMedia, strings.saveAudioAs),
+                    (ContextMenuID.copyMediaAddress, strings.copyAudioAddress),
+                ])
+            default:
+                break
+            }
         }
+
         let selection = params.selectionText.trimmingCharacters(in: .whitespacesAndNewlines)
         if !selection.isEmpty {
             let clipped = selection.count > 50 ? String(selection.prefix(50)) + "…" : selection
-            insert(ContextMenuID.searchSelection, strings.searchSelection(searchEngine(), for: clipped))
-            menu.insertSeparator(at: index); index += 1
+            sections.append([
+                (ContextMenuID.copySelection, strings.copy),
+                (ContextMenuID.searchSelection, strings.searchSelection(searchEngine(), for: clipped)),
+            ])
         }
+        if params.linkURL == nil {
+            sections.append([
+                (ContextMenuID.back, strings.back),
+                (ContextMenuID.forward, strings.forward),
+                (CefContextMenuCommand.reload.rawValue, strings.reload),
+            ])
+        }
+        sections.append([(ContextMenuID.print, strings.printPage)])
+        var tools = [(ContextMenuID.inspect, strings.inspect)]
+        if selection.isEmpty { tools.insert((ContextMenuID.viewSource, strings.viewSource), at: 0) }
+        sections.append(tools)
 
-        // Chrome's tail group: Reload runs as CEF's built-in command, Inspect
-        // is ours. Always present for non-editable targets.
-        menu.addSeparator()
-        menu.addItem(commandID: CefContextMenuCommand.reload.rawValue, title: strings.reload)
-        menu.addItem(commandID: ContextMenuID.inspect, title: strings.inspect)
+        for (index, section) in sections.enumerated() {
+            if index > 0 { menu.addSeparator() }
+            for item in section {
+                menu.addItem(commandID: item.commandID, title: item.title)
+            }
+        }
+        menu.setEnabled(commandID: ContextMenuID.back, enabled: browser.canGoBack)
+        menu.setEnabled(commandID: ContextMenuID.forward, enabled: browser.canGoForward)
     }
 
     func browser(_ browser: CefBrowser, contextMenuCommand commandID: Int, params: CefContextMenuParams) -> Bool {
+        handleContextMenuCommand(commandID, params: params, browser: browser)
+    }
+
+    func handleContextMenuCommand(
+        _ commandID: Int,
+        params: CefContextMenuParams,
+        browser: CefBrowser?
+    ) -> Bool {
         switch commandID {
         case ContextMenuID.inspect:
-            browser.showDevTools()
+            browser?.showDevTools()
         case ContextMenuID.openLinkInNewTab:
             guard let url = params.linkURL else { return false }
             onOpenNewTab?(url, true)
+        case ContextMenuID.openLinkInNewBackgroundTab:
+            guard let url = params.linkURL else { return false }
+            onOpenNewTab?(url, false)
+        case ContextMenuID.saveLink:
+            guard let url = params.linkURL else { return false }
+            browser?.startDownload(url)
         case ContextMenuID.copyLinkAddress:
             guard let url = params.linkURL else { return false }
-            copyToPasteboard(url.absoluteString)
-        case ContextMenuID.openImageInNewTab:
+            Self.copyToPasteboard(url.absoluteString)
+        case ContextMenuID.openImageInNewTab, ContextMenuID.openMediaInNewTab:
             guard let url = params.sourceURL else { return false }
             onOpenNewTab?(url, true)
-        case ContextMenuID.copyImageAddress:
+        case ContextMenuID.saveImage, ContextMenuID.saveMedia:
             guard let url = params.sourceURL else { return false }
-            copyToPasteboard(url.absoluteString)
+            browser?.startDownload(url)
+        case ContextMenuID.copyImage:
+            guard let url = params.sourceURL else { return false }
+            browser?.downloadImage(url) { data in
+                guard let data else { return }
+                Self.copyToPasteboard(data)
+            }
+        case ContextMenuID.copyImageAddress, ContextMenuID.copyMediaAddress:
+            guard let url = params.sourceURL else { return false }
+            Self.copyToPasteboard(url.absoluteString)
+        case ContextMenuID.copySelection:
+            browser?.copySelection()
         case ContextMenuID.searchSelection:
             let query = params.selectionText.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !query.isEmpty, let url = searchEngine().searchURL(for: query) else { return false }
             onOpenNewTab?(url, true)
+        case ContextMenuID.back:
+            goBack()
+        case ContextMenuID.forward:
+            goForward()
+        case ContextMenuID.print:
+            browser?.print()
+        case ContextMenuID.viewSource:
+            viewSource()
         default:
             return false
         }
         return true
     }
 
-    private func copyToPasteboard(_ string: String) {
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(string, forType: .string)
+    @discardableResult
+    static func copyToPasteboard(_ string: String, to pasteboard: NSPasteboard = .general) -> Bool {
+        pasteboard.clearContents()
+        return pasteboard.setString(string, forType: .string)
+    }
+
+    @discardableResult
+    static func copyToPasteboard(_ pngData: Data, to pasteboard: NSPasteboard = .general) -> Bool {
+        pasteboard.clearContents()
+        return pasteboard.setData(pngData, forType: .png)
     }
 
     func browserDidClose(_ closedBrowser: CefBrowser) {
@@ -606,24 +818,32 @@ extension CefSwiftEngine: CefBrowserDelegate {
 /// Resolves one native CEF request context per domain Profile. The default
 /// Profile deliberately reuses CEF's global context so existing
 /// `Chromium/Default` data remains in place; named Profiles use immutable,
-/// filesystem-safe storage keys.
+/// filesystem-safe storage keys. Incognito Profiles share one in-memory
+/// request context that is discarded with the process.
 @MainActor
 final class CefSwiftEngineFactory: WebEngineFactory {
     private var profiles: [BrowserProfile.ID: CefProfile] = [:]
+    private var incognitoProfile: CefProfile?
 
     /// Routes a page's new-tab request into Peekr's tab model. Wired by the
     /// composition root once the `WebViewManager` exists.
     var onOpenNewTab: ((URL, Bool) -> Void)?
     var strings: () -> Localized = { Localized(isChinese: false) }
+    var allowsPermissionMemory: () -> Bool = { true }
+    var blocksPopups: () -> Bool = { true }
     var searchEngine: () -> SearchEngine = { .google }
 
     init(
         onOpenNewTab: ((URL, Bool) -> Void)? = nil,
         strings: @escaping () -> Localized = { Localized(isChinese: false) },
+        allowsPermissionMemory: @escaping () -> Bool = { true },
+        blocksPopups: @escaping () -> Bool = { true },
         searchEngine: @escaping () -> SearchEngine = { .google }
     ) {
         self.onOpenNewTab = onOpenNewTab
         self.strings = strings
+        self.allowsPermissionMemory = allowsPermissionMemory
+        self.blocksPopups = blocksPopups
         self.searchEngine = searchEngine
     }
 
@@ -635,11 +855,44 @@ final class CefSwiftEngineFactory: WebEngineFactory {
         )
         engine.onOpenNewTab = onOpenNewTab
         engine.strings = strings
+        engine.allowsPermissionMemory = allowsPermissionMemory
+        engine.blocksPopups = blocksPopups
         engine.searchEngine = searchEngine
         return engine
     }
 
+    /// Clear cookies and/or the HTTP cache for every request context backing a
+    /// live browser. The cached instances are used so CEF sees exactly the
+    /// contexts the open pages use; the global context is added when no cached
+    /// default profile exists and cleared at most once. Incognito profiles are
+    /// skipped because their session data is ephemeral — clearing them would
+    /// unexpectedly wipe the private space.
+    func clearBrowsingData(cookies: Bool, cache: Bool, completion: @escaping () -> Void) {
+        var targets: [CefProfile] = []
+        var hasGlobal = false
+        for profile in profiles.values where !profile.isIncognito {
+            if profile.isGlobal {
+                guard !hasGlobal else { continue }
+                hasGlobal = true
+            }
+            targets.append(profile)
+        }
+        if !hasGlobal { targets.append(.default) }
+        CefBrowsingData.clear(
+            profiles: targets,
+            cookies: cookies,
+            cache: cache,
+            completion: completion
+        )
+    }
+
     private func cefProfile(for profile: BrowserProfile) -> CefProfile {
+        if profile.isIncognito {
+            if let cached = incognitoProfile { return cached }
+            let created = CefProfile.incognito()
+            incognitoProfile = created
+            return created
+        }
         if let cached = profiles[profile.id] { return cached }
         let resolved = profile.isDefault
             ? CefProfile.default

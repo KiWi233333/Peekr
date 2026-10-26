@@ -303,7 +303,17 @@ struct Localized {
     var openLinkInNewTab: String { t("Open Link in New Tab", "在新标签页中打开链接") }
     var copyLinkAddress: String { t("Copy Link Address", "复制链接地址") }
     var openImageInNewTab: String { t("Open Image in New Tab", "在新标签页中打开图片") }
+    var saveImageAs: String { t("Save Image As…", "图片另存为…") }
+    var copyImage: String { t("Copy Image", "复制图片") }
     var copyImageAddress: String { t("Copy Image Address", "复制图片地址") }
+    var saveLinkAs: String { t("Save Link As…", "链接另存为…") }
+    var printPage: String { t("Print…", "打印…") }
+    var openVideoInNewTab: String { t("Open Video in New Tab", "在新标签页中打开视频") }
+    var saveVideoAs: String { t("Save Video As…", "视频另存为…") }
+    var copyVideoAddress: String { t("Copy Video Address", "复制视频地址") }
+    var openAudioInNewTab: String { t("Open Audio in New Tab", "在新标签页中打开音频") }
+    var saveAudioAs: String { t("Save Audio As…", "音频另存为…") }
+    var copyAudioAddress: String { t("Copy Audio Address", "复制音频地址") }
     func searchSelection(_ engine: SearchEngine, for selection: String) -> String {
         t("Search \(engine.displayName) for \"\(selection)\"", "用 \(engine.displayName) 搜索“\(selection)”")
     }
@@ -341,6 +351,41 @@ struct Localized {
     var browser: String { t("Browser", "浏览器") }
     var apps: String { t("Apps", "应用") }
     var about: String { t("About", "关于") }
+    var privacy: String { t("Privacy", "隐私") }
+    var rememberPermissions: String {
+        t("Remember permission decisions", "记住权限决定")
+    }
+    var rememberPermissionsHint: String {
+        t("When a site asks for camera, microphone, location, or another capability, Peekr can remember your choice instead of asking every time.",
+          "当网站请求摄像头、麦克风、位置等权限时，Peekr 可以记住你的选择，而不必每次都询问。")
+    }
+    var blockPopups: String { t("Block Pop-ups", "拦截弹窗") }
+    var blockPopupsHint: String {
+        t("Script-initiated pop-ups without a click are blocked. Links you click still open normally.",
+          "没有用户点击、由脚本触发的弹窗会被拦截；你主动点击的链接仍会正常打开。")
+    }
+    var allowPopups: String { t("Allow Pop-ups", "允许弹窗") }
+
+    func popupsBlocked(_ count: Int) -> String {
+        t("\(count) pop-ups blocked", "已拦截 \(count) 个弹窗")
+    }
+
+    var historyRetention: String { t("Keep history", "保留历史记录") }
+    var defaultZoom: String { t("Default page zoom", "默认页面缩放") }
+    var defaultZoomHint: String {
+        t("Applied to sites that do not have their own zoom level.",
+          "应用于尚未单独设置缩放的网站。")
+    }
+
+    func historyRetentionName(_ days: Int) -> String {
+        switch days {
+        case 0: return t("Forever", "永久")
+        case 30: return t("30 days", "30 天")
+        case 90: return t("90 days", "90 天")
+        case 365: return t("1 year", "1 年")
+        default: return t("\(days) days", "\(days) 天")
+        }
+    }
     var docking: String { t("Docking", "停靠") }
     var panel: String { t("Panel", "面板") }
     var panelBehavior: String { t("Panel Behavior", "面板行为") }
@@ -481,4 +526,268 @@ struct Localized {
 
     // About
     var tagline: String { t("A liquid-glass slide-over browser for macOS.", "macOS 上的液态玻璃侧滑浏览器。") }
+
+    // Internal pages
+    var history: String { t("History", "历史") }
+    var bookmarksManager: String { t("Bookmark Manager", "书签管理") }
+    var settings: String { t("Settings", "设置") }
+    var siteSettings: String { t("Site Settings", "网站设置") }
+    var clearBrowsingData: String { t("Clear Browsing Data", "清除浏览数据") }
+    var shortcuts: String { t("Keyboard Shortcuts", "键盘快捷键") }
+    var tabSearch: String { t("Tab Search", "标签页搜索") }
+    var searchTabs: String { t("Search Tabs", "搜索标签页") }
+    var searchTabsPlaceholder: String { t("Search tabs", "搜索标签页") }
+    var noHistory: String { t("No history yet", "暂无历史记录") }
+    var noBookmarks: String { t("No bookmarks yet", "暂无书签") }
+    var clearAll: String { t("Clear All", "全部清除") }
+    var pause: String { t("Pause", "暂停") }
+    var resume: String { t("Resume", "继续") }
+    var revealInFinder: String { t("Show in Finder", "在 Finder 中显示") }
+    var rememberForThisSite: String { t("Remember for this site", "记住此站点的选择") }
+    var allow: String { t("Allow", "允许") }
+    var deny: String { t("Deny", "拒绝") }
+    var secureConnection: String { t("Secure connection", "安全连接") }
+    var notSecure: String { t("Not Secure", "不安全") }
+    var viewSource: String { t("View Source", "查看源代码") }
+    var openLinkInNewBackgroundTab: String {
+        t("Open Link in New Background Tab", "在新后台标签页中打开链接")
+    }
+    var recentlyVisited: String { t("Recently Visited", "最近访问") }
+    var topSites: String { t("Top Sites", "常用网站") }
+    var forward: String { t("Forward", "前进") }
+    var newFolder: String { t("New Folder", "新建文件夹") }
+    var exportBookmarks: String { t("Export Bookmarks", "导出书签") }
+    var matchCase: String { t("Match Case", "区分大小写") }
+
+    // Private space
+    var newPrivateSpace: String { t("New Private Space", "新建隐私空间") }
+    var privateSpace: String { t("Private", "隐私") }
+    var privateSpaceName: String { t("Private Space", "隐私空间") }
+    var privateSpaceHint: String {
+        t("Pages in this space don’t keep history or download records. Closing Peekr clears its session.",
+          "此空间中的页面不会保留历史记录或下载记录。退出 Peekr 后会话即清除。")
+    }
+    var playingAudio: String { t("Playing audio", "正在播放声音") }
+
+    // Clear browsing data
+    var clearDataDescription: String {
+        t("Clear browsing history, download records, cookies, cached files, site permissions, and zoom levels.",
+          "清除历史记录、下载记录、Cookies、缓存文件、站点权限和缩放设置。")
+    }
+    var clearHistoryOption: String { t("Browsing history", "浏览历史") }
+    var clearDownloadsOption: String { t("Download records", "下载记录") }
+    var clearCookiesOption: String { t("Cookies and site data", "Cookies 和站点数据") }
+    var clearCacheOption: String { t("Cached files", "缓存文件") }
+    var clearPermissionsOption: String { t("Site permissions", "站点权限") }
+    var clearZoomOption: String { t("Page zoom levels", "页面缩放设置") }
+    var clearDataButton: String { t("Clear Data", "清除数据") }
+    var clearDataWorking: String { t("Clearing…", "正在清除…") }
+    var clearDataDone: String { t("Browsing data cleared", "浏览数据已清除") }
+    var clearDataCookiesAlways: String {
+        t("Cookies, site data, and cached files are always cleared completely.",
+          "Cookies、站点数据和缓存文件始终会被完整清除。")
+    }
+
+    // Session restore
+    var startup: String { t("On startup", "启动时") }
+    var startupNewTab: String { t("Open the New Tab page", "打开新标签页") }
+    var startupContinue: String { t("Continue where you left off", "继续上次的浏览") }
+    var startupHomePage: String { t("Open the home page", "打开主页") }
+    var homePage: String { t("Home page", "主页") }
+    var recentlyClosed: String { t("Recently Closed", "最近关闭") }
+
+    // Keyboard shortcuts page
+    var shortcutNavigation: String { t("Navigation", "导航") }
+    var shortcutTabs: String { t("Tabs", "标签页") }
+    var shortcutPage: String { t("Page", "页面") }
+    var shortcutPanels: String { t("Panels", "面板与页面") }
+    var focusAddressBar: String { t("Focus address bar", "聚焦地址栏") }
+    var nextTab: String { t("Next tab", "下一个标签页") }
+    var previousTab: String { t("Previous tab", "上一个标签页") }
+    var hardReload: String { t("Reload ignoring cache", "忽略缓存重新加载") }
+    var zoomIn: String { t("Zoom in", "放大") }
+    var zoomOut: String { t("Zoom out", "缩小") }
+    var resetZoom: String { t("Reset zoom", "重置缩放") }
+    var selectTabNumber: String { t("Select tab 1–9", "选择第 1–9 个标签页") }
+
+    func zoomLevel(_ level: Double) -> String {
+        "\(Int((pow(1.2, level) * 100).rounded()))%"
+    }
+
+    func findMatchCount(current: Int, total: Int) -> String {
+        "\(current)/\(total)"
+    }
+
+    var capabilityCamera: String { t("camera or screen", "摄像头或屏幕") }
+    var capabilityMicrophone: String { t("microphone or shared audio", "麦克风或共享音频") }
+    var capabilityLocation: String { t("location", "位置") }
+    var capabilityNotifications: String { t("notifications", "通知") }
+    var capabilityClipboard: String { t("clipboard", "剪贴板") }
+    var capabilityMIDI: String { t("MIDI devices", "MIDI 设备") }
+    var capabilityPointerLock: String { t("pointer lock", "指针锁定") }
+    var capabilityStorage: String { t("cross-site storage", "跨网站存储") }
+    var capabilitySensors: String { t("motion sensors", "运动传感器") }
+    var capabilityWindows: String { t("window management", "窗口管理") }
+    var capabilityDownloads: String { t("multiple downloads", "多次下载") }
+    var capabilityOther: String { t("additional browser capabilities", "其他浏览器能力") }
+
+    func permissionRequestTitle(_ origin: String) -> String {
+        t("Allow \(origin)?", "允许 \(origin)？")
+    }
+
+    func permissionRequestMessage(_ capabilities: String) -> String {
+        t("This page wants to use \(capabilities).", "此页面想要使用 \(capabilities)。")
+    }
+
+    // History page
+    var searchHistory: String { t("Search history", "搜索历史记录") }
+    var clearSearch: String { t("Clear search", "清除搜索") }
+    var noMatchingHistory: String { t("No matching history", "没有匹配的历史记录") }
+    var today: String { t("Today", "今天") }
+    var yesterday: String { t("Yesterday", "昨天") }
+    var clearHistoryTitle: String { t("Clear all history?", "清除全部历史记录？") }
+    var clearHistoryMessage: String {
+        t("All history will be deleted. This can’t be undone.",
+          "将删除全部历史记录，此操作无法撤销。")
+    }
+
+    func visitCount(_ count: Int) -> String {
+        t("\(count) visits", "\(count) 次访问")
+    }
+
+    // Bookmarks manager
+    var searchBookmarks: String { t("Search bookmarks", "搜索书签") }
+    var allBookmarks: String { t("All Bookmarks", "全部书签") }
+    var addCurrentPage: String { t("Add Current Page", "添加当前页") }
+    var alreadyBookmarked: String { t("Already bookmarked", "已收藏") }
+    var editBookmark: String { t("Edit Bookmark", "编辑书签") }
+    var moveToFolder: String { t("Move to Folder", "移到文件夹") }
+    var topLevel: String { t("Top Level", "顶层") }
+    var folder: String { t("Folder", "文件夹") }
+    var folderName: String { t("Folder name", "文件夹名称") }
+    var noMatchingBookmarks: String {
+        t("No bookmarks match your search", "没有匹配搜索的书签")
+    }
+    var emptyFolder: String { t("This folder is empty", "此文件夹为空") }
+    var deleteFolderTitle: String { t("Delete folder?", "删除文件夹？") }
+    var bookmarksPageClearSearch: String { clearSearch }
+    var importNoBookmarksTitle: String { t("No bookmarks to import", "没有可导入的书签") }
+
+    func deleteFolderMessage(_ name: String, count: Int) -> String {
+        if isChinese {
+            return count == 0
+                ? "“\(name)”将被删除，此操作无法撤销。"
+                : "“\(name)”及其中的 \(count) 个书签将被删除，此操作无法撤销。"
+        }
+        if count == 0 {
+            return "“\(name)” will be deleted. This can’t be undone."
+        }
+        let noun = count == 1 ? "bookmark" : "bookmarks"
+        return "“\(name)” and its \(count) \(noun) will be deleted. This can’t be undone."
+    }
+
+    // Tab search
+    var noMatchingTabs: String { t("No matching tabs", "没有匹配的标签页") }
+    var currentTab: String { t("Current tab", "当前标签页") }
+    var currentWorkspace: String { t("Current space", "当前工作区") }
+    var switchToTab: String { t("Switch to tab", "切换到标签页") }
+
+    // New tab page
+    var newTabEmptyTitle: String { t("Nothing here yet", "还没有内容") }
+    var newTabEmptyMessage: String {
+        t("Pages you visit and sites you bookmark will appear here.",
+          "浏览过的页面和收藏的网站会显示在这里。")
+    }
+    var newTabAddShortcut: String { t("Add Shortcut", "添加快捷方式") }
+    var newTabShortcutName: String { t("Name", "名称") }
+    var newTabShortcutURL: String { t("URL", "网址") }
+    var newTabManageBookmarks: String { t("Manage Bookmarks", "管理书签") }
+    var newTabOpenAppearance: String { t("Open Appearance Settings", "打开外观设置") }
+    var newTabBack: String { t("Back", "返回") }
+    var newTabSearchHint: String { omniboxPlaceholder }
+    var newTabAppearanceTitle: String { t("Appearance Settings", "外观设置") }
+    var newTabWallpaper: String { t("Wallpaper", "壁纸") }
+    var newTabWallpaperBuiltIn: String { t("Built-in", "内置") }
+    var newTabWallpaperLocal: String { t("Local", "本地") }
+    var newTabChooseWallpaper: String { t("Choose Image…", "选择图片…") }
+    var newTabRemoveWallpaper: String { t("Remove", "移除") }
+    var newTabCustomWallpaperEmpty: String {
+        t("Choose an image from your Mac.", "从 Mac 选择一张图片。")
+    }
+    var newTabWallpaperOverlay: String { t("Overlay Strength", "遮罩强度") }
+    var newTabShowBookmarks: String { t("Show Bookmarks", "显示书签") }
+    var newTabShowRecent: String { t("Show Recently Visited", "显示最近访问") }
+    var newTabMoreContent: String { t("More bookmarks and recent visits", "更多书签和最近访问") }
+
+    // Downloads page
+    func activeDownloadCount(_ count: Int) -> String {
+        t("\(count) active", "\(count) 个进行中")
+    }
+    var downloadPaused: String { t("Paused", "已暂停") }
+    var removeDownload: String { t("Remove", "移除") }
+    var clearDownloadSearch: String { t("Clear search", "清除搜索") }
+
+    // Site settings page
+    var backToAllSites: String { t("Back to All Sites", "返回所有网站") }
+    var clearAllSitePermissions: String {
+        t("Clear All Site Permissions", "清除所有网站权限")
+    }
+    var clearAllSitePermissionsMessage: String {
+        t("This removes every remembered permission. Pages will ask again the next time they request access.",
+          "这会移除所有已记住的权限决定。页面下次请求权限时会再次询问。")
+    }
+    var noSitePermissions: String { t("No Site Permissions", "暂无网站权限") }
+    var noPermissionsForSite: String {
+        t("No Permissions Remembered", "此网站暂无已记住的权限")
+    }
+    var resetToAsk: String { t("Reset to Ask", "重置为询问") }
+    var sitePermissionsRememberedHint: String {
+        t("Permissions you allow or deny in page permission dialogs are remembered here. Reset to Ask makes Peekr prompt again next time.",
+          "在页面权限对话框中允许或拒绝的权限会记录在这里。选择“重置为询问”后，页面下次请求时会再次弹窗。")
+    }
+
+    func sitePermissionCount(_ count: Int) -> String {
+        t("\(count) \(count == 1 ? "permission" : "permissions")",
+          "\(count) 项权限")
+    }
+
+    func deleteSitePermissions(_ origin: String) -> String {
+        t("Delete site permissions for \(origin)", "删除 \(origin) 的网站权限")
+    }
+
+    func title(for page: InternalPage) -> String {
+        switch page {
+        case .newTab: return newTab
+        case .history: return history
+        case .downloads: return downloads
+        case .bookmarks: return bookmarksManager
+        case .settings: return settings
+        case .siteSettings: return siteSettings
+        case .clearData: return clearBrowsingData
+        case .shortcuts: return shortcuts
+        }
+    }
+
+    func sitePermissionName(_ permission: SitePermissionStore.Permission) -> String {
+        switch permission {
+        case .camera: return t("Camera", "摄像头")
+        case .microphone: return t("Microphone", "麦克风")
+        case .geolocation: return t("Location", "位置")
+        case .notifications: return t("Notifications", "通知")
+        case .clipboard: return t("Clipboard", "剪贴板")
+        case .midi: return t("MIDI", "MIDI 设备")
+        case .pointerLock: return t("Pointer Lock", "指针锁定")
+        case .storageAccess: return t("Cross-site Storage", "跨网站存储")
+        case .sensors: return t("Motion Sensors", "运动传感器")
+        case .windowManagement: return t("Window Management", "窗口管理")
+        case .downloads: return t("Automatic Downloads", "自动下载")
+        case .other: return t("Other", "其他")
+        }
+    }
+
+    // Internal page shell
+    var showAllDownloads: String { t("Show All Downloads", "显示全部下载") }
+    var internalPagePlaceholder: String {
+        t("This page is coming in a later update.", "此页面将在后续更新中提供。")
+    }
 }

@@ -10,9 +10,11 @@ struct DownloadCenter: View {
     let onCancel: (UInt32) -> Void
     let onRemove: (UInt32) -> Void
     let onDismiss: () -> Void
+    var onShowAll: (() -> Void)? = nil
 
     @State private var searchText = ""
     @State private var searchVisible = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var loc: Localized { settings.strings }
 
@@ -102,6 +104,13 @@ struct DownloadCenter: View {
                     action: toggleSearch
                 )
                 Menu {
+                    if let onShowAll {
+                        Button(loc.showAllDownloads) {
+                            onShowAll()
+                            onDismiss()
+                        }
+                        Divider()
+                    }
                     Button(loc.openDownloadsFolder, action: openDownloadsFolder)
                     if downloads.hasFinishedDownloads {
                         Divider()
@@ -128,7 +137,7 @@ struct DownloadCenter: View {
     }
 
     private func toggleSearch() {
-        withAnimation(Motion.dropdownOpen) {
+        withAnimation(reduceMotion ? nil : (searchVisible ? Motion.dropdownClose : Motion.dropdownOpen)) {
             searchVisible.toggle()
         }
         if !searchVisible { searchText = "" }

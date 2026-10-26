@@ -11,6 +11,9 @@ final class StatusBarController: NSObject {
     private let isPanelVisible: () -> Bool
     private let onToggle: () -> Void
     private let onTogglePin: () -> Void
+    private let onShowHistory: () -> Void
+    private let onShowDownloads: () -> Void
+    private let onShowBookmarks: () -> Void
     private let onImportBrowserData: () -> Void
     private let onPreferences: () -> Void
     private let onQuit: () -> Void
@@ -19,6 +22,9 @@ final class StatusBarController: NSObject {
     private var pinItem: NSMenuItem!
     private var autoHideItem: NSMenuItem!
     private var autoHideItems: [AutoHidePolicy: NSMenuItem] = [:]
+    private var historyItem: NSMenuItem!
+    private var downloadsItem: NSMenuItem!
+    private var bookmarksItem: NSMenuItem!
     private var importItem: NSMenuItem!
     private var prefsItem: NSMenuItem!
     private var quitItem: NSMenuItem!
@@ -29,6 +35,9 @@ final class StatusBarController: NSObject {
         isPanelVisible: @escaping () -> Bool,
         onToggle: @escaping () -> Void,
         onTogglePin: @escaping () -> Void,
+        onShowHistory: @escaping () -> Void,
+        onShowDownloads: @escaping () -> Void,
+        onShowBookmarks: @escaping () -> Void,
         onImportBrowserData: @escaping () -> Void,
         onPreferences: @escaping () -> Void,
         onQuit: @escaping () -> Void
@@ -38,6 +47,9 @@ final class StatusBarController: NSObject {
         self.isPanelVisible = isPanelVisible
         self.onToggle = onToggle
         self.onTogglePin = onTogglePin
+        self.onShowHistory = onShowHistory
+        self.onShowDownloads = onShowDownloads
+        self.onShowBookmarks = onShowBookmarks
         self.onImportBrowserData = onImportBrowserData
         self.onPreferences = onPreferences
         self.onQuit = onQuit
@@ -69,6 +81,11 @@ final class StatusBarController: NSObject {
 
         menu.addItem(.separator())
 
+        historyItem = addItem(to: menu, action: #selector(historyAction), key: "y")
+        downloadsItem = addItem(to: menu, action: #selector(downloadsAction), key: "")
+        bookmarksItem = addItem(to: menu, action: #selector(bookmarksAction), key: "")
+
+        menu.addItem(.separator())
         importItem = addItem(to: menu, action: #selector(importAction), key: "")
 
         menu.addItem(.separator())
@@ -114,6 +131,9 @@ final class StatusBarController: NSObject {
         settings.autoHidePolicy = policy
         settings.persist()
     }
+    @objc private func historyAction() { onShowHistory() }
+    @objc private func downloadsAction() { onShowDownloads() }
+    @objc private func bookmarksAction() { onShowBookmarks() }
     @objc private func importAction() { onImportBrowserData() }
     @objc private func prefsAction() { onPreferences() }
     @objc private func quitAction() { onQuit() }
@@ -132,6 +152,9 @@ extension StatusBarController: NSMenuDelegate {
             autoHideItems[policy]?.state =
                 settings.autoHidePolicy == policy ? .on : .off
         }
+        historyItem.title = loc.history
+        downloadsItem.title = loc.downloads
+        bookmarksItem.title = loc.bookmarksManager
         importItem.title = loc.importOpenTabs
         prefsItem.title = loc.preferences
         quitItem.title = loc.quit

@@ -40,7 +40,7 @@ make clean
 
 **环境要求**：macOS 14+ 可运行；真正的 Liquid Glass 需要 Xcode 26 编译，低版本自动降级为 `.ultraThinMaterial`（见下文）。
 
-**用户数据**位于 `~/Library/Application Support/Peekr/`：`apps.json`（Spaces、标签与分组）、`bookmarks.json`、`settings.json`、图标缓存及 `Chromium/`。Agent Access 开启时还有 `agent.json` 和 CLI 页签记录。调试时使用隔离数据目录，避免误删真实登录态。
+**用户数据**位于 `~/Library/Application Support/Peekr/`：`apps.json`（Spaces、标签与分组）、`bookmarks.json`、`history.json`、`settings.json`、`profiles.json`、`downloads.json`、`permissions.json`、`zoom.json`、`recently-closed.json`、图标缓存及 `Chromium/`。Agent Access 开启时还有 `agent.json` 和 CLI 页签记录。调试时使用隔离数据目录，避免误删真实登录态。
 
 ## 架构要点（需跨多个文件才能看清的部分）
 
@@ -78,6 +78,15 @@ make clean
 
 ### WebView 生命周期
 `WebViewManager` 按标签 UUID 缓存一个 `WebEngine`，生产工厂只创建 `CefSwiftEngine`；跨面板显隐复用同一个原生 CEF 页面。当前页面导航状态映射到 `BrowserState`。地址栏 URL 与所选搜索引擎的解析集中在 `WebViewManager.url(fromOmnibox:searchEngine:)`。Agent 后台页面由同一个 manager 缓存并在展示时复用；所有页面共用持久 `CefProfile.default`。
+
+### 内部页面（`peekr://`）
+浏览器级页面（新标签、历史、下载、书签、站点设置、清除数据、快捷键）不是 CEF 的 `chrome://` 页面，而是 `InternalPage` + SwiftUI 视图。`WebViewManager.openInternalPage/closeInternalPage` 在 `BrowserState.internalPage` 上切面；`PanelRootView` 让 CEF 视图保持挂载但隐藏，并把 `InternalPageHost` 覆盖在同一区域。内部页期间 `mirror` 不覆盖地址/标题，`goBack` 先关闭内部页。`WebApp.urlString` 为 `peekr://…` 的标签不创建 CEF 引擎；`⌘T` 新建的就是这种标签。所有内部页路由必须能由 `InternalPage.from(url)` 往返解析。
+
+### 隐私 Space、音频与清除数据
+- `Workspace.isPrivate` 的 Space 使用 `CefProfile.incognito()`，只存在于本次会话；`AppModel.persist()` 过滤私有 Space，`WebViewManager.recordHistory`/下载写入也按私有标签跳过。
+- 音频检测没有 CEF JS 返回值 API，靠页面注入的 media probe 通过 `console.log("__PEEKR_AUDIO__:1|0")` 单向上报；`WebViewManager` 更新 `AppModel.audibleTabIDs`，rail 显示扬声器，`HibernationPolicy` 不再休眠可听页面。iframe/Shadow DOM/WebRTC 音频检测不到。
+- 清除数据由 `BrowsingDataCleaner`（历史/下载/权限/缩放）与 CefKit `CefBrowsingData`（Cookies/HTTP cache）组成；CEF 只能整库删除，时间范围仅适用于 Peekr 自有数据。入口是 `peekr://clear-data` 和 `⇧⌘⌫`。
+- 启动行为在 `AppDelegate.applyStartupBehavior()`；最近关闭栈落在 `recently-closed.json`，私有标签不入栈。
 
 ### Liquid Glass 抽象
 **所有玻璃效果只走两个入口**，不要在视图里直接写 `glassEffect`：

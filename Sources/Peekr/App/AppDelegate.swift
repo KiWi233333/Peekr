@@ -7,6 +7,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var bookmarks: BookmarksModel!
     private var icons: IconStore!
     private var badges: BadgeStore!
+    private var engineFactory: CefSwiftEngineFactory!
     private var manager: WebViewManager!
     private var panel: PanelController!
     private var edge: EdgeTrigger!
@@ -40,19 +41,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         icons.warm(model.apps)
         badges = BadgeStore()
 
+        let engineFactory = CefSwiftEngineFactory(
+            onOpenNewTab: { [weak self] url, foreground in
+                self?.manager.openInNewTab(urlString: url.absoluteString, foreground: foreground)
+            },
+            strings: { [weak self] in self?.settings.strings ?? Localized(isChinese: false) },
+            allowsPermissionMemory: { [weak self] in self?.settings.rememberPermissions ?? true },
+            blocksPopups: { [weak self] in self?.settings.blockPopups ?? true },
+            searchEngine: currentSearchEngine
+        )
+        self.engineFactory = engineFactory
+
         manager = WebViewManager(
             model: model,
-            factory: CefSwiftEngineFactory(
-                onOpenNewTab: { [weak self] url, foreground in
-                    self?.manager.openInNewTab(urlString: url.absoluteString, foreground: foreground)
-                },
-                strings: { [weak self] in self?.settings.strings ?? Localized(isChinese: false) },
-                searchEngine: currentSearchEngine
-            ),
+            factory: engineFactory,
             badges: badges,
             icons: icons,
             searchEngine: currentSearchEngine
         )
+        manager.browsingData.clearCEFData = { cookies, cache, completion in
+            engineFactory.clearBrowsingData(
+                cookies: cookies,
+                cache: cache,
+                completion: completion
+            )
+        }
         model.onWorkspaceSwitch = { [weak self] oldID, newID in
             self?.manager.prepareForWorkspaceSwitch(from: oldID, to: newID)
         }
@@ -62,6 +75,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Tear down a deleted tab's web engine (stops background media, frees the
         // process) and its badge — the model itself stays web-agnostic.
         model.onRemove = { [weak self] id in self?.manager.discard(id) }
+        applyStartupBehavior()
+        manager.history.prune(olderThan: settings.historyRetentionDays)
+        manager.setDefaultZoom(settings.defaultZoom)
         panel = PanelController(model: model, settings: settings, manager: manager, icons: icons, badges: badges, bookmarks: bookmarks)
         panel.onQuitShortcut = { [weak self] in self?.requestQuit() }
         panel.onVisibilityChange = { [weak self] visible in
@@ -102,6 +118,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             onImportBrowserData: { [weak self] in self?.browserImports.show() },
             onInstallAgentCLI: { [weak self] in self?.installAgentCLI() }
         )
+        panel.onShowPreferences = { [weak self] in self?.prefs.show() }
 
         statusBar = StatusBarController(
             model: model,
@@ -109,6 +126,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             isPanelVisible: { [weak self] in self?.panel.isVisible ?? false },
             onToggle: { [weak self] in self?.panel.toggle() },
             onTogglePin: { [weak self] in self?.model.isPinned.toggle() },
+            onShowHistory: { [weak self] in
+                self?.panel.show()
+                self?.manager.openInternalPage(.history)
+            },
+            onShowDownloads: { [weak self] in
+                self?.panel.show()
+                self?.manager.openInternalPage(.downloads)
+            },
+            onShowBookmarks: { [weak self] in
+                self?.panel.show()
+                self?.manager.openInternalPage(.bookmarks)
+            },
             onImportBrowserData: { [weak self] in self?.browserImports.show() },
             onPreferences: { [weak self] in self?.prefs.show() },
             onQuit: { [weak self] in self?.requestQuit() }
@@ -171,6 +200,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         #if DEBUG
         // Deterministic real-CEF smoke hook for local/CI bundles. It is compiled
         // out of release builds and never changes persisted settings or tabs.
+        if ProcessInfo.processInfo.environment["PEEKR_SMOKE_PRIVATE_SPACE"] == "1" {
+            model.addPrivateWorkspace()
+            if let selectedID = model.selectedID {
+                manager.activate(selectedID)
+            }
+        }
         if ProcessInfo.processInfo.environment["PEEKR_SMOKE_SHOW_PANEL"] == "1" {
             if let rawURL = ProcessInfo.processInfo.environment["PEEKR_SMOKE_URL"],
                let firstID = model.apps.first?.id {
@@ -184,7 +219,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     break smokeTarget
                 }
             }
-            panel.show()
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(for: .seconds(1))
+                self?.panel.show()
+            }
+        }
+        if ProcessInfo.processInfo.environment["PEEKR_SMOKE_TAB_SEARCH"] == "1" {
+            manager.toggleTabSearch()
+        }
+        if let query = ProcessInfo.processInfo.environment["PEEKR_SMOKE_FIND"], !query.isEmpty {
+            manager.openFindBar()
+            manager.updateFindQuery(query)
+        }
+        if ProcessInfo.processInfo.environment["PEEKR_SMOKE_CLEAR_DATA"] == "1" {
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(for: .seconds(2))
+                self?.manager.browsingData.clear(BrowsingDataSelection()) {
+                    FileHandle.standardError.write(
+                        Data("__PEEKR_CLEAR_DATA_DONE__\n".utf8)
+                    )
+                }
+            }
+        }
+        if ProcessInfo.processInfo.environment["PEEKR_SMOKE_DEVTOOLS"] == "1" {
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(for: .seconds(3))
+                self?.manager.toggleDevTools()
+            }
         }
         if let rawDelay = ProcessInfo.processInfo.environment["PEEKR_SMOKE_QUIT_AFTER"],
            let delay = Double(rawDelay) {
@@ -249,6 +310,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    private func applyStartupBehavior() {
+        #if DEBUG
+        guard ProcessInfo.processInfo.environment["PEEKR_SMOKE_SHOW_PANEL"] != "1" else { return }
+        #endif
+        switch settings.startupBehavior {
+        case .continueWhereLeftOff:
+            break
+        case .newTab:
+            model.selectOrAddNewTabPage()
+        case .homePage:
+            let trimmed = settings.homePage.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty,
+                  let url = WebViewManager.url(
+                      fromOmnibox: trimmed,
+                      searchEngine: settings.searchEngine
+                  ) else {
+                model.selectOrAddNewTabPage()
+                return
+            }
+            if let existing = model.activeWorkspace.tabs.first(where: {
+                $0.urlString == url.absoluteString
+            }) {
+                model.select(existing.id)
+            } else {
+                model.addApp(title: url.displayHost ?? trimmed, urlString: url.absoluteString)
+            }
+        }
+    }
+
     private func applyPreference(_ effect: PreferenceEffect) {
         switch effect {
         case .layout:
@@ -266,6 +356,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             prefs.refreshTitle()
         case .bookmarkSync:
             applyBookmarkSync()
+        case .browser:
+            manager.setDefaultZoom(settings.defaultZoom)
+            manager.history.prune(olderThan: settings.historyRetentionDays)
         }
     }
 

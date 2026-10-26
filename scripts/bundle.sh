@@ -56,6 +56,7 @@ cp Resources/Info.plist "$APP/Contents/Info.plist"
 if [ -f Resources/AppIcon.icns ]; then
   cp Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 fi
+cp -R Resources/NewTabWallpapers "$APP/Contents/Resources/"
 
 # Ship CEF's BSD license with the product.
 CEF_LICENSE="Vendor/CefSwift/Sources/CCef/LICENSE.CEF.txt"

@@ -18,6 +18,7 @@ final class PanelController {
 
     var onVisibilityChange: ((Bool) -> Void)?
     var onQuitShortcut: (() -> Void)?
+    var onShowPreferences: (() -> Void)?
 
     private let panel: SlidePanel
     private var hosting: NSHostingView<PanelRootView>!
@@ -70,6 +71,7 @@ final class PanelController {
         panelSurface.autoresizingMask = [.width, .height]
         panel.contentView = panelSurface
         panel.onCloseTabShortcut = { [weak self] in self?.closeSelectedTab() }
+        panel.onCloseWindowShortcut = { [weak self] in self?.hide() }
         panel.onQuitShortcut = { [weak self] in self?.onQuitShortcut?() }
 
         // Real callbacks once self is fully initialised.
@@ -305,7 +307,15 @@ final class PanelController {
             }
             return true
         }
-        guard let chars = event.charactersIgnoringModifiers else { return false }
+        // ⌘⇧⌫ has no printable character; branch on keyCode before the
+        // character switch.
+        if event.keyCode == UInt16(kVK_Delete),
+           flags.contains(.command),
+           flags.contains(.shift) {
+            manager.openInternalPage(.clearData)
+            return true
+        }
+        guard let chars = event.charactersIgnoringModifiers?.lowercased() else { return false }
         switch chars {
         case "l": manager.state.focusOmniboxToken += 1
         case "r":
@@ -318,21 +328,50 @@ final class PanelController {
         case "]": manager.goForward()
         case "d":
             let url = manager.state.urlString
-            guard !url.isEmpty else { return false }
-            let title = manager.state.title
-            bookmarks.add(title: title.isEmpty ? url : title, urlString: url)
+            guard !url.isEmpty, manager.state.internalPage == nil else { return false }
+            if let existing = bookmarks.bookmark(for: url) {
+                bookmarks.remove(existing.id)
+            } else {
+                let title = manager.state.title
+                bookmarks.add(title: title.isEmpty ? url : title, urlString: url)
+            }
         case "f": manager.openFindBar()
+        case "g":
+            guard manager.findBar.isVisible else { return false }
+            if flags.contains(.shift) {
+                manager.findPrevious()
+            } else {
+                manager.findNext()
+            }
         case "=", "+": manager.zoomIn()
         case "-": manager.zoomOut()
         case "0": manager.zoomReset()
         case "t":
-            if event.modifierFlags.contains(.shift) {
+            if flags.contains(.shift) {
                 if let app = model.reopenLastClosedTab() { manager.activate(app.id) }
             } else {
                 let app = model.addBlankTab()
                 manager.activate(app.id)
                 manager.state.focusOmniboxToken += 1
             }
+        case "y":
+            manager.openInternalPage(.history)
+        case "j":
+            guard flags.contains(.shift) else { return false }
+            manager.openInternalPage(.downloads)
+        case "o":
+            guard flags.contains(.shift) else { return false }
+            manager.openInternalPage(.bookmarks)
+        case "a":
+            guard flags.contains(.shift) else { return false }
+            manager.toggleTabSearch()
+        case "i":
+            guard flags.contains(.option) else { return false }
+            manager.toggleDevTools()
+        case "u":
+            manager.viewSource()
+        case ",":
+            onShowPreferences?()
         default:
             guard let n = Int(chars), let id = model.selectShortcutTab(n) else { return false }
             manager.activate(id)
@@ -340,17 +379,22 @@ final class PanelController {
         return true
     }
 
-    /// Closes only the active Peekr tab. The panel itself remains visible; a
-    /// Cmd+W shortcut must never be interpreted as closing the window.
     private func closeSelectedTab() {
         tabRailFocused = false
-        guard let id = model.selectedID else { return }
+        guard let id = model.selectedID, !Self.shouldHideForCloseTab(tabCount: model.apps.count) else {
+            hide()
+            return
+        }
         model.removeApp(id)
         if let nextID = model.selectedID {
             manager.activate(nextID)
         } else {
             manager.state.currentID = nil
         }
+    }
+
+    static func shouldHideForCloseTab(tabCount: Int) -> Bool {
+        tabCount <= 1
     }
 
     private func handleControlTab(reverse: Bool) {

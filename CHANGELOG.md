@@ -7,7 +7,60 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Native browser pages served over `peekr://`: New Tab, History, Downloads,
+  Bookmarks, Site Settings, and Keyboard Shortcuts. They share the panel's
+  chrome and support back/reload semantics without leaving the panel.
+- A searchable history manager with day grouping, per-entry deletion, and
+  clear-all; visit counts and first/last visit timestamps are retained.
+- Downloads now persist across launches and support pause, resume, retry,
+  cancel, open, reveal, and clear-finished from a dedicated page.
+- A full bookmark manager with folder creation, editing, moving, recursive
+  deletion, search, import, and HTML export. The toolbar star toggles the
+  current page.
+- Tab search (⇧⌘A) across every Space, with keyboard navigation and direct
+  tab switching.
+- Find-in-page match counts and a case-sensitivity toggle.
+- Per-site permission memory with a “Remember for this site” choice, plus a
+  Site Settings page to review and reset decisions.
+- Script-initiated pop-up blocking with an indicator that can allow pop-ups.
+- Security indicator in the address bar, a page-title/site-settings overflow
+  menu, view-source, background-tab link opening, and DevTools shortcuts.
+- Privacy preferences for permission memory, pop-up blocking, history
+  retention, and default page zoom.
+- A persistent download store (`downloads.json`) and site-permission store
+  (`permissions.json`).
+- Private Spaces backed by an in-memory Chromium profile. Private tabs never
+  write history or download records and disappear on quit.
+- A tab audio indicator: injected page-side probes report media playback
+  through a console channel, feed the rail speaker icon, and keep audible
+  background tabs out of automatic hibernation.
+- Clear Browsing Data (`peekr://clear-data`, ⇧⌘⌫): history, finished downloads,
+  cookies/site data, HTTP cache, site permissions, and zoom levels, with
+  progress and completion states.
+- Startup behavior: New Tab page, continue where you left off, or a configured
+  home page. Preferences exposes the choice and home-page field.
+- Recently closed tabs now persist across launches (`recently-closed.json`)
+  instead of living only in memory.
+
+### Changed
+- New tabs open Peekr’s native New Tab page instead of a search-engine
+  homepage; initial and newly created workspaces still open the configured
+  provider’s homepage.
+- `⌘D` now toggles the current page’s bookmark instead of only adding one.
+- Omnibox tab suggestions switch to the existing tab instead of loading its
+  URL again, and the Paste and Go / Paste and Search menu items work.
+
 ### Fixed
+- `⇧⌘R` and `⇧⌘T` now work; the previous comparison used shift-preserved
+  characters and never matched.
+- `peekr://site-settings` without a query now resolves to the unfiltered Site
+  Settings page instead of being sent to Chromium.
+- Download lifecycle tests no longer write to the real downloads directory.
+- Download history keeps a completed row when Chromium reuses its numeric id
+  after a relaunch, instead of overwriting it with the new download.
+- The panel can now show native pages over a mounted CEF view without
+  recreating or navigating the underlying engine.
 - The panel edge no longer stacks hand-drawn layers: the window border stroke and
   the web card's drop shadow are gone, so the edge is the panel material plus the
   system window shadow instead of reading as a shadow/border band.

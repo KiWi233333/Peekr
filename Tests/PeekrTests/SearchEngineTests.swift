@@ -40,7 +40,7 @@ final class SearchEngineTests: XCTestCase {
         }
     }
 
-    func testInitialNewTabAndNewWorkspaceFollowCurrentSearchEngine() {
+    func testNewTabOpensTheNewTabPageWhileWorkspacesKeepTheProviderHomepage() {
         let storeURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("peekr-search-engine-\(UUID().uuidString).json")
         var selected: SearchEngine = .bing
@@ -54,8 +54,8 @@ final class SearchEngineTests: XCTestCase {
 
         selected = .duckDuckGo
         let tab = model.addBlankTab()
-        XCTAssertEqual(tab.title, SearchEngine.duckDuckGo.displayName)
-        XCTAssertEqual(tab.urlString, SearchEngine.duckDuckGo.homepageURL.absoluteString)
+        XCTAssertEqual(tab.title, "New Tab")
+        XCTAssertEqual(tab.urlString, InternalPage.newTab.urlString)
 
         selected = .baidu
         let workspace = model.addWorkspace()
@@ -184,5 +184,19 @@ final class SearchEngineTests: XCTestCase {
         XCTAssertEqual(suggestions[0].target, current.urlString)
         XCTAssertEqual(suggestions[1].target, other.urlString)
         XCTAssertEqual(suggestions[2].kind, .openURL)
+    }
+
+    func testTabSuggestionsSwitchToTheExistingTab() throws {
+        let tab = WebApp(title: "Docs", urlString: "https://docs.example/guide")
+        let suggestions = OmniboxSuggestions.local(
+            for: "docs",
+            tabs: [tab],
+            bookmarks: [],
+            searchLabel: "Search with Google"
+        )
+
+        let tabSuggestion = try XCTUnwrap(suggestions.first)
+        XCTAssertEqual(tabSuggestion.kind, .tab)
+        XCTAssertEqual(tabSuggestion.action, .switchToTab(tab.id))
     }
 }

@@ -1,0 +1,26 @@
+Lumno new-tab wallpaper assets
+
+Source repository:
+https://github.com/kubai087/lumno-extension
+
+The WebP images in this directory are unmodified copies of assets from the
+repository's main branch. Local files and their corresponding original paths
+under assets/wallpapers/ are listed below. Each local thumbnail has the same
+mapping, with "-thumb" appended to both basenames.
+
+topographic-light.webp
+  lumno-newtab-white-linocut-topographic.webp
+monet-field.webp
+  lumno-newtab-monet-field-white.webp
+monet-coast.webp
+  lumno-newtab-monet-coastal-white.webp
+shanshui-light.webp
+  lumno-newtab-white-shanshui.webp
+topographic-dark.webp
+  lumno-newtab-dark-linocut-topographic.webp
+monet-nocturne.webp
+  lumno-newtab-dark-monet-lily-nocturne.webp
+
+These Lumno assets are licensed under the GNU General Public License,
+version 3 (GPL-3.0). The complete license text, copied from the source
+repository's LICENSE file, is included in LICENSE.txt in this directory.

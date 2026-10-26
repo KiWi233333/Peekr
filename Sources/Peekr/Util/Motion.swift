@@ -43,6 +43,15 @@ enum Motion {
     static let iconSwap = Animation.easeInOut(duration: Duration.iconSwap)
     static let dropdownOpen = standard(Duration.dropdownOpen)
     static let dropdownClose = standard(Duration.dropdownClose)
+    static let popoverScale: CGFloat = 0.97
+    static let modalScale: CGFloat = 0.96
+
+    static func popoverTransition(anchor: UnitPoint, reduceMotion: Bool) -> AnyTransition {
+        reduceMotion
+            ? .opacity
+            : .scale(scale: popoverScale, anchor: anchor).combined(with: .opacity)
+    }
+
     /// Short grace period that lets an omnibox suggestion receive a click after
     /// AppKit ends editing on the native text field.
     static let suggestionDismissGrace = Swift.Duration.milliseconds(120)

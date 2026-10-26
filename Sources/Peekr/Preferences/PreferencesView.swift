@@ -6,6 +6,7 @@ enum PreferenceEffect {
     case launchAtLogin
     case language
     case bookmarkSync
+    case browser
 }
 
 struct PreferencesView: View {
@@ -31,6 +32,8 @@ struct PreferencesView: View {
                 onInstallAgentCLI: onInstallAgentCLI
             )
             .tabItem { Label(loc.browser, systemImage: "globe") }
+            PrivacyTab(settings: settings)
+                .tabItem { Label(loc.privacy, systemImage: "hand.raised") }
             AppsTab(model: model, bookmarks: bookmarks, settings: settings, icons: icons)
                 .tabItem { Label(loc.apps, systemImage: "square.grid.2x2") }
             AboutTab(settings: settings)
@@ -49,6 +52,8 @@ struct PreferencesView: View {
         }
         .onChange(of: settings.language) { _, _ in onApply(.language) }
         .onChange(of: settings.bookmarkSync) { _, _ in onApply(.bookmarkSync) }
+        .onChange(of: settings.defaultZoom) { _, _ in onApply(.browser) }
+        .onChange(of: settings.historyRetentionDays) { _, _ in onApply(.browser) }
         .onDisappear {
             persistTask?.cancel()
             settings.persist()
@@ -144,9 +149,31 @@ private struct GeneralTab: View {
                     }
                 }
                 .pickerStyle(.menu)
+                Picker(loc.startup, selection: $settings.startupBehavior) {
+                    ForEach(StartupBehavior.allCases) { behavior in
+                        Text(startupName(behavior)).tag(behavior)
+                    }
+                }
+                .pickerStyle(.menu)
+                if settings.startupBehavior == .homePage {
+                    TextField(loc.homePage, text: $settings.homePage, prompt: Text(loc.homePage))
+                        .textFieldStyle(.roundedBorder)
+                    Text(loc.omniboxPlaceholder)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
         }
         .formStyle(.grouped)
+    }
+
+    private func startupName(_ behavior: StartupBehavior) -> String {
+        switch behavior {
+        case .newTab: return loc.startupNewTab
+        case .continueWhereLeftOff: return loc.startupContinue
+        case .homePage: return loc.startupHomePage
+        }
     }
 
     private func slider(_ label: String, value: Binding<Double>, range: ClosedRange<Double>, unit: String, decimals: Int = 0) -> some View {
@@ -346,6 +373,62 @@ private struct BrowserTab: View {
         }
         .formStyle(.grouped)
     }
+}
+
+// MARK: - Privacy
+
+private struct PrivacyTab: View {
+    @Bindable var settings: Settings
+
+    private var loc: Localized { settings.strings }
+
+    var body: some View {
+        Form {
+            Section(loc.privacy) {
+                Toggle(isOn: $settings.rememberPermissions) {
+                    Text(loc.rememberPermissions)
+                }
+                Text(loc.rememberPermissionsHint)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                Toggle(isOn: $settings.blockPopups) {
+                    Text(loc.blockPopups)
+                }
+                Text(loc.blockPopupsHint)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Section(loc.historyRetention) {
+                Picker(loc.historyRetention, selection: $settings.historyRetentionDays) {
+                    ForEach(Self.retentionOptions, id: \.self) { days in
+                        Text(loc.historyRetentionName(days)).tag(days)
+                    }
+                }
+                .pickerStyle(.menu)
+            }
+
+            Section(loc.defaultZoom) {
+                Picker(loc.defaultZoom, selection: $settings.defaultZoom) {
+                    ForEach(Self.zoomOptions, id: \.self) { level in
+                        Text(loc.zoomLevel(level)).tag(level)
+                    }
+                }
+                .pickerStyle(.menu)
+                Text(loc.defaultZoomHint)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .formStyle(.grouped)
+    }
+
+    private static let retentionOptions = [0, 30, 90, 365]
+    private static let zoomOptions: [Double] = [-2, -1, 0, 1, 2, 3]
 }
 
 // MARK: - Apps

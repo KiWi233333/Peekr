@@ -40,6 +40,23 @@ enum CefPermissionPrompt {
         return labels
     }
 
+    static func labels(for kinds: CefPermissionKind, strings: Localized) -> [String] {
+        var labels: [String] = []
+        if kinds.contains(.camera) { labels.append(strings.capabilityCamera) }
+        if kinds.contains(.microphone) { labels.append(strings.capabilityMicrophone) }
+        if kinds.contains(.geolocation) { labels.append(strings.capabilityLocation) }
+        if kinds.contains(.notifications) { labels.append(strings.capabilityNotifications) }
+        if kinds.contains(.clipboard) { labels.append(strings.capabilityClipboard) }
+        if kinds.contains(.midi) { labels.append(strings.capabilityMIDI) }
+        if kinds.contains(.pointerLock) { labels.append(strings.capabilityPointerLock) }
+        if kinds.contains(.storageAccess) { labels.append(strings.capabilityStorage) }
+        if kinds.contains(.sensors) { labels.append(strings.capabilitySensors) }
+        if kinds.contains(.windowManagement) { labels.append(strings.capabilityWindows) }
+        if kinds.contains(.downloads) { labels.append(strings.capabilityDownloads) }
+        if kinds.contains(.other) { labels.append(strings.capabilityOther) }
+        return labels
+    }
+
     static func originLabel(_ origin: String) -> String {
         if let url = URL(string: origin), let host = url.host, !host.isEmpty {
             return host
@@ -48,17 +65,48 @@ enum CefPermissionPrompt {
         return trimmed.isEmpty ? "This page" : String(trimmed.prefix(160))
     }
 
-    static func decide(_ request: CefPermissionRequest) -> CefPermissionDecision {
-        let requested = labels(for: request.kinds)
-        guard !requested.isEmpty else { return .deny }
+    static func permissions(for kinds: CefPermissionKind) -> [SitePermissionStore.Permission] {
+        var permissions: [SitePermissionStore.Permission] = []
+        if kinds.contains(.camera) { permissions.append(.camera) }
+        if kinds.contains(.microphone) { permissions.append(.microphone) }
+        if kinds.contains(.geolocation) { permissions.append(.geolocation) }
+        if kinds.contains(.notifications) { permissions.append(.notifications) }
+        if kinds.contains(.clipboard) { permissions.append(.clipboard) }
+        if kinds.contains(.midi) { permissions.append(.midi) }
+        if kinds.contains(.pointerLock) { permissions.append(.pointerLock) }
+        if kinds.contains(.storageAccess) { permissions.append(.storageAccess) }
+        if kinds.contains(.sensors) { permissions.append(.sensors) }
+        if kinds.contains(.windowManagement) { permissions.append(.windowManagement) }
+        if kinds.contains(.downloads) { permissions.append(.downloads) }
+        if kinds.contains(.other) { permissions.append(.other) }
+        return permissions
+    }
 
+    static func decide(
+        _ request: CefPermissionRequest,
+        strings: Localized = Localized(isChinese: false),
+        canRemember: Bool = true
+    ) -> CefPermissionDecision {
+        let permissions = permissions(for: request.kinds)
+        guard !permissions.isEmpty else { return .deny }
+
+        let remembered = permissions.map {
+            SitePermissionStore.shared.decision(origin: request.origin, permission: $0)
+        }
+        if !remembered.contains(where: { $0 == nil }) {
+            return remembered.allSatisfy { $0 == true } ? .allow : .deny
+        }
+
+        let requested = labels(for: request.kinds, strings: strings)
         let origin = originLabel(request.origin)
         let alert = NSAlert()
         alert.alertStyle = .warning
-        alert.messageText = "Allow \(origin)?"
-        alert.informativeText = "This page wants to use \(naturalList(requested))."
-        alert.addButton(withTitle: "Allow")
-        alert.addButton(withTitle: "Deny")
+        alert.messageText = strings.permissionRequestTitle(origin)
+        alert.informativeText = strings.permissionRequestMessage(naturalList(requested))
+        alert.addButton(withTitle: strings.allow)
+        alert.addButton(withTitle: strings.deny)
+        alert.showsSuppressionButton = canRemember
+        alert.suppressionButton?.title = strings.rememberForThisSite
         // Avoid granting a sensitive capability through an accidental Return;
         // Escape always takes the deny path.
         alert.buttons[0].keyEquivalent = ""
@@ -76,7 +124,15 @@ enum CefPermissionPrompt {
             return .deny
         }
         #endif
-        return alert.runModal() == .alertFirstButtonReturn ? .allow : .deny
+        let allowed = alert.runModal() == .alertFirstButtonReturn
+        if canRemember, alert.suppressionButton?.state == .on {
+            SitePermissionStore.shared.remember(
+                origin: request.origin,
+                permissions: permissions,
+                allowed: allowed
+            )
+        }
+        return allowed ? .allow : .deny
     }
 
     private static func naturalList(_ values: [String]) -> String {

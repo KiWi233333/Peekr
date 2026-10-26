@@ -79,6 +79,14 @@ struct WebDownload: Identifiable, Equatable {
     }
 }
 
+/// Backend-neutral snapshot of an in-progress find session. CEF reports one
+/// per session update; `finalUpdate` marks the last notification.
+struct FindResult: Equatable {
+    var matches: Int
+    var activeMatchOrdinal: Int
+    var finalUpdate: Bool
+}
+
 /// One live web page for a dock app. The rendering backend lives entirely behind
 /// this protocol, so `WebViewManager` and the whole panel/UI layer never touch
 /// directly. The seam keeps the UI independent from CEF implementation details.
@@ -96,6 +104,14 @@ protocol WebEngine: AnyObject {
     var onNavStateChange: ((NavState) -> Void)? { get set }
     /// Download events emitted by the backend for the app-wide download center.
     var onDownloadChange: ((WebDownload) -> Void)? { get set }
+    /// Find-in-page results for the active search session.
+    var onFindResult: ((FindResult) -> Void)? { get set }
+    /// Page audio activity reported by the backend. On backends with only a
+    /// one-way console channel this is the authoritative signal for the rail
+    /// indicator and the hibernation policy.
+    var onAudioActivityChange: ((WebAudioActivity) -> Void)? { get set }
+    /// A script-initiated pop-up was blocked by the backend.
+    var onBlockedPopup: ((URL?) -> Void)? { get set }
 
     func load(_ url: URL)
     func goBack()
@@ -112,9 +128,18 @@ protocol WebEngine: AnyObject {
     /// Find-in-page session (⌘F).
     func find(_ text: String, forward: Bool, matchCase: Bool)
     func stopFinding()
+    /// Open or close this page's DevTools window (⌘⌥I).
+    func toggleDevTools()
+    /// Show the current page's source in a new tab; never navigates this one.
+    func viewSource()
     /// Mute this tab's page audio without muting macOS or other tabs.
     var isAudioMuted: Bool { get set }
     func cancelDownload(_ id: UInt32)
+    func pauseDownload(_ id: UInt32)
+    func resumeDownload(_ id: UInt32)
+    /// Retry a completed/failed download. Backends without native retry leave
+    /// this empty; the caller reloads the original URL.
+    func retryDownload(_ id: UInt32)
     /// Release backend resources immediately when a tab is discarded or the
     /// selected tab is discarded. CEF must explicitly close its browser before
     /// the runtime can terminate.
@@ -128,6 +153,18 @@ protocol WebEngine: AnyObject {
 
 extension WebEngine {
     var activity: WebActivitySnapshot { WebActivitySnapshot() }
+    var onFindResult: ((FindResult) -> Void)? {
+        get { nil }
+        set {}
+    }
+    var onBlockedPopup: ((URL?) -> Void)? {
+        get { nil }
+        set {}
+    }
+    var onAudioActivityChange: ((WebAudioActivity) -> Void)? {
+        get { nil }
+        set {}
+    }
     func close() {}
     var zoomLevel: Double { 0 }
     func reload(ignoreCache: Bool) { reload() }
@@ -136,11 +173,16 @@ extension WebEngine {
     func zoomReset() {}
     func find(_ text: String, forward: Bool, matchCase: Bool) {}
     func stopFinding() {}
+    func toggleDevTools() {}
+    func viewSource() {}
     var isAudioMuted: Bool {
         get { false }
         set {}
     }
     func cancelDownload(_ id: UInt32) {}
+    func pauseDownload(_ id: UInt32) {}
+    func resumeDownload(_ id: UInt32) {}
+    func retryDownload(_ id: UInt32) {}
 }
 
 /// Builds a Chromium `WebEngine` per dock app. Keeping this small seam makes

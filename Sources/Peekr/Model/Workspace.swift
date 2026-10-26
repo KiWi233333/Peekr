@@ -105,6 +105,9 @@ struct Workspace: Identifiable, Codable, Hashable {
     /// Pinned workspaces stay before the normal workspace list while each
     /// section keeps its own drag order.
     var isPinned: Bool = false
+    /// Private spaces are session-only: they run on the incognito Profile and
+    /// are dropped from `apps.json` and from decoded data at launch.
+    var isPrivate: Bool = false
 
     init(
         id: UUID = UUID(),
@@ -117,7 +120,8 @@ struct Workspace: Identifiable, Codable, Hashable {
         selectedTabID: WebApp.ID? = nil,
         ownership: WorkspaceOwnership = .user,
         agentOwner: String = "",
-        isPinned: Bool = false
+        isPinned: Bool = false,
+        isPrivate: Bool = false
     ) {
         self.id = id
         self.profileID = profileID
@@ -130,12 +134,13 @@ struct Workspace: Identifiable, Codable, Hashable {
         self.ownership = ownership
         self.agentOwner = agentOwner
         self.isPinned = isPinned
+        self.isPrivate = isPrivate
         normalizeSidebar()
     }
 
     private enum CodingKeys: String, CodingKey {
         case id, profileID, name, symbol, tabs, groups, sidebarItems, selectedTabID
-        case ownership, agentOwner, isPinned
+        case ownership, agentOwner, isPinned, isPrivate
     }
 
     // Tolerant decode performs the v1 flat-list → v2 hierarchy migration in
@@ -157,6 +162,7 @@ struct Workspace: Identifiable, Codable, Hashable {
             .flatMap { $0 } ?? .user
         agentOwner = try c.decodeIfPresent(String.self, forKey: .agentOwner) ?? ""
         isPinned = try c.decodeIfPresent(Bool.self, forKey: .isPinned) ?? false
+        isPrivate = try c.decodeIfPresent(Bool.self, forKey: .isPrivate) ?? false
         normalizeSidebar()
     }
 

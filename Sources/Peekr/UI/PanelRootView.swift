@@ -22,7 +22,6 @@ struct PanelRootView: View {
     var onResizeEnded: () -> Void
 
     @State private var editTarget: EditTarget?
-    @State private var bookmarksOpen = false
     @State private var downloadCenterOpen = false
     @State private var isRailCollapsed = false
     @State private var sidebarStage: SidebarStage = .normal
@@ -39,6 +38,11 @@ struct PanelRootView: View {
     @State private var webCardFrame: CGRect = .zero
     @State private var cardFrames: [UUID: CGRect] = [:]
     @State private var moving = false
+    @State private var zoomToastVisible = false
+    @State private var zoomToastHideTask: Task<Void, Never>?
+    @State private var tabSearchMounted = false
+    @State private var tabSearchVisible = false
+    @State private var tabSearchDismissTask: Task<Void, Never>?
     @ObserveInjection private var inject
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -51,10 +55,12 @@ struct PanelRootView: View {
         )
     }
 
-    /// Sheets and the download center count as interactive overlays: while any
-    /// is open the panel must not auto-hide on focus loss, or the popover's
-    /// contents (e.g. the download list) vanish mid-interaction.
-    private var isModalOpen: Bool { editTarget != nil || bookmarksOpen || downloadCenterOpen }
+    /// Sheets, the download center and the cross-space tab search count as
+    /// interactive overlays: while any is open the panel must not auto-hide on
+    /// focus loss, or the overlay's contents vanish mid-interaction.
+    private var isModalOpen: Bool {
+        editTarget != nil || downloadCenterOpen || tabSearchMounted
+    }
     private var anchor: PanelAnchor { settings.anchor }
 
     /// Shared-element transition stages between the browser layer and the
@@ -154,6 +160,23 @@ struct PanelRootView: View {
                     ))
                     .zIndex(3)
             }
+            // ⌘⇧A: modal cross-space switcher above the rail and nav bar.
+            if tabSearchMounted {
+                TabSearchView(
+                    model: model,
+                    settings: settings,
+                    icons: icons,
+                    onSelect: { workspaceID, tabID in
+                        model.selectWorkspace(workspaceID)
+                        model.select(tabID)
+                        manager.activate(tabID)
+                        manager.state.tabSearchOpen = false
+                    },
+                    onClose: { manager.state.tabSearchOpen = false },
+                    isPresented: tabSearchVisible
+                )
+                .zIndex(10)
+            }
         }
         .coordinateSpace(name: "panel")
         // The AppKit content host owns the single rounded clip for the window.
@@ -168,18 +191,21 @@ struct PanelRootView: View {
         .sheet(item: $editTarget) { target in
             EditAppSheet(target: target, model: model, settings: settings, icons: icons) { editTarget = nil }
         }
-        .sheet(isPresented: $bookmarksOpen) {
-            BookmarkSheet(
-                bookmarks: bookmarks, settings: settings,
-                onOpen: { manager.loadAddress($0); bookmarksOpen = false },
-                onClose: { bookmarksOpen = false }
-            )
-        }
+        .onAppear { updateTabSearch(manager.state.tabSearchOpen) }
         .onChange(of: editTarget != nil) { _, _ in onModalChange(isModalOpen) }
-        .onChange(of: bookmarksOpen) { _, _ in onModalChange(isModalOpen) }
+        .onChange(of: manager.state.tabSearchOpen) { _, open in
+            updateTabSearch(open)
+            onModalChange(isModalOpen)
+        }
+        .onChange(of: tabSearchMounted) { _, _ in onModalChange(isModalOpen) }
         .onChange(of: downloadCenterOpen) { _, _ in onModalChange(isModalOpen) }
+        .onChange(of: manager.state.zoomToastToken) { _, _ in showZoomToast() }
         .onExitCommand {
             if downloadCenterOpen { downloadCenterOpen = false }
+        }
+        .onDisappear {
+            zoomToastHideTask?.cancel()
+            tabSearchDismissTask?.cancel()
         }
         // Moving the sidebar between edges must not tween the embedded browser
         // across the window. The real NSPanel already performs the dock snap;
@@ -307,6 +333,51 @@ struct PanelRootView: View {
         }
     }
 
+    private func updateTabSearch(_ open: Bool) {
+        tabSearchDismissTask?.cancel()
+        tabSearchDismissTask = nil
+        if open {
+            tabSearchMounted = true
+            withAnimation(reduceMotion ? nil : Motion.dropdownOpen) {
+                tabSearchVisible = true
+            }
+            return
+        }
+        guard tabSearchMounted else {
+            tabSearchVisible = false
+            return
+        }
+        withAnimation(reduceMotion ? nil : Motion.dropdownClose) {
+            tabSearchVisible = false
+        }
+        guard !reduceMotion else {
+            tabSearchMounted = false
+            return
+        }
+        tabSearchDismissTask = Task { @MainActor in
+            try? await Task.sleep(for: .seconds(Motion.Duration.dropdownClose))
+            guard !Task.isCancelled else { return }
+            tabSearchMounted = false
+            tabSearchDismissTask = nil
+        }
+    }
+
+    /// Flash the current zoom level for a moment; each fresh zoom command
+    /// restarts the dwell timer instead of stacking toasts.
+    private func showZoomToast() {
+        zoomToastHideTask?.cancel()
+        withAnimation(reduceMotion ? nil : Motion.dropdownOpen) {
+            zoomToastVisible = true
+        }
+        zoomToastHideTask = Task { @MainActor in
+            try? await Task.sleep(for: .seconds(1.2))
+            guard !Task.isCancelled else { return }
+            withAnimation(reduceMotion ? nil : Motion.dropdownClose) {
+                zoomToastVisible = false
+            }
+        }
+    }
+
     private var sidebarResizeHandle: some View {
         SidebarResizeHandle(
             onBegan: {
@@ -333,6 +404,8 @@ struct PanelRootView: View {
         .transition(.opacity)
     }
 
+    private var internalPageOpen: Bool { manager.state.internalPage != nil }
+
     private var webArea: some View {
         ZStack(alignment: .top) {
             WebContainer(manager: manager, currentID: manager.state.currentID)
@@ -348,6 +421,10 @@ struct PanelRootView: View {
                 // between it and the web card.
                 .padding(.top, 54)
                 .padding([.bottom, .horizontal], 10)
+                // Keep the CEF view mounted so closing an internal page returns
+                // to the same document; only its visibility and input change.
+                .opacity(internalPageOpen ? 0 : 1)
+                .allowsHitTesting(!internalPageOpen)
 
             NavigationBar(
                 state: manager.state, manager: manager, settings: settings,
@@ -355,14 +432,27 @@ struct PanelRootView: View {
                 showsSidebarToggle: isRailCollapsed,
                 sidebarOnLeft: anchor.railOnLeft,
                 onMoveBegan: onMoveBegan, onMoveChanged: onMoveChanged, onMoveEnded: onMoveEnded,
-                onBookmarks: { bookmarksOpen = true },
                 onToggleSidebar: { isRailCollapsed = false },
                 onDownloadsOpenChange: { downloadCenterOpen = $0 }
             )
             .padding(.horizontal, 12)
             .padding(.top, 8)
 
-            if let error = manager.state.loadError {
+            if let page = manager.state.internalPage {
+                InternalPageHost(
+                    page: page,
+                    model: model,
+                    settings: settings,
+                    manager: manager,
+                    icons: icons,
+                    bookmarks: bookmarks
+                )
+                .padding(.top, 54)
+                .padding([.bottom, .horizontal], 10)
+                .zIndex(1)
+            }
+
+            if !internalPageOpen, let error = manager.state.loadError {
                 PageLoadErrorCard(
                     error: error,
                     canGoBack: manager.state.canGoBack,
@@ -373,7 +463,7 @@ struct PanelRootView: View {
                 .padding(.top, 54)
                 .padding([.bottom, .horizontal], 10)
                 .zIndex(1)
-            } else if manager.state.rendererFailure != nil {
+            } else if !internalPageOpen, manager.state.rendererFailure != nil {
                 RendererFailureCard(
                     canGoBack: manager.state.canGoBack,
                     settings: settings,
@@ -385,7 +475,7 @@ struct PanelRootView: View {
                 .zIndex(1)
             }
 
-            if manager.findBar.isVisible {
+            if !internalPageOpen, manager.findBar.isVisible {
                 FindBar(state: manager.findBar, manager: manager, settings: settings)
                     .padding(.top, 60)
                     .padding(.trailing, 18)
@@ -397,8 +487,26 @@ struct PanelRootView: View {
                     )
                     .zIndex(2)
             }
+
+            if zoomToastVisible {
+                Text(settings.strings.zoomLevel(manager.state.zoomLevel))
+                    .font(.system(size: 11.5, weight: .semibold))
+                    .monospacedDigit()
+                    .lineLimit(1)
+                    .padding(.horizontal, 10)
+                    .frame(height: 24)
+                    .liquidGlass(in: Capsule(style: .continuous))
+                    .padding(.top, 62)
+                    .frame(maxWidth: .infinity, alignment: .top)
+                    .transition(reduceMotion ? .identity : .opacity)
+                    .zIndex(3)
+                    .accessibilityLabel(settings.strings.zoomLevel(manager.state.zoomLevel))
+            }
         }
-        .animation(reduceMotion ? nil : Motion.dropdownOpen, value: manager.findBar.isVisible)
+        .animation(
+            reduceMotion ? nil : (manager.findBar.isVisible ? Motion.dropdownOpen : Motion.dropdownClose),
+            value: manager.findBar.isVisible
+        )
         // Chrome keeps one find session across tabs: re-run the query on the
         // newly activated page.
         .onChange(of: manager.state.currentID) { _, _ in
@@ -508,6 +616,7 @@ private struct FindBar: View {
     let settings: Settings
 
     @FocusState private var focused: Bool
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         HStack(spacing: 4) {
@@ -530,6 +639,25 @@ private struct FindBar: View {
                 }
                 return .handled
             }
+            if !state.query.isEmpty {
+                Text(
+                    settings.strings.findMatchCount(
+                        current: state.activeMatch,
+                        total: state.matches
+                    )
+                )
+                .font(.system(size: 11))
+                .monospacedDigit()
+                .foregroundStyle(.secondary)
+                .fixedSize()
+                .accessibilityLabel(
+                    settings.strings.findMatchCount(
+                        current: state.activeMatch,
+                        total: state.matches
+                    )
+                )
+            }
+            matchCaseButton
             findButton("chevron.up", label: settings.strings.findPrevious) { manager.findPrevious() }
             findButton("chevron.down", label: settings.strings.findNext) { manager.findNext() }
             findButton("xmark", label: settings.strings.close) { manager.closeFindBar() }
@@ -539,6 +667,25 @@ private struct FindBar: View {
         .liquidGlass(in: Capsule(style: .continuous))
         .onAppear { focused = true }
         .onChange(of: state.focusToken) { _, _ in focused = true }
+    }
+
+    private var matchCaseButton: some View {
+        Button { manager.toggleFindCase() } label: {
+            Text("Aa")
+                .font(.system(size: 11, weight: .semibold))
+                .frame(width: 22, height: 22)
+                .background {
+                    RoundedRectangle(cornerRadius: 5, style: .continuous)
+                        .fill(.primary.opacity(state.matchCase ? 0.14 : 0))
+                }
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(IconButtonStyle())
+        .foregroundStyle(state.matchCase ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondary))
+        .help(settings.strings.matchCase)
+        .accessibilityLabel(settings.strings.matchCase)
+        .accessibilityAddTraits(state.matchCase ? .isSelected : AccessibilityTraits())
+        .animation(reduceMotion ? nil : Motion.controlFeedback, value: state.matchCase)
     }
 
     private func findButton(_ symbol: String, label: String, action: @escaping () -> Void) -> some View {

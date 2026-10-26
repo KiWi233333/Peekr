@@ -17,7 +17,6 @@ struct NavigationBar: View {
     var onMoveBegan: () -> Void
     var onMoveChanged: (CGSize) -> Void
     var onMoveEnded: () -> Void
-    var onBookmarks: () -> Void
     var onToggleSidebar: () -> Void
     /// Reports download-center visibility so the panel can suspend auto-hide
     /// while the popover is interactive (same treatment as sheets).
@@ -76,11 +75,7 @@ struct NavigationBar: View {
                                 x: proxy[anchor].minX,
                                 y: proxy[anchor].maxY + Theme.popoverGap
                             )
-                            .transition(
-                                reduceMotion
-                                    ? .identity
-                                    : .scale(scale: 0.97, anchor: .top).combined(with: .opacity)
-                            )
+                            .transition(Motion.popoverTransition(anchor: .top, reduceMotion: reduceMotion))
                             .zIndex(10)
                     }
                 }
@@ -97,28 +92,30 @@ struct NavigationBar: View {
                             settings: settings,
                             onCancel: manager.cancelDownload,
                             onRemove: manager.downloads.remove,
-                            onDismiss: { downloadsOpen = false }
+                            onDismiss: { downloadsOpen = false },
+                            onShowAll: {
+                                downloadsOpen = false
+                                manager.openInternalPage(.downloads)
+                            }
                         )
                         .offset(
                             x: proxy[anchor].maxX - Theme.downloadCenterWidth,
                             y: proxy[anchor].maxY + Theme.popoverGap
                         )
-                        .transition(
-                            reduceMotion
-                                ? .opacity
-                                : .scale(scale: 0.96, anchor: .topTrailing).combined(with: .opacity)
-                        )
+                        .transition(Motion.popoverTransition(anchor: .topTrailing, reduceMotion: reduceMotion))
                         .zIndex(20)
                     }
                 }
             }
-        .animation(reduceMotion ? nil : Motion.dropdownOpen, value: downloadsOpen)
+        .animation(
+            reduceMotion ? nil : (downloadsOpen ? Motion.dropdownOpen : Motion.dropdownClose),
+            value: downloadsOpen
+        )
         .onChange(of: downloadsOpen) { _, open in onDownloadsOpenChange(open) }
         .onAppear { syncText() }
         .onChange(of: focused) { _, isFocused in
-            // The native field restores the full URL on focus. Blur closes the dropdown
-            // — it keeps whatever's in the field (typed text or a chosen
-            // candidate) rather than snapping back to the page address.
+            // Web addresses keep their uncommitted text on blur. Internal pages
+            // restore their presentation value so private routes never linger.
             if isFocused {
                 // The omnibox dropdown and the download center share the same
                 // top chrome space; never leave two popovers competing there.
@@ -129,6 +126,7 @@ struct NavigationBar: View {
                 updateSuggestions()
             } else {
                 shouldSyncFocusedAddress = false
+                if state.internalPage != nil { syncText() }
                 scheduleSuggestionDismissal()
             }
         }
@@ -147,19 +145,43 @@ struct NavigationBar: View {
                 shouldSyncFocusedAddress = false
             }
         }
+        .onChange(of: state.internalPage) { _, _ in
+            shouldSyncFocusedAddress = true
+            syncText()
+            if focused { updateSuggestions() }
+        }
         .enableInjection()
     }
 
     private var bar: some View {
         HStack(spacing: 6) {
             grip
-            navButton("chevron.backward", enabled: state.canGoBack) { manager.goBack() }
-            navButton("chevron.forward", enabled: state.canGoForward) { manager.goForward() }
-            navButton(state.isLoading ? "xmark" : "arrow.clockwise", enabled: true) { manager.reloadOrStop() }
+            navButton(
+                "chevron.backward",
+                enabled: state.internalPage != nil || state.canGoBack
+            ) { manager.goBack() }
+            navButton(
+                "chevron.forward",
+                enabled: state.internalPage == nil && state.canGoForward
+            ) { manager.goForward() }
+            navButton(
+                state.internalPage == nil && state.isLoading ? "xmark" : "arrow.clockwise",
+                enabled: state.internalPage == nil
+            ) { manager.reloadOrStop() }
             omnibox
+            bookmarkButton
             downloadButton
-            navButton("bookmark", enabled: true) { onBookmarks() }
-            navButton("safari", enabled: !state.urlString.isEmpty) { openExternally() }
+            if state.blockedPopupCount > 0 {
+                popupIndicator
+            }
+            navButton("bookmark", enabled: true) {
+                manager.openInternalPage(.bookmarks)
+            }
+            navButton(
+                "safari",
+                enabled: state.internalPage == nil && !state.urlString.isEmpty
+            ) { openExternally() }
+            overflowMenu
             if showsSidebarToggle {
                 sidebarToggle
             }
@@ -244,31 +266,194 @@ struct NavigationBar: View {
         .anchorPreference(key: DownloadButtonBoundsKey.self, value: .bounds) { $0 }
     }
 
-    private var omnibox: some View {
-        OmniboxTextField(
-            placeholder: settings.strings.omniboxPlaceholder,
-            address: state.urlString,
-            text: $text,
-            focused: $focused,
-            focusRequest: state.focusOmniboxToken,
-            onSubmit: { commit() },
-            onMoveSelection: { moveSelection($0) },
-            onEscape: {
-                guard showSuggestions else { return false }
-                clearSuggestions(); return true
+    private var bookmarkButton: some View {
+        let urlString = state.urlString
+        let isBookmarked = !urlString.isEmpty && bookmarks.bookmark(for: urlString) != nil
+        let enabled = state.internalPage == nil && !urlString.isEmpty
+        let label = isBookmarked ? settings.strings.bookmarks : settings.strings.addCurrentPage
+
+        return Button(action: toggleBookmark) {
+            Image(systemName: isBookmarked ? "star.fill" : "star")
+                .font(.system(size: 12, weight: .semibold))
+                .frame(width: 26, height: 26)
+                .contentShape(Circle())
+                .contentTransition(.symbolEffect(.replace))
+                .animation(reduceMotion ? nil : Motion.iconSwap, value: isBookmarked)
+        }
+        .buttonStyle(IconButtonStyle())
+        .foregroundStyle(enabled ? AnyShapeStyle(.primary) : AnyShapeStyle(.tertiary))
+        .disabled(!enabled)
+        .help(label)
+        .accessibilityLabel(label)
+        .accessibilityAddTraits(isBookmarked ? .isSelected : AccessibilityTraits())
+    }
+
+    private var popupIndicator: some View {
+        Menu {
+            Text(settings.strings.popupsBlocked(state.blockedPopupCount))
+            Button(settings.strings.allowPopups) {
+                settings.blockPopups = false
+                settings.persist()
+                manager.clearBlockedPopups()
             }
-        )
-            .padding(.horizontal, 10)
-            .frame(height: 26)
+        } label: {
+            Image(systemName: "exclamationmark.shield.fill")
+                .font(.system(size: 12, weight: .semibold))
+                .frame(width: 26, height: 26)
+                .contentShape(Circle())
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .buttonStyle(IconButtonStyle())
+        .fixedSize()
+        .foregroundStyle(.primary)
+        .help(settings.strings.popupsBlocked(state.blockedPopupCount))
+        .accessibilityLabel(settings.strings.popupsBlocked(state.blockedPopupCount))
+    }
+
+    private var overflowMenu: some View {
+        Menu {
+            Button {
+                manager.toggleTabSearch()
+            } label: {
+                Label(settings.strings.tabSearch, systemImage: "magnifyingglass")
+            }
+            Button {
+                manager.openInternalPage(.history)
+            } label: {
+                Label(settings.strings.history, systemImage: "clock")
+            }
+            Button {
+                manager.openInternalPage(.downloads)
+            } label: {
+                Label(settings.strings.downloads, systemImage: "arrow.down.circle")
+            }
+            Button {
+                manager.openInternalPage(.bookmarks)
+            } label: {
+                Label(settings.strings.bookmarksManager, systemImage: "bookmark")
+            }
+            Button {
+                manager.openInternalPage(.siteSettings(""))
+            } label: {
+                Label(settings.strings.siteSettings, systemImage: "hand.raised")
+            }
+            Button {
+                manager.openInternalPage(.clearData)
+            } label: {
+                Label(settings.strings.clearBrowsingData, systemImage: "trash")
+            }
+            Button {
+                manager.openInternalPage(.shortcuts)
+            } label: {
+                Label(settings.strings.shortcuts, systemImage: "keyboard")
+            }
+            Divider()
+            Button {
+                manager.toggleDevTools()
+            } label: {
+                Label(settings.strings.inspect, systemImage: "hammer")
+            }
+            .disabled(state.internalPage != nil)
+            Button {
+                manager.viewSource()
+            } label: {
+                Label(
+                    settings.strings.viewSource,
+                    systemImage: "chevron.left.forwardslash.chevron.right"
+                )
+            }
+            .disabled(state.internalPage != nil)
+        } label: {
+            Image(systemName: "ellipsis.circle")
+                .font(.system(size: 13, weight: .semibold))
+                .frame(width: 26, height: 26)
+                .contentShape(Circle())
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .buttonStyle(IconButtonStyle())
+        .fixedSize()
+        .foregroundStyle(.primary)
+        .help(settings.strings.moreActions)
+        .accessibilityLabel(settings.strings.moreActions)
+    }
+
+    private var omnibox: some View {
+        HStack(spacing: 6) {
+            securityIndicator
+
+            OmniboxTextField(
+                placeholder: settings.strings.omniboxPlaceholder,
+                address: omniboxEditingAddress,
+                pasteAndGoLabel: settings.strings.pasteAndGo,
+                pasteAndSearchLabel: settings.strings.pasteAndSearch,
+                text: $text,
+                focused: $focused,
+                focusRequest: state.focusOmniboxToken,
+                onSubmit: { commit() },
+                onMoveSelection: { moveSelection($0) },
+                onEscape: {
+                    guard showSuggestions else { return false }
+                    clearSuggestions(); return true
+                },
+                onPasteAndGo: { clip in
+                    clearSuggestions()
+                    focused = false
+                    manager.loadAddress(clip)
+                }
+            )
             .frame(maxWidth: .infinity)
-            .background(.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-            .shadcnFocusRing(focused, cornerRadius: 8)
-            .anchorPreference(key: OmniboxBoundsKey.self, value: .bounds) { $0 }
+        }
+        .padding(.horizontal, 10)
+        .frame(height: 26)
+        .frame(maxWidth: .infinity)
+        .background(.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .shadcnFocusRing(focused, cornerRadius: 8)
+        .anchorPreference(key: OmniboxBoundsKey.self, value: .bounds) { $0 }
+    }
+
+    private var securityIndicator: some View {
+        Image(systemName: securitySymbol)
+            .font(.system(size: 10.5, weight: .semibold))
+            .foregroundStyle(.secondary)
+            .frame(width: 12)
+            .help(securityLabel)
+            .accessibilityLabel(securityLabel)
+    }
+
+    private var securitySymbol: String {
+        if state.internalPage == .newTab { return "magnifyingglass" }
+        if state.internalPage != nil { return "doc.text" }
+        switch URL(string: state.urlString)?.scheme?.lowercased() {
+        case "https": return "lock.fill"
+        case "http": return "exclamationmark.triangle.fill"
+        case "peekr", "file": return "doc.text"
+        default: return "globe"
+        }
+    }
+
+    private var securityLabel: String {
+        if let page = state.internalPage {
+            return settings.strings.title(for: page)
+        }
+        switch URL(string: state.urlString)?.scheme?.lowercased() {
+        case "https":
+            return settings.strings.secureConnection
+        case "http":
+            return settings.strings.notSecure
+        default:
+            if let host = URL(string: state.urlString)?.displayHost, !host.isEmpty {
+                return host
+            }
+            let title = state.title.trimmingCharacters(in: .whitespacesAndNewlines)
+            return title.isEmpty ? state.urlString : title
+        }
     }
 
     @ViewBuilder
     private var progressLine: some View {
-        if state.isLoading && state.progress > 0.01 && state.progress < 1 {
+        if state.internalPage == nil && state.isLoading && state.progress > 0.01 && state.progress < 1 {
             GeometryReader { geo in
                 Capsule()
                     .fill(Theme.accentGradient)
@@ -373,16 +558,48 @@ struct NavigationBar: View {
 
     // MARK: - Helpers
 
+    private var omniboxEditingAddress: String {
+        state.internalPage?.omniboxEditingAddress ?? state.urlString
+    }
+
     private func syncText() {
-        text = focused ? state.urlString : state.displayURL
+        if let page = state.internalPage {
+            if page == .newTab {
+                text = ""
+            } else {
+                text = focused ? page.omniboxEditingAddress : settings.strings.title(for: page)
+            }
+        } else {
+            text = focused ? state.urlString : state.displayURL
+        }
+    }
+
+    private func toggleBookmark() {
+        let urlString = state.urlString
+        guard state.internalPage == nil, !urlString.isEmpty else { return }
+        if let existing = bookmarks.bookmark(for: urlString) {
+            bookmarks.remove(existing.id)
+            return
+        }
+        let title = state.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        bookmarks.add(title: title.isEmpty ? urlString : title, urlString: urlString)
     }
 
     private func openExternally() {
-        guard let url = URL(string: state.urlString) else { return }
+        guard state.internalPage == nil, let url = URL(string: state.urlString) else { return }
         NSWorkspace.shared.open(url)
     }
 
     private func commit() {
+        if let index = selectedIndex,
+           suggestions.indices.contains(index),
+           case .switchToTab(let tabID) = suggestions[index].action {
+            clearSuggestions()
+            focused = false
+            model.select(tabID)
+            manager.activate(tabID)
+            return
+        }
         let target = selectedIndex.flatMap { suggestions.indices.contains($0) ? suggestions[$0].target : nil } ?? text
         clearSuggestions()
         focused = false

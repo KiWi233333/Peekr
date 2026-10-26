@@ -19,8 +19,17 @@ final class BrowserState {
     var rendererFailure: WebRendererFailure?
     /// Runtime-only lifecycle state for the selected page.
     var pageLifecycle: WebPageLifecycle = .closed
+    /// Active `peekr://` page, or nil while a web page owns the panel.
+    var internalPage: InternalPage?
+    /// Cross-space tab search overlay (⇧⌘A).
+    var tabSearchOpen = false
     /// Bumped to ask the nav bar to focus its omnibox (⌘L).
     var focusOmniboxToken = 0
+    var zoomLevel: Double = 0
+    /// Bumped on every zoom command so the bar can show a transient indicator.
+    var zoomToastToken = 0
+    /// Script-initiated popups blocked on the active page.
+    var blockedPopupCount = 0
 
     /// Compact label for the omnibox when it isn't being edited.
     var displayURL: String {
@@ -37,4 +46,7 @@ final class FindBarState {
     var query = ""
     /// Bumped by ⌘F to refocus the field even when the bar is already open.
     var focusToken = 0
+    var matchCase = false
+    var matches = 0
+    var activeMatch = 0
 }

@@ -363,6 +363,80 @@ final class TabGroupModelTests: XCTestCase {
         return (hue, saturation, lightness)
     }
 
+    // MARK: - Native reorder (applySidebarReorder)
+
+    func testApplySidebarReorderMovesRootTabBeforeAnother() {
+        let (model, tabs) = makeModel(count: 3)
+
+        model.applySidebarReorder(sources: [tabs[2].id], toGroup: nil, before: tabs[0].id)
+
+        XCTAssertEqual(
+            model.activeWorkspace.sidebarItems,
+            [.tab(tabs[2].id), .tab(tabs[0].id), .tab(tabs[1].id)]
+        )
+    }
+
+    func testApplySidebarReorderMovesRootTabIntoGroup() {
+        let (model, tabs) = makeModel(count: 3)
+        let group = model.addGroup(name: "G", containing: [tabs[0].id, tabs[1].id])
+
+        model.applySidebarReorder(sources: [tabs[2].id], toGroup: group.id, before: nil)
+
+        XCTAssertEqual(model.group(group.id)?.tabIDs, [tabs[0].id, tabs[1].id, tabs[2].id])
+        XCTAssertEqual(model.activeWorkspace.sidebarItems, [.group(group.id)])
+    }
+
+    func testApplySidebarReorderMovesGroupAfterTab() {
+        let (model, tabs) = makeModel(count: 3)
+        let group = model.addGroup(name: "G", containing: [tabs[0].id, tabs[1].id])
+
+        model.applySidebarReorder(sources: [group.id], toGroup: nil, before: nil)
+
+        XCTAssertEqual(
+            model.activeWorkspace.sidebarItems,
+            [.tab(tabs[2].id), .group(group.id)]
+        )
+    }
+
+    func testApplySidebarReorderKeepsGroupAtRootWhenDroppedOnAGroup() {
+        let (model, tabs) = makeModel(count: 3)
+        let group = model.addGroup(name: "G", containing: [tabs[0].id, tabs[1].id])
+
+        // A group can never nest inside another group; the drop lands at root.
+        model.applySidebarReorder(sources: [group.id], toGroup: group.id, before: nil)
+
+        XCTAssertEqual(
+            model.activeWorkspace.sidebarItems,
+            [.tab(tabs[2].id), .group(group.id)]
+        )
+        XCTAssertEqual(model.group(group.id)?.tabIDs, [tabs[0].id, tabs[1].id])
+    }
+
+    func testApplySidebarReorderPullsChildOutToRoot() {
+        let (model, tabs) = makeModel(count: 3)
+        let group = model.addGroup(name: "G", containing: [tabs[0].id, tabs[1].id])
+
+        model.applySidebarReorder(sources: [tabs[0].id], toGroup: nil, before: tabs[2].id)
+
+        XCTAssertEqual(model.group(group.id)?.tabIDs, [tabs[1].id])
+        XCTAssertEqual(
+            model.activeWorkspace.sidebarItems,
+            [.group(group.id), .tab(tabs[0].id), .tab(tabs[2].id)]
+        )
+    }
+
+    func testApplySidebarReorderMovesChildWithinGroup() {
+        let (model, tabs) = makeModel(count: 3)
+        let group = model.addGroup(
+            name: "G",
+            containing: [tabs[0].id, tabs[1].id, tabs[2].id]
+        )
+
+        model.applySidebarReorder(sources: [tabs[2].id], toGroup: group.id, before: tabs[0].id)
+
+        XCTAssertEqual(model.group(group.id)?.tabIDs, [tabs[2].id, tabs[0].id, tabs[1].id])
+    }
+
     private func makeModel(
         count: Int,
         provisionalNow: @escaping () -> TimeInterval = { 0 }

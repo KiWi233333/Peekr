@@ -8,7 +8,8 @@ import AppKit
 @MainActor
 final class WebViewManager {
     let state = BrowserState()
-    let downloads = DownloadStore()
+    let downloads: DownloadStore
+    let browsingData: BrowsingDataCleaner
 
     private let model: AppModel
     private var factory: WebEngineFactory
@@ -16,7 +17,6 @@ final class WebViewManager {
     private let icons: IconStore
     private let searchEngine: () -> SearchEngine
     private var historyStore: HistoryStore
-    private var zoomStore: ZoomStore
     private var engines: [UUID: WebEngine] = [:]
     private var agentHosts: [UUID: NSWindow] = [:]
     private var downloadEngines: [UInt32: UUID] = [:]
@@ -60,6 +60,7 @@ final class WebViewManager {
         searchEngine: @escaping () -> SearchEngine = { .google },
         historyStore: HistoryStore = HistoryStore(),
         zoomStore: ZoomStore = ZoomStore(),
+        downloadStore: DownloadStore? = nil,
         hibernationPolicy: HibernationPolicy = HibernationPolicy(idleThreshold: 1_800),
         now: @escaping () -> Date = Date.init
     ) {
@@ -67,21 +68,46 @@ final class WebViewManager {
         self.factory = factory
         self.badges = badges
         self.icons = icons
+        let resolvedDownloads = downloadStore ?? DownloadStore(
+            fileURL: AppPaths.supportDirectory.appendingPathComponent("downloads.json")
+        )
+        downloads = resolvedDownloads
         self.searchEngine = searchEngine
         self.historyStore = historyStore
-        self.zoomStore = zoomStore
+        browsingData = BrowsingDataCleaner(
+            history: historyStore,
+            downloads: resolvedDownloads,
+            permissions: SitePermissionStore.shared,
+            zoom: zoomStore
+        )
         self.hibernationPolicy = hibernationPolicy
         self.now = now
         installMemoryPressureSource()
     }
 
     var historyEntries: [HistoryEntry] { historyStore.entries }
+    var history: HistoryStore { historyStore }
 
     // MARK: - Lifecycle
 
     /// Ensure an engine exists for `id`, make it current and mirror its state.
     func activate(_ id: UUID) {
         guard let app = model.allTabs.first(where: { $0.id == id }) else { return }
+        state.blockedPopupCount = 0
+        if let page = app.url.flatMap(InternalPage.from) {
+            state.currentID = id
+            state.internalPage = page
+            state.urlString = ""
+            state.title = app.displayName
+            state.canGoBack = false
+            state.canGoForward = false
+            state.isLoading = false
+            state.progress = 1
+            state.loadError = nil
+            state.rendererFailure = nil
+            return
+        }
+        state.internalPage = nil
         if runtimes[id]?.lifecycle == .crashed {
             state.currentID = id
             state.pageLifecycle = .crashed
@@ -95,9 +121,16 @@ final class WebViewManager {
         }
         runtimes[id] = runtime
         let engine = engine(for: app)
+        let audio = engine.activity.audio
+        if var updatedRuntime = runtimes[id] {
+            updatedRuntime.activity = WebActivitySnapshot(audio: audio)
+            runtimes[id] = updatedRuntime
+        }
+        model.setAudible(id, audio == .audible)
         applyStoredZoom(to: engine, for: engine.navState.url ?? app.url)
         state.currentID = id
         mirror(engine.navState)
+        state.zoomLevel = engine.zoomLevel
         if shouldRestore {
             restore(id, expectedGeneration: runtime.generation)
         } else {
@@ -106,6 +139,38 @@ final class WebViewManager {
     }
 
     func view(for id: UUID) -> NSView? { engines[id]?.hostView }
+
+    /// Show one of Peekr's native pages above the current tab. The web engine
+    /// stays mounted so closing the page returns to the same document.
+    func openInternalPage(_ page: InternalPage) {
+        state.internalPage = page
+        state.loadError = nil
+        state.rendererFailure = nil
+    }
+
+    /// Leave the native page and re-mirror the active engine's navigation state.
+    func closeInternalPage() {
+        guard state.internalPage != nil else { return }
+        state.internalPage = nil
+        if let current {
+            mirror(current.navState)
+        } else {
+            state.urlString = ""
+            state.title = ""
+            state.isLoading = false
+            state.progress = 1
+            state.loadError = nil
+            state.rendererFailure = nil
+        }
+    }
+
+    func toggleTabSearch() {
+        state.tabSearchOpen.toggle()
+    }
+
+    func clearBlockedPopups() {
+        state.blockedPopupCount = 0
+    }
 
     /// Close engines owned by a Workspace before the model changes the active
     /// binding. The next activation creates a fresh engine lazily under the
@@ -177,7 +242,12 @@ final class WebViewManager {
         let candidates = model.allTabs.compactMap { app -> HibernationCandidate? in
             guard engines[app.id] != nil else { return nil }
             let runtime = runtime(for: app.id, at: sweepDate)
-            let activity = engines[app.id]?.activity ?? runtime.activity
+            let reported = runtime.activity.audio
+            // The console callback is authoritative once it has reported;
+            // otherwise a backend's synchronous snapshot is the only signal.
+            let activity = reported == .unknown
+                ? (engines[app.id]?.activity.audio ?? .unknown)
+                : reported
             return HibernationCandidate(
                 id: app.id,
                 lastActiveAt: runtime.lastActiveAt,
@@ -185,7 +255,7 @@ final class WebViewManager {
                 keepAwake: app.keepAwake,
                 isAsleep: runtime.lifecycle == .asleep,
                 isAutomationControlled: runtime.isAutomationControlled,
-                audioActivity: activity.audio
+                audioActivity: activity
             )
         }
         let ids = hibernationPolicy.tabsToHibernate(candidates, now: sweepDate)
@@ -238,16 +308,28 @@ final class WebViewManager {
         downloadEngines.removeAll()
         engineIdentities.removeAll()
         runtimes.removeAll()
+        model.clearAudibleTabs()
         state.currentID = nil
         state.pageLifecycle = .closed
     }
 
     // MARK: - Navigation actions (operate on the active engine)
 
-    func goBack() { current?.goBack() }
-    func goForward() { current?.goForward() }
+    func goBack() {
+        if state.internalPage != nil {
+            closeInternalPage()
+            return
+        }
+        current?.goBack()
+    }
+
+    func goForward() {
+        guard state.internalPage == nil else { return }
+        current?.goForward()
+    }
+
     func reloadOrStop() {
-        guard let current else { return }
+        guard state.internalPage == nil, let current else { return }
         if current.navState.isLoading {
             current.stopLoading()
         } else {
@@ -256,21 +338,46 @@ final class WebViewManager {
     }
     /// Retry the active tab's failed navigation without changing its URL.
     func retryCurrentPage() {
-        guard let id = state.currentID else { return }
+        guard state.internalPage == nil, let id = state.currentID else { return }
         if runtimes[id]?.lifecycle == .crashed || current?.navState.rendererFailure != nil {
             recover(id, resetBudget: true)
         } else {
             current?.reload()
         }
     }
-    func reloadIgnoringCache() { current?.reload(ignoreCache: true) }
+    func reloadIgnoringCache() {
+        guard state.internalPage == nil else { return }
+        current?.reload(ignoreCache: true)
+    }
+
+    /// The cleaner owns the single zoom-store copy; sharing it means a clear is
+    /// immediately visible to live zoom lookups instead of surviving in a stale
+    /// value copy until relaunch.
+    var zoom: ZoomStore { browsingData.zoom }
+    var currentZoomLevel: Double { current?.zoomLevel ?? state.zoomLevel }
+
+    func setDefaultZoom(_ level: Double) {
+        browsingData.zoom.setDefault(level)
+    }
 
     func zoomIn() { changeZoom { $0.zoomIn() } }
     func zoomOut() { changeZoom { $0.zoomOut() } }
     func zoomReset() {
-        guard let current, let origin = zoomOrigin(for: current) else { return }
+        guard state.internalPage == nil, let current, let origin = zoomOrigin(for: current) else { return }
         current.zoomReset()
-        zoomStore.reset(for: origin)
+        browsingData.zoom.reset(for: origin)
+        state.zoomLevel = current.zoomLevel
+        state.zoomToastToken += 1
+    }
+
+    func toggleDevTools() {
+        guard state.internalPage == nil else { return }
+        current?.toggleDevTools()
+    }
+
+    func viewSource() {
+        guard state.internalPage == nil else { return }
+        current?.viewSource()
     }
 
     func toggleMute(_ id: UUID) {
@@ -280,11 +387,32 @@ final class WebViewManager {
         var updated = app
         updated.isMuted = muted
         model.update(updated)
+        model.setAudible(id, engines[id]?.activity.audio == .audible)
     }
 
     func cancelDownload(_ id: UInt32) {
         guard let engineID = downloadEngines[id] else { return }
         engines[engineID]?.cancelDownload(id)
+    }
+
+    func pauseDownload(_ id: UInt32) {
+        guard let engineID = downloadEngines[id] else { return }
+        engines[engineID]?.pauseDownload(id)
+        downloads.setPaused(id, true)
+    }
+
+    func resumeDownload(_ id: UInt32) {
+        guard let engineID = downloadEngines[id] else { return }
+        engines[engineID]?.resumeDownload(id)
+        downloads.setPaused(id, false)
+    }
+
+    /// A terminal download no longer has a CEF callback. Retry by requesting
+    /// the source URL again, which starts a fresh download item.
+    func retryDownload(_ record: DownloadRecord) {
+        downloads.remove(id: record.id)
+        guard let url = record.url else { return }
+        loadAddress(url.absoluteString)
     }
 
     // MARK: - Find in page (⌘F)
@@ -299,6 +427,8 @@ final class WebViewManager {
     func closeFindBar() {
         guard findBar.isVisible else { return }
         findBar.isVisible = false
+        findBar.matches = 0
+        findBar.activeMatch = 0
         current?.stopFinding()
     }
 
@@ -306,16 +436,26 @@ final class WebViewManager {
     /// jumps to the first match, mirroring Chrome's incremental find.
     func updateFindQuery(_ query: String) {
         findBar.query = query
+        findBar.matches = 0
+        findBar.activeMatch = 0
         guard !query.isEmpty else { current?.stopFinding(); return }
-        current?.find(query, forward: true, matchCase: false)
+        current?.find(query, forward: true, matchCase: findBar.matchCase)
     }
 
     func findNext() { find(forward: true) }
     func findPrevious() { find(forward: false) }
 
+    func toggleFindCase() {
+        findBar.matchCase.toggle()
+        guard !findBar.query.isEmpty else { return }
+        findBar.matches = 0
+        findBar.activeMatch = 0
+        current?.find(findBar.query, forward: true, matchCase: findBar.matchCase)
+    }
+
     private func find(forward: Bool) {
         guard !findBar.query.isEmpty else { return }
-        current?.find(findBar.query, forward: forward, matchCase: false)
+        current?.find(findBar.query, forward: forward, matchCase: findBar.matchCase)
     }
 
     /// A page asked for a new tab (⌘-click, middle-click, target=_blank,
@@ -334,11 +474,28 @@ final class WebViewManager {
     /// open the address in a fresh tab so the bar always works.
     func loadAddress(_ raw: String) {
         let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty,
-              let url = Self.url(fromOmnibox: text, searchEngine: searchEngine())
-        else { return }
+        guard !text.isEmpty else { return }
+        if let url = URL(string: text), let page = InternalPage.from(url) {
+            openInternalPage(page)
+            return
+        }
+        guard let url = Self.url(fromOmnibox: text, searchEngine: searchEngine()) else { return }
+        if let id = state.currentID, model.selectedID != id {
+            model.select(id)
+        }
+        closeInternalPage()
+        state.urlString = url.absoluteString
+        state.title = url.displayHost ?? text
+        state.isLoading = true
+        state.progress = 0
+        state.loadError = nil
+        state.rendererFailure = nil
         if let current {
             current.load(url)
+        } else if let id = state.currentID, let app = model.tab(id) {
+            let engine = engine(for: app)
+            state.currentID = id
+            engine.load(url)
         } else {
             let app = model.addApp(title: url.displayHost ?? text, urlString: url.absoluteString)
             activate(app.id)
@@ -349,9 +506,12 @@ final class WebViewManager {
     /// open it in a background tab instead of navigating the current one.
     func loadAddressInBackgroundTab(_ raw: String) {
         let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty,
-              let url = Self.url(fromOmnibox: text, searchEngine: searchEngine())
-        else { return }
+        guard !text.isEmpty else { return }
+        if let url = URL(string: text), InternalPage.isInternal(url) {
+            openInNewTab(urlString: url.absoluteString, foreground: false)
+            return
+        }
+        guard let url = Self.url(fromOmnibox: text, searchEngine: searchEngine()) else { return }
         openInNewTab(urlString: url.absoluteString, foreground: false)
     }
 
@@ -438,6 +598,7 @@ final class WebViewManager {
         engineIdentities[id] = nil
         agentHosts.removeValue(forKey: id)?.close()
         downloadEngines = downloadEngines.filter { $0.value != id }
+        model.setAudible(id, false)
         if clearPresentation {
             lastTitles[id] = nil
             lastHosts[id] = nil
@@ -527,18 +688,41 @@ final class WebViewManager {
         engine.onDownloadChange = { [weak self] download in
             guard let self else { return }
             guard self.isCurrentEngine(id, generation: generation, identity: identity) else { return }
-            self.downloads.update(download)
+            self.downloads.update(download, persist: !self.model.isPrivateTab(id))
             if download.state == .downloading {
                 self.downloadEngines[download.id] = id
             } else {
                 self.downloadEngines.removeValue(forKey: download.id)
             }
         }
+        engine.onFindResult = { [weak self] result in
+            guard let self, self.state.currentID == id else { return }
+            self.findBar.matches = result.matches
+            // CEF may report ordinal 0 for the first result of a session even
+            // when matches exist; present it as the first match.
+            self.findBar.activeMatch = result.matches > 0
+                ? max(1, result.activeMatchOrdinal)
+                : 0
+        }
+        engine.onAudioActivityChange = { [weak self, weak engine] _ in
+            guard let self, let engine else { return }
+            guard self.isCurrentEngine(id, generation: generation, identity: identity) else { return }
+            let audio = engine.activity.audio
+            var runtime = self.runtime(for: id)
+            runtime.activity = WebActivitySnapshot(audio: audio)
+            self.runtimes[id] = runtime
+            self.model.setAudible(id, audio == .audible)
+        }
+        engine.onBlockedPopup = { [weak self] _ in
+            guard let self, self.state.currentID == id else { return }
+            self.state.blockedPopupCount += 1
+        }
         engines[id] = engine
         return engine
     }
 
     private func recordHistory(id: UUID, navigation: NavState) {
+        guard !model.isPrivateTab(id) else { return }
         guard !navigation.isLoading, let url = navigation.url else { return }
         let urlString = url.absoluteString
         guard lastHistoryURLs[id] != urlString else { return }
@@ -635,13 +819,15 @@ final class WebViewManager {
     private func changeZoom(_ action: (WebEngine) -> Void) {
         guard let current else { return }
         action(current)
+        state.zoomLevel = current.zoomLevel
+        state.zoomToastToken += 1
         guard let origin = zoomOrigin(for: current) else { return }
-        zoomStore.set(current.zoomLevel, for: origin)
+        browsingData.zoom.set(current.zoomLevel, for: origin)
     }
 
     private func applyStoredZoom(to engine: WebEngine, for url: URL?) {
         guard let url, let origin = Self.zoomOrigin(for: url) else { return }
-        let level = zoomStore.level(for: origin)
+        let level = browsingData.zoom.level(for: origin)
         if engine.zoomLevel != level {
             // The protocol's command methods are intentionally step-based, but
             // CEF exposes the absolute level so a host change can be restored
@@ -674,6 +860,7 @@ final class WebViewManager {
     /// page floods us with `estimatedProgress` ticks. Guarding each write keeps a
     /// progress tick from invalidating the back/forward buttons and omnibox too.
     private func mirror(_ nav: NavState) {
+        guard state.internalPage == nil else { return }
         if state.canGoBack != nav.canGoBack { state.canGoBack = nav.canGoBack }
         if state.canGoForward != nav.canGoForward { state.canGoForward = nav.canGoForward }
         if state.isLoading != nav.isLoading { state.isLoading = nav.isLoading }
@@ -683,5 +870,6 @@ final class WebViewManager {
         if state.title != nav.title { state.title = nav.title }
         if state.loadError != nav.loadError { state.loadError = nav.loadError }
         if state.rendererFailure != nav.rendererFailure { state.rendererFailure = nav.rendererFailure }
+        if let zoom = current?.zoomLevel, state.zoomLevel != zoom { state.zoomLevel = zoom }
     }
 }

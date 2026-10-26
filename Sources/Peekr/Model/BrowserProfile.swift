@@ -1,12 +1,15 @@
 import Foundation
 
-/// A persistent browsing identity shared by one or more Workspaces.
+/// A browsing identity shared by one or more Workspaces.
 ///
 /// The UUID is the public identity, while `storageKey` is an immutable,
 /// filesystem-safe implementation detail. Display names are intentionally not
 /// used to derive storage paths, so renaming a Profile never moves its data.
+/// The incognito Profile is a fixed, session-only identity kept out of the
+/// persisted registry.
 struct BrowserProfile: Identifiable, Codable, Hashable {
     static let defaultID = UUID(uuidString: "00000000-0000-0000-0000-000000000001")!
+    static let incognitoID = UUID(uuidString: "00000000-0000-0000-0000-000000000002")!
     static let defaultStorageKey = "Default"
     static let defaultName = "Default"
 
@@ -14,6 +17,9 @@ struct BrowserProfile: Identifiable, Codable, Hashable {
     var name: String
     let storageKey: String
     var isArchived: Bool
+    /// Session-only identity. An incognito Profile is never written to
+    /// `profiles.json`; it resolves to an in-memory CEF request context.
+    var isIncognito: Bool
     let createdAt: Date
     var updatedAt: Date
 
@@ -24,6 +30,7 @@ struct BrowserProfile: Identifiable, Codable, Hashable {
         name: String,
         storageKey: String? = nil,
         isArchived: Bool = false,
+        isIncognito: Bool = false,
         createdAt: Date = Date(),
         updatedAt: Date = Date()
     ) {
@@ -32,6 +39,7 @@ struct BrowserProfile: Identifiable, Codable, Hashable {
         self.storageKey = Self.validatedStorageKey(storageKey)
             ?? Self.storageKey(for: id)
         self.isArchived = id == Self.defaultID ? false : isArchived
+        self.isIncognito = isIncognito
         self.createdAt = createdAt
         self.updatedAt = updatedAt
     }
@@ -41,6 +49,15 @@ struct BrowserProfile: Identifiable, Codable, Hashable {
             id: defaultID,
             name: defaultName,
             storageKey: defaultStorageKey
+        )
+    }
+
+    static var incognitoProfile: BrowserProfile {
+        BrowserProfile(
+            id: incognitoID,
+            name: "Private",
+            storageKey: "Incognito",
+            isIncognito: true
         )
     }
 
@@ -87,7 +104,7 @@ struct BrowserProfile: Identifiable, Codable, Hashable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, name, storageKey, isArchived, createdAt, updatedAt
+        case id, name, storageKey, isArchived, isIncognito, createdAt, updatedAt
     }
 
     init(from decoder: Decoder) throws {
@@ -96,6 +113,7 @@ struct BrowserProfile: Identifiable, Codable, Hashable {
         let name = try container.decodeIfPresent(String.self, forKey: .name) ?? "Profile"
         let storageKey = try container.decodeIfPresent(String.self, forKey: .storageKey)
         let isArchived = try container.decodeIfPresent(Bool.self, forKey: .isArchived) ?? false
+        let isIncognito = try container.decodeIfPresent(Bool.self, forKey: .isIncognito) ?? false
         let createdAt = try container.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
         let updatedAt = try container.decodeIfPresent(Date.self, forKey: .updatedAt) ?? createdAt
         self.init(
@@ -103,6 +121,7 @@ struct BrowserProfile: Identifiable, Codable, Hashable {
             name: name,
             storageKey: storageKey,
             isArchived: isArchived,
+            isIncognito: isIncognito,
             createdAt: createdAt,
             updatedAt: updatedAt
         )
@@ -137,6 +156,7 @@ struct ProfileRegistry: Codable, Equatable {
         seen.insert(BrowserProfile.defaultID)
 
         for profile in profiles where !seen.contains(profile.id) {
+            if profile.id == BrowserProfile.incognitoID || profile.isIncognito { continue }
             var repaired = profile
             if repaired.id == BrowserProfile.defaultID { continue }
             if BrowserProfile.validatedStorageKey(repaired.storageKey) == nil {

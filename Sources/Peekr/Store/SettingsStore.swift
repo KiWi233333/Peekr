@@ -8,6 +8,10 @@ struct SettingsStore {
         fileURL = AppPaths.supportDirectory.appendingPathComponent("settings.json")
     }
 
+    init(fileURL: URL) {
+        self.fileURL = fileURL
+    }
+
     func load() -> SettingsData {
         guard
             let data = try? Data(contentsOf: fileURL),

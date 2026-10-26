@@ -3,15 +3,40 @@ import Foundation
 /// One row in the omnibox autocomplete dropdown.
 struct OmniboxSuggestion: Identifiable, Hashable {
     enum Kind: String, Hashable { case search, openURL, tab, bookmark, history }
+    enum Action: Hashable {
+        case navigate
+        case switchToTab(WebApp.ID)
+    }
+
     let kind: Kind
     let primary: String
     let secondary: String?
     /// Passed verbatim to `WebViewManager.loadAddress` when chosen.
     let target: String
+    var action: Action = .navigate
+
+    init(
+        kind: Kind,
+        primary: String,
+        secondary: String?,
+        target: String,
+        action: Action = .navigate
+    ) {
+        self.kind = kind
+        self.primary = primary
+        self.secondary = secondary
+        self.target = target
+        self.action = action
+    }
 
     /// Stable across query refreshes so SwiftUI reuses unchanged rows (and their
     /// favicon requests) instead of tearing the entire dropdown down per keypress.
-    var id: String { "\(kind.rawValue)|\(target.lowercased())" }
+    var id: String {
+        switch action {
+        case .switchToTab(let id): return "tab|\(id.uuidString)"
+        case .navigate: return "\(kind.rawValue)|\(target.lowercased())"
+        }
+    }
 }
 
 /// Builds omnibox suggestions Chrome-style: matching open tabs first, then
@@ -50,7 +75,8 @@ enum OmniboxSuggestions {
                 kind: .tab,
                 primary: tab.displayName,
                 secondary: URL(string: tab.urlString)?.displayHost ?? tab.urlString,
-                target: tab.urlString))
+                target: tab.urlString,
+                action: .switchToTab(tab.id)))
         }
 
         // Recent pages take precedence over the provider search action. This
@@ -160,6 +186,13 @@ enum OmniboxSuggestions {
 
     private static func dedup(_ suggestions: [OmniboxSuggestion]) -> [OmniboxSuggestion] {
         var seen = Set<String>()
-        return suggestions.filter { seen.insert("\($0.kind)|\($0.target.lowercased())").inserted }
+        return suggestions.filter { suggestion in
+            switch suggestion.action {
+            case .switchToTab:
+                return seen.insert("tab|\(suggestion.target.lowercased())").inserted
+            case .navigate:
+                return seen.insert(suggestion.id).inserted
+            }
+        }
     }
 }

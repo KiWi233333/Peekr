@@ -422,13 +422,20 @@ final class WebViewManagerLifecycleTests: XCTestCase {
     func testDownloadEventsReachTheSharedDownloadStore() {
         let storeURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("peekr-manager-\(UUID().uuidString).json")
+        let downloadsURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("peekr-downloads-\(UUID().uuidString).json")
+        defer {
+            try? FileManager.default.removeItem(at: storeURL)
+            try? FileManager.default.removeItem(at: downloadsURL)
+        }
         let model = AppModel(store: AppStore(fileURL: storeURL))
         let factory = FakeFactory()
         let manager = WebViewManager(
             model: model,
             factory: factory,
             badges: BadgeStore(),
-            icons: IconStore()
+            icons: IconStore(),
+            downloadStore: DownloadStore(fileURL: downloadsURL)
         )
         manager.activate(model.apps[0].id)
 

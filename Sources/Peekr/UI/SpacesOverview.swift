@@ -52,6 +52,12 @@ struct SpacesOverview: View {
                     Button(action: onNewWorkspace) {
                         Label(loc.newWorkspace, systemImage: "plus")
                     }
+                    Button {
+                        let workspace = model.addPrivateWorkspace()
+                        onSelect(workspace.id)
+                    } label: {
+                        Label(loc.newPrivateSpace, systemImage: "eye.slash")
+                    }
                     Button(action: onNewAgentWorkspace) {
                         Label(loc.newAgentWorkspace, systemImage: "sparkles")
                     }
@@ -125,7 +131,7 @@ struct SpacesOverview: View {
             preview: previews[workspaceID],
             hidePreview: workspaceID == hiddenPreviewID,
             settings: settings,
-            canDelete: model.workspaces.count > 1,
+            canDelete: canDelete(workspace),
             dropTargeted: dropTargetID == workspaceID,
             onSelect: { onSelect(workspaceID) },
             onRename: {
@@ -141,6 +147,12 @@ struct SpacesOverview: View {
             onTargetChange: { targetID in dropTargetID = targetID },
             onPreviewFrameChange: { frame in onCardFrameChange(workspaceID, frame) }
         )
+    }
+
+    private func canDelete(_ workspace: Workspace) -> Bool {
+        guard model.workspaces.count > 1 else { return false }
+        if workspace.isPrivate { return true }
+        return model.workspaces.contains { !$0.isPrivate && $0.id != workspace.id }
     }
 
     private func handleWorkspaceDrop(_ items: [String], before referenceID: UUID?) -> Bool {
@@ -178,7 +190,17 @@ private struct SpaceCard: View {
     @State private var isHovered = false
 
     private var loc: Localized { settings.strings }
-    private var title: String { workspace.name.isEmpty ? (workspace.isAgentOwned ? loc.defaultAgentWorkspace : loc.defaultWorkspace) : workspace.name }
+    private var title: String {
+        if workspace.isPrivate { return loc.privateSpaceName }
+        return workspace.name.isEmpty
+            ? (workspace.isAgentOwned ? loc.defaultAgentWorkspace : loc.defaultWorkspace)
+            : workspace.name
+    }
+
+    private var symbol: String {
+        if workspace.isPrivate { return "eye.slash" }
+        return workspace.isAgentOwned ? "sparkles" : workspace.symbol
+    }
 
     var body: some View {
         ZStack(alignment: .topTrailing) {
@@ -186,7 +208,7 @@ private struct SpaceCard: View {
                 VStack(alignment: .leading, spacing: 10) {
                     previewContent
                     HStack(spacing: 7) {
-                        Image(systemName: workspace.isAgentOwned ? "sparkles" : workspace.symbol)
+                        Image(systemName: symbol)
                             .font(.system(size: 12, weight: .medium))
                             .foregroundStyle(.secondary)
                         if workspace.isPinned {
@@ -229,7 +251,7 @@ private struct SpaceCard: View {
         .onHover { isHovered = $0 }
         .contextMenu { actionItems }
         .draggable(workspace.id.uuidString) {
-            Label(title, systemImage: workspace.isAgentOwned ? "sparkles" : workspace.symbol)
+            Label(title, systemImage: symbol)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
                 .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
@@ -280,7 +302,7 @@ private struct SpaceCard: View {
                         }
                     }
                     if workspace.tabs.isEmpty {
-                        Image(systemName: workspace.isAgentOwned ? "sparkles" : workspace.symbol)
+                        Image(systemName: symbol)
                             .font(.system(size: 24, weight: .medium))
                             .foregroundStyle(.secondary)
                     }
@@ -295,6 +317,17 @@ private struct SpaceCard: View {
                     .background(.thinMaterial, in: Circle())
                     .padding(8)
                     .accessibilityLabel(loc.reorderWorkspaces)
+            }
+            if workspace.isPrivate {
+                Label(loc.privateSpace, systemImage: "eye.slash")
+                    .font(.system(size: 9.5, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 4)
+                    .background(.thinMaterial, in: Capsule())
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
+                    .padding(8)
+                    .accessibilityLabel(loc.privateSpaceName)
             }
         }
         .frame(height: 112)
@@ -336,7 +369,7 @@ private struct SpaceCard: View {
                 systemImage: workspace.isPinned ? "pin.slash" : "pin"
             )
         }
-        if workspace.isAgentOwned {
+        if workspace.isAgentOwned && !workspace.isPrivate {
             Button(action: onTakeOver) {
                 Label(loc.takeOverWorkspace, systemImage: "hand.tap")
             }

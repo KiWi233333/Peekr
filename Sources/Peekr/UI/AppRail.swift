@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 import Inject
 
 /// Browser-grade vertical tab sidebar: Arc-like Spaces at the top and Edge-like
@@ -23,6 +24,8 @@ struct AppRail: View {
     var onCollapse: () -> Void
 
     @State private var dropTarget: String?
+    @State private var dragged: RailDrag?
+    @State private var dragCleanup: Task<Void, Never>?
     @State private var hoveringGroup: UUID?
     @State private var renamingTab: UUID?
     @State private var renamingGroup: UUID?
@@ -110,6 +113,19 @@ struct AppRail: View {
             .help(loc.collapseSidebar)
             .accessibilityLabel(loc.collapseSidebar)
 
+            if model.activeWorkspace.isPrivate {
+                Image(systemName: "eye.slash")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 32, height: 20)
+                    .help(loc.privateSpaceName)
+                    .accessibilityLabel(loc.privateSpace)
+            }
+
+            if !model.activeWorkspace.isPrivate {
+                profileMenu
+            }
+
             Button(action: onOpenSpaces) {
                 Image(systemName: "square.grid.2x2")
                     .font(.system(size: 14, weight: .semibold))
@@ -136,7 +152,14 @@ struct AppRail: View {
 
     @ViewBuilder
     private var compactHeaderActions: some View {
-        profileMenu
+        if model.activeWorkspace.isPrivate {
+            Button(action: {}) {
+                Label(loc.privateSpace, systemImage: "eye.slash")
+            }
+            .disabled(true)
+        } else {
+            profileMenu
+        }
         Divider()
         Button { model.addGroup(name: loc.tabGroup, color: .blue) } label: {
             Label(loc.newTabGroup, systemImage: "rectangle.3.group")
@@ -148,6 +171,12 @@ struct AppRail: View {
             Label(loc.newWorkspace, systemImage: "square.stack.3d.up.badge.a")
         }
         Button {
+            model.addPrivateWorkspace()
+            onWorkspaceSwitched()
+        } label: {
+            Label(loc.newPrivateSpace, systemImage: "eye.slash")
+        }
+        Button {
             model.addAgentWorkspace()
             onWorkspaceSwitched()
         } label: {
@@ -157,7 +186,7 @@ struct AppRail: View {
         Button { beginRenameWorkspace(model.activeWorkspace) } label: {
             Label(loc.rename, systemImage: "pencil")
         }
-        if model.workspaces.count > 1 {
+        if canRemoveActiveWorkspace {
             Button(role: .destructive) {
                 model.removeWorkspace(model.activeWorkspaceID)
                 onWorkspaceSwitched()
@@ -239,6 +268,19 @@ struct AppRail: View {
                         UnreadBadge(count: unread)
                             .scaleEffect(0.78)
                             .offset(x: 5, y: -5)
+                    }
+                }
+                .overlay(alignment: .bottomLeading) {
+                    if model.audibleTabIDs.contains(app.id), !app.isMuted {
+                        Image(systemName: "speaker.wave.2.fill")
+                            .font(.system(size: 8, weight: .bold))
+                            .foregroundStyle(.primary.opacity(0.9))
+                            .padding(2.5)
+                            .background(.regularMaterial, in: Circle())
+                            .overlay(Circle().stroke(Theme.hairline, lineWidth: 0.5))
+                            .offset(x: -3, y: 3)
+                            .help(loc.playingAudio)
+                            .accessibilityLabel(loc.playingAudio)
                     }
                 }
                 .overlay(alignment: .bottomTrailing) {
@@ -339,16 +381,23 @@ struct AppRail: View {
                 .animation(reduceMotion ? nil : Motion.sidebarStyle, value: settings.anchor.railOnLeft)
 
                 if renamingWorkspace == model.activeWorkspaceID {
-                    TextField(loc.defaultWorkspace, text: $workspaceDraft)
+                    TextField(workspaceTitle, text: $workspaceDraft)
                         .textFieldStyle(.plain)
                         .font(.system(size: 13.5, weight: .semibold))
                         .focused($workspaceFieldFocused)
                         .shadcnFocusRing(workspaceFieldFocused, cornerRadius: 6)
                         .onSubmit(commitRenameWorkspace)
                         .onExitCommand { renamingWorkspace = nil }
+                } else if model.activeWorkspace.isPrivate {
+                    Image(systemName: "eye.slash")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                        .accessibilityLabel(loc.privateSpace)
                 }
-                profileMenu
                 Spacer(minLength: 4)
+                if !model.activeWorkspace.isPrivate {
+                    profileMenu
+                }
                 Button(action: onOpenSpaces) {
                     Image(systemName: "square.grid.2x2")
                         .font(.system(size: 14, weight: .semibold))
@@ -371,6 +420,12 @@ struct AppRail: View {
                         Label(loc.newWorkspace, systemImage: "square.stack.3d.up.badge.a")
                     }
                     Button {
+                        model.addPrivateWorkspace()
+                        onWorkspaceSwitched()
+                    } label: {
+                        Label(loc.newPrivateSpace, systemImage: "eye.slash")
+                    }
+                    Button {
                         model.addAgentWorkspace()
                         onWorkspaceSwitched()
                     } label: {
@@ -387,7 +442,7 @@ struct AppRail: View {
                             Label(loc.takeOverWorkspace, systemImage: "hand.tap")
                         }
                     }
-                    if model.workspaces.count > 1 {
+                    if canRemoveActiveWorkspace {
                         Button(role: .destructive) {
                             model.removeWorkspace(model.activeWorkspaceID)
                             onWorkspaceSwitched()
@@ -413,6 +468,19 @@ struct AppRail: View {
 
     private var activeProfile: BrowserProfile {
         model.profile(model.activeWorkspace.profileID) ?? model.defaultProfile
+    }
+
+    private var workspaceTitle: String {
+        let workspace = model.activeWorkspace
+        if workspace.isPrivate { return loc.privateSpaceName }
+        return workspace.name.isEmpty ? loc.defaultWorkspace : workspace.name
+    }
+
+    private var canRemoveActiveWorkspace: Bool {
+        let workspace = model.activeWorkspace
+        guard model.workspaces.count > 1 else { return false }
+        if workspace.isPrivate { return true }
+        return model.workspaces.contains { !$0.isPrivate && $0.id != workspace.id }
     }
 
     private var profileAlertTitle: String {
@@ -458,12 +526,15 @@ struct AppRail: View {
                 }
             }
         } label: {
-            Label(activeProfile.name, systemImage: "person.crop.circle")
-                .lineLimit(1)
+            ProfileAvatarView(profile: activeProfile, size: 23)
+                .frame(width: 28, height: 28)
+                .contentShape(Circle())
         }
         .menuStyle(.borderlessButton)
-        .fixedSize(horizontal: false, vertical: true)
-        .help(loc.profile)
+        .menuIndicator(.hidden)
+        .frame(width: 28, height: 28)
+        .fixedSize()
+        .help(activeProfile.name)
         .accessibilityLabel(loc.profile)
     }
 
@@ -505,29 +576,103 @@ struct AppRail: View {
         let snapshot = RailSnapshot(workspace: model.activeWorkspace)
 
         return ScrollView {
-            LazyVStack(spacing: 5) {
-                ForEach(snapshot.workspace.sidebarItems) { item in
-                    sidebarItem(item, snapshot: snapshot)
-                }
-                addTabButton
-                    .padding(.top, 5)
+            if #available(macOS 27.0, *) {
+                nativeReorderList(snapshot: snapshot)
+            } else {
+                manualReorderList(snapshot: snapshot)
             }
-            .padding(12)
-            .frame(maxWidth: .infinity, alignment: .top)
-            .animation(
-                reduceMotion ? nil : Motion.sidebarReorder,
-                value: snapshot.workspace.sidebarItems
+        }
+        .modifier(RailRootDropFallback(
+            isActive: { dragged != nil },
+            onMove: { cancelDragCleanup() },
+            onExit: { scheduleDragCleanup() },
+            onPerform: {
+                moveDragToEnd()
+                endDrag()
+            }
+        ))
+    }
+
+    /// macOS 27 native reordering: the system draws the insertion placeholder
+    /// and the push-aside animation, and reports one difference when the drag
+    /// ends — no per-row drop delegates or hand-rolled placeholder.
+    @available(macOS 27.0, *)
+    private func nativeReorderList(snapshot: RailSnapshot) -> some View {
+        LazyVStack(spacing: 0) {
+            ForEach(snapshot.workspace.sidebarItems) { item in
+                sidebarItem(item, snapshot: snapshot)
+            }
+            .reorderable(collectionID: RailCollectionID.root)
+            addTabButton
+                .padding(.top, 5)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .top)
+        .animation(
+            reduceMotion ? nil : Motion.sidebarReorder,
+            value: snapshot.workspace.sidebarItems
+        )
+        .reorderContainer(
+            for: SidebarItem.self,
+            itemID: \.referenceID,
+            in: RailCollectionID.self
+        ) { difference in
+            applyReorder(difference)
+        }
+    }
+
+    private func manualReorderList(snapshot: RailSnapshot) -> some View {
+        LazyVStack(spacing: 0) {
+            ForEach(snapshot.workspace.sidebarItems) { item in
+                sidebarItem(item, snapshot: snapshot)
+            }
+            addTabButton
+                .padding(.top, 5)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .top)
+        .animation(
+            reduceMotion ? nil : Motion.sidebarReorder,
+            value: snapshot.workspace.sidebarItems
+        )
+    }
+
+    @available(macOS 27.0, *)
+    private func applyReorder(_ difference: ReorderDifference<UUID, RailCollectionID>) {
+        guard !difference.sources.isEmpty else { return }
+        var groupID: TabGroup.ID?
+        switch difference.destination.collectionID {
+        case .root: groupID = nil
+        case .group(let id): groupID = id
+        }
+        var before: UUID?
+        switch difference.destination.position {
+        case .before(let id): before = id
+        case .end: before = nil
+        }
+        withSidebarReorder {
+            model.applySidebarReorder(
+                sources: difference.sources,
+                toGroup: groupID,
+                before: before
             )
         }
-        .dropDestination(for: String.self) { items, _ in
-            guard let drag = items.first.flatMap(RailDrag.init) else { return false }
-            withSidebarReorder {
-                switch drag {
-                case .tab(let id): model.moveTabToRoot(id)
-                case .group(let id): model.moveGroup(id, before: nil)
-                }
-            }
-            return true
+    }
+
+    /// Dropping anywhere outside a row (below the list, above it, side padding)
+    /// sends the item to the end.
+    private func moveDragToEnd() {
+        guard let drag = dragged else { return }
+        cancelDragCleanup()
+        let items = model.activeWorkspace.sidebarItems
+        switch drag {
+        case .tab(let id):
+            let reference = model.activeWorkspace.group(containing: id)?.id ?? id
+            guard items.last?.referenceID != reference else { return }
+            withSidebarReorder { model.moveTabToRoot(id) }
+        case .group(let id):
+            guard !(items.last?.kind == .group && items.last?.referenceID == id) else { return }
+            withSidebarReorder { model.moveGroup(id, before: nil) }
         }
     }
 
@@ -545,7 +690,44 @@ struct AppRail: View {
         }
     }
 
+    @ViewBuilder
     private func groupSection(_ group: TabGroup, tabsByID: [WebApp.ID: WebApp]) -> some View {
+        if #available(macOS 27.0, *) {
+            groupSectionBody(group) { items in
+                ForEach(items, id: \.referenceID) { item in
+                    if let app = tabsByID[item.referenceID] { tabRow(app, group: group) }
+                }
+                .reorderable(collectionID: RailCollectionID.group(group.id))
+            }
+            .padding(.vertical, 2.5)
+        } else {
+            groupSectionBody(group) { items in
+                ForEach(items, id: \.referenceID) { item in
+                    if let app = tabsByID[item.referenceID] { tabRow(app, group: group) }
+                }
+            }
+            .matchedGeometryEffect(
+                id: RailDrag.group(group.id).encoded,
+                in: sidebarMotionNamespace,
+                properties: .frame
+            )
+            .padding(.vertical, 2.5)
+            .opacity(dragged == .group(group.id) ? 0.4 : 1)
+            .onDrop(of: [UTType.text], delegate: RailDropDelegate(
+                isActive: { dragged != .group(group.id) },
+                onMove: { y in
+                    liveDrop(onto: .group(group.id), y: y, half: 20)
+                },
+                onExit: { scheduleDragCleanup() },
+                onPerform: { endDrag() }
+            ))
+        }
+    }
+
+    private func groupSectionBody<Rows: View>(
+        _ group: TabGroup,
+        @ViewBuilder rows: ([SidebarItem]) -> Rows
+    ) -> some View {
         VStack(spacing: 0) {
             groupHeader(group)
             // Keep disappearing rows inside their own clipping region. SwiftUI
@@ -559,10 +741,8 @@ struct AppRail: View {
                             .frame(width: 2)
                             .padding(.vertical, 2)
 
-                        LazyVStack(spacing: 3) {
-                            ForEach(group.tabIDs, id: \.self) { id in
-                                if let app = tabsByID[id] { tabRow(app, group: group) }
-                            }
+                        LazyVStack(spacing: 0) {
+                            rows(group.tabIDs.map(SidebarItem.tab))
                             if group.tabIDs.isEmpty {
                                 Button { onNewTab(group.id) } label: {
                                     Label(loc.newTabInGroup, systemImage: "plus")
@@ -589,14 +769,9 @@ struct AppRail: View {
             }
             .clipped()
         }
-        .matchedGeometryEffect(
-            id: RailDrag.group(group.id).encoded,
-            in: sidebarMotionNamespace,
-            properties: .frame
-        )
     }
 
-    private func groupHeader(_ group: TabGroup) -> some View {
+    private func groupHeaderBase(_ group: TabGroup) -> some View {
         let showsMenu = hoveringGroup == group.id || renamingGroup == group.id
 
         return HStack(spacing: 8) {
@@ -675,36 +850,42 @@ struct AppRail: View {
                 onUngroup: { model.ungroup(group.id) }
             )
         }
-        .draggable(RailDrag.group(group.id).encoded) {
-            Text(group.name)
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(.primary.opacity(0.84))
-                .padding(.horizontal, 14)
-                .padding(.vertical, 8)
-                .background(
-                    group.tint,
-                    in: RoundedRectangle(cornerRadius: 10, style: .continuous)
-                )
-        }
-        .pointerCursor(.openHand)
-        .dropDestination(for: String.self) { items, location in
-            guard let drag = items.first.flatMap(RailDrag.init) else { return false }
-            withSidebarReorder {
-                switch drag {
-                case .tab(let id): model.moveTab(id, toGroup: group.id)
-                case .group(let id):
-                    model.moveGroup(
-                        id,
-                        before: location.y < 13
-                            ? group.id
-                            : nextTopLevelReference(after: group.id)
-                    )
+    }
+
+    @ViewBuilder
+    private func groupHeader(_ group: TabGroup) -> some View {
+        if #available(macOS 27.0, *) {
+            groupHeaderBase(group)
+        } else {
+            groupHeaderBase(group)
+                .onDrag {
+                    beginDrag(.group(group.id))
+                    return NSItemProvider(object: RailDrag.group(group.id).encoded as NSString)
+                } preview: {
+                    groupDragPreview(group)
                 }
-            }
-            return true
-        } isTargeted: { targeted in
-            setDropTarget(targeted ? RailDrag.group(group.id).encoded : nil)
+                .pointerCursor(.openHand)
+                .onDrop(of: [UTType.text], delegate: RailDropDelegate(
+                    isActive: { dragged != .group(group.id) },
+                    onMove: { y in
+                        liveDrop(onto: .group(group.id), y: y, half: Self.groupHeaderDropHalf)
+                    },
+                    onExit: { scheduleDragCleanup() },
+                    onPerform: { endDrag() }
+                ))
         }
+    }
+
+    private func groupDragPreview(_ group: TabGroup) -> some View {
+        Text(group.name)
+            .font(.system(size: 12, weight: .semibold))
+            .foregroundStyle(.primary.opacity(0.84))
+            .padding(.horizontal, 14)
+            .padding(.vertical, 8)
+            .background(
+                group.tint,
+                in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+            )
     }
 
     private func groupMenu(_ group: TabGroup) -> some View {
@@ -766,7 +947,42 @@ struct AppRail: View {
         }
     }
 
+    @ViewBuilder
     private func tabRow(_ app: WebApp, group: TabGroup?) -> some View {
+        if #available(macOS 27.0, *) {
+            tabRowBase(app, group: group)
+        } else {
+            tabRowBase(app, group: group)
+                .matchedGeometryEffect(
+                    id: RailDrag.tab(app.id).encoded,
+                    in: sidebarMotionNamespace,
+                    properties: .frame
+                )
+                .opacity(dragged == .tab(app.id) ? 0 : 1)
+                .overlay {
+                    if dragged == .tab(app.id) {
+                        railPlaceholder(tint: group?.tint)
+                    }
+                }
+                .onDrag {
+                    beginDrag(.tab(app.id))
+                    return NSItemProvider(object: RailDrag.tab(app.id).encoded as NSString)
+                } preview: {
+                    railDragPreview(app: app, shadowTint: group?.shadowTint)
+                }
+                .pointerCursor(.openHand)
+                .onDrop(of: [UTType.text], delegate: RailDropDelegate(
+                    isActive: { dragged != .tab(app.id) },
+                    onMove: { y in
+                        liveDrop(onto: .tab(app.id), y: y, half: Self.tabDropHalf)
+                    },
+                    onExit: { scheduleDragCleanup() },
+                    onPerform: { endDrag() }
+                ))
+        }
+    }
+
+    private func tabRowBase(_ app: WebApp, group: TabGroup?) -> some View {
         let icon = icons.image(for: app)
 
         return BrowserTabRow(
@@ -779,6 +995,8 @@ struct AppRail: View {
             unread: badges.count(for: app.id),
             closeLabel: loc.closeTab,
             mutedLabel: loc.mutedTab,
+            playingAudio: model.audibleTabIDs.contains(app.id),
+            playingAudioLabel: loc.playingAudio,
             onSelect: { if renamingTab == nil { onSelect(app.id) } },
             onFocusChange: onTabFocusChange,
             onClose: { close(app) },
@@ -788,29 +1006,9 @@ struct AppRail: View {
             },
             onCancelRename: { renamingTab = nil }
         )
-        .matchedGeometryEffect(
-            id: RailDrag.tab(app.id).encoded,
-            in: sidebarMotionNamespace,
-            properties: .frame
-        )
-        .draggable(RailDrag.tab(app.id).encoded) {
-            HStack(spacing: 8) {
-                FaviconView(app: app, icon: icon, size: 16)
-                Text(app.displayName).font(.system(size: 12, weight: .medium)).lineLimit(1)
-            }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 7)
-            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
-            .shadow(color: group?.shadowTint ?? .clear, radius: 6, y: 2)
-        }
+        // Fold the inter-row gap into the row's own slot.
+        .padding(.vertical, 2.5)
         .pointerCursor(.openHand)
-        .dropDestination(for: String.self) { items, location in
-            guard let drag = items.first.flatMap(RailDrag.init) else { return false }
-            handleDrop(drag, on: app, in: group, at: location)
-            return true
-        } isTargeted: { targeted in
-            setDropTarget(targeted ? RailDrag.tab(app.id).encoded : nil)
-        }
         .contextMenu {
             Button { onEdit(app) } label: { Label(loc.edit, systemImage: "pencil") }
             Button { renamingTab = app.id } label: { Label(loc.rename, systemImage: "character.cursor.ibeam") }
@@ -934,6 +1132,25 @@ struct AppRail: View {
         }
     }
 
+    /// Slot shown in place of a tab while it is being dragged (manual path).
+    private func railPlaceholder(tint: Color?) -> some View {
+        RoundedRectangle(cornerRadius: 8, style: .continuous)
+            .fill((tint ?? .primary).opacity(0.12))
+            .frame(height: 32)
+    }
+
+    /// Snapshot shown under the pointer for a dragged tab.
+    private func railDragPreview(app: WebApp, shadowTint: Color?) -> some View {
+        HStack(spacing: 8) {
+            FaviconView(app: app, icon: icons.image(for: app), size: 16)
+            Text(app.displayName).font(.system(size: 12, weight: .medium)).lineLimit(1)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 7)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+        .shadow(color: shadowTint ?? .clear, radius: 6, y: 2)
+    }
+
     private func withSidebarReorder(_ mutation: () -> Void) {
         withAnimation(reduceMotion ? nil : Motion.sidebarReorder, mutation)
     }
@@ -944,40 +1161,110 @@ struct AppRail: View {
         }
     }
 
-    private func handleDrop(
-        _ drag: RailDrag,
-        on app: WebApp,
-        in group: TabGroup?,
-        at location: CGPoint
-    ) {
-        var createdGroup: TabGroup?
-        withSidebarReorder {
-            switch drag {
-            case .tab(let draggedID):
-                if let group {
-                    let reference = location.y < 16
-                        ? app.id
-                        : nextTabReference(after: app.id, in: group)
+    // MARK: - Live drag & drop
+
+    private static let tabDropHalf: CGFloat = 18.5      // (32 + 2×2.5) / 2
+    private static let groupHeaderDropHalf: CGFloat = 13 // header height 26 / 2
+
+    /// Start a drag. The source row swaps to a placeholder while the drag is in
+    /// flight, so the list shows a slot that follows the pointer and pushes its
+    /// neighbours aside — the behaviour of a sortable list.
+    private func beginDrag(_ drag: RailDrag) {
+        cancelDragCleanup()
+        if dragged != drag { dragged = drag }
+        setDropTarget(nil)
+    }
+
+    private func endDrag() {
+        cancelDragCleanup()
+        dragged = nil
+        setDropTarget(nil)
+    }
+
+    /// A cancelled drag fires `dropExited` but never `performDrop`; clear the
+    /// placeholder shortly after leaving every target and cancel that cleanup as
+    /// soon as the drag enters another target.
+    private func cancelDragCleanup() {
+        dragCleanup?.cancel()
+        dragCleanup = nil
+    }
+
+    private func scheduleDragCleanup() {
+        cancelDragCleanup()
+        dragCleanup = Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(150))
+            guard !Task.isCancelled else { return }
+            dragged = nil
+            setDropTarget(nil)
+        }
+    }
+
+    /// Live reorder as the pointer moves over a target. `y` is the pointer's
+    /// position in the target's own coordinate space; `half` its half-height.
+    private func liveDrop(onto target: RailDrag, y: CGFloat, half: CGFloat) {
+        guard let drag = dragged, drag != target else { return }
+        cancelDragCleanup()
+        setDropTarget(target.encoded)
+        applyDrop(drag, onto: target, below: y > half)
+    }
+
+    /// Reorder the dragged item so it sits directly before/after the target.
+    /// Adjacency is checked first so a stationary pointer does not re-insert the
+    /// item on every `dropUpdated`, which would thrash the animation.
+    private func applyDrop(_ drag: RailDrag, onto target: RailDrag, below: Bool) {
+        let workspace = model.activeWorkspace
+        switch (drag, target) {
+        case let (.tab(draggedID), .tab(targetID)):
+            if let group = workspace.group(containing: targetID) {
+                guard let to = group.tabIDs.firstIndex(of: targetID) else { return }
+                if let from = group.tabIDs.firstIndex(of: draggedID) {
+                    if below, from == to + 1 { return }
+                    if !below, from == to - 1 { return }
+                }
+                let reference = below
+                    ? nextTabReference(after: targetID, in: group)
+                    : targetID
+                withSidebarReorder {
                     model.moveTab(draggedID, toGroup: group.id, before: reference)
-                } else if location.y >= 8, location.y <= 24, location.x > 42 {
-                    createdGroup = model.combine(draggedID, with: app.id, name: loc.tabGroup)
-                } else {
-                    let reference = location.y < 16
-                        ? app.id
-                        : nextTopLevelReference(after: app.id)
+                }
+            } else {
+                let draggedReference = workspace.group(containing: draggedID)?.id ?? draggedID
+                let items = workspace.sidebarItems
+                guard let from = items.firstIndex(where: { $0.referenceID == draggedReference }),
+                      let to = items.firstIndex(where: { $0.referenceID == targetID }) else { return }
+                // Only skip when the dragged item is itself a top-level sibling
+                // of the target; a tab being pulled out of a group is not.
+                if draggedReference == draggedID {
+                    if below, from == to + 1 { return }
+                    if !below, from == to - 1 { return }
+                }
+                let reference = below
+                    ? nextTopLevelReference(after: targetID)
+                    : targetID
+                withSidebarReorder {
                     model.moveTabToRoot(draggedID, beforeItem: reference)
                 }
-            case .group(let groupID):
-                let topLevelID = group?.id ?? app.id
-                model.moveGroup(
-                    groupID,
-                    before: location.y < 16
-                        ? topLevelID
-                        : nextTopLevelReference(after: topLevelID)
-                )
             }
+
+        case let (.tab(draggedID), .group(groupID)):
+            guard let group = model.group(groupID), draggedID != group.tabIDs.last else { return }
+            withSidebarReorder { model.moveTab(draggedID, toGroup: groupID) }
+
+        case let (.group(draggedID), .tab(targetID)),
+             let (.group(draggedID), .group(targetID)):
+            let items = workspace.sidebarItems
+            guard let from = items.firstIndex(where: {
+                      $0.kind == .group && $0.referenceID == draggedID
+                  }),
+                  let to = items.firstIndex(where: { $0.referenceID == targetID }) else { return }
+            if below, from == to + 1 { return }
+            if !below, from == to - 1 { return }
+            let reference = below ? nextTopLevelReference(after: targetID) : targetID
+            withSidebarReorder { model.moveGroup(draggedID, before: reference) }
+
+        default:
+            break
         }
-        if let createdGroup { beginRenameGroup(createdGroup) }
     }
 
     private func nextTabReference(after tabID: WebApp.ID, in group: TabGroup) -> WebApp.ID? {
@@ -1010,6 +1297,58 @@ private enum RailDrag: Hashable {
         switch self {
         case .tab(let id): return "tab:\(id.uuidString)"
         case .group(let id): return "group:\(id.uuidString)"
+        }
+    }
+}
+
+/// Live-reorder drop delegate. Unlike `dropDestination`, a `DropDelegate`
+/// receives a continuous pointer location, so the sidebar can be reordered
+/// while the drag is still in flight and the placeholder animates into place.
+private struct RailDropDelegate: DropDelegate {
+    let isActive: () -> Bool
+    let onMove: (CGFloat) -> Void
+    let onExit: () -> Void
+    let onPerform: () -> Void
+
+    func validateDrop(info: DropInfo) -> Bool { isActive() }
+    func dropEntered(info: DropInfo) { onMove(info.location.y) }
+    func dropUpdated(info: DropInfo) -> DropProposal? {
+        onMove(info.location.y)
+        return DropProposal(operation: .move)
+    }
+    func dropExited(info: DropInfo) { onExit() }
+    func performDrop(info: DropInfo) -> Bool {
+        onPerform()
+        return true
+    }
+}
+
+/// Identifies one native reorder collection: the top-level list or one group's
+/// child list. macOS 27 uses it to route a drop to the right collection.
+@available(macOS 27.0, *)
+private enum RailCollectionID: Hashable, Sendable {
+    case root
+    case group(TabGroup.ID)
+}
+
+/// The manual path's root drop target. macOS 27 uses the native reorder
+/// container instead, so this is a no-op there.
+private struct RailRootDropFallback: ViewModifier {
+    let isActive: () -> Bool
+    let onMove: () -> Void
+    let onExit: () -> Void
+    let onPerform: () -> Void
+
+    func body(content: Content) -> some View {
+        if #available(macOS 27.0, *) {
+            content
+        } else {
+            content.onDrop(of: [UTType.text], delegate: RailDropDelegate(
+                isActive: isActive,
+                onMove: { _ in onMove() },
+                onExit: onExit,
+                onPerform: onPerform
+            ))
         }
     }
 }
@@ -1120,6 +1459,8 @@ private struct BrowserTabRow: View {
     let unread: Int?
     let closeLabel: String
     let mutedLabel: String
+    let playingAudio: Bool
+    let playingAudioLabel: String
     var onSelect: () -> Void
     var onFocusChange: (Bool) -> Void
     var onClose: () -> Void
@@ -1170,6 +1511,13 @@ private struct BrowserTabRow: View {
                     .font(.system(size: 9, weight: .bold))
                     .foregroundStyle(.secondary)
                     .accessibilityLabel(mutedLabel)
+            }
+            if playingAudio, !app.isMuted {
+                Image(systemName: "speaker.wave.2.fill")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .help(playingAudioLabel)
+                    .accessibilityLabel(playingAudioLabel)
             }
             Button(action: onClose) {
                 Image(systemName: "xmark")

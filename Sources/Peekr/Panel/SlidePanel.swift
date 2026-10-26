@@ -4,11 +4,10 @@ import AppKit
 /// Non-activating means peeking it out won't steal focus from your current app,
 /// yet it can still become key so you can type into web apps.
 final class SlidePanel: NSPanel {
-    /// Called only after the responder chain declines the tab-close equivalent.
-    /// Peekr deliberately has no window-close action for this shortcut.
+    /// Called only after the responder chain declines the close equivalents.
     var onCloseTabShortcut: (() -> Void)?
-    /// Called only after the responder chain and the application menu decline
-    /// the quit equivalent.
+    var onCloseWindowShortcut: (() -> Void)?
+    /// Handles the panel's quit equivalent before the application menu.
     var onQuitShortcut: (() -> Void)?
 
     init(contentRect: NSRect) {
@@ -36,12 +35,23 @@ final class SlidePanel: NSPanel {
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
 
-    /// Give the browser's own responder chain first chance at ⌘W. If it does
-    /// not handle the equivalent, fall back to closing Peekr's active tab.
-    /// Never fall through to a window-close operation: the panel is not a
-    /// user-manageable browser window.
+    /// The panel owns close equivalents before CEF or the default responder
+    /// chain can consume them without applying Peekr's tab/window semantics.
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
-        if super.performKeyEquivalent(with: event) { return true }
+        if Self.isCloseWindowKeyEquivalent(
+            flags: event.modifierFlags,
+            charactersIgnoringModifiers: event.charactersIgnoringModifiers
+        ) {
+            onCloseWindowShortcut?()
+            return true
+        }
+        if Self.isCloseTabKeyEquivalent(
+            flags: event.modifierFlags,
+            charactersIgnoringModifiers: event.charactersIgnoringModifiers
+        ) {
+            onCloseTabShortcut?()
+            return true
+        }
         if Self.isPlainCommandKeyEquivalent(
             flags: event.modifierFlags,
             charactersIgnoringModifiers: event.charactersIgnoringModifiers,
@@ -50,12 +60,7 @@ final class SlidePanel: NSPanel {
             onQuitShortcut?()
             return true
         }
-        guard Self.isCloseTabKeyEquivalent(
-            flags: event.modifierFlags,
-            charactersIgnoringModifiers: event.charactersIgnoringModifiers
-        ) else { return false }
-        onCloseTabShortcut?()
-        return true
+        return super.performKeyEquivalent(with: event)
     }
 
     static func isPlainCommandKeyEquivalent(
@@ -77,5 +82,13 @@ final class SlidePanel: NSPanel {
             charactersIgnoringModifiers: charactersIgnoringModifiers,
             character: "w"
         )
+    }
+
+    static func isCloseWindowKeyEquivalent(
+        flags: NSEvent.ModifierFlags,
+        charactersIgnoringModifiers: String?
+    ) -> Bool {
+        flags.intersection(.deviceIndependentFlagsMask) == [.command, .shift]
+            && charactersIgnoringModifiers?.lowercased() == "w"
     }
 }

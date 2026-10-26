@@ -10,6 +10,9 @@ final class AppModel {
     var activeWorkspaceID: UUID
     var profiles: [BrowserProfile]
     var isPinned: Bool = false
+    /// Tabs whose pages are currently playing audio. Runtime-only: the browser
+    /// reports it per page and it never enters the persisted workspace JSON.
+    var audibleTabIDs: Set<WebApp.ID> = []
 
     /// Called after a tab record leaves the model, allowing the composition root
     /// to tear down its cached engine and badge without coupling this layer to UI.
@@ -20,14 +23,6 @@ final class AppModel {
     /// Called before a Workspace changes Profile, while the old binding is
     /// still readable and its engines can be closed deterministically.
     var onWorkspaceProfileChange: ((Workspace.ID, BrowserProfile.ID, BrowserProfile.ID) -> Void)?
-
-    private struct ClosedTab {
-        let app: WebApp
-        let workspaceID: Workspace.ID
-        let groupID: TabGroup.ID?
-        let topLevelIndex: Int
-        let childIndex: Int?
-    }
 
     /// A group made implicitly by dropping one loose tab onto another. It is
     /// deliberately runtime-only: relaunching the app is a strong enough
@@ -42,6 +37,7 @@ final class AppModel {
     private let profileStore: ProfileStore
     private let searchEngine: () -> SearchEngine
     private let provisionalNow: () -> TimeInterval
+    private let recentlyClosedStore: RecentlyClosedStore
     private var recentlyClosed: [ClosedTab] = []
     private var selectionHistory: [WebApp.ID] = []
     private var provisionalGroups: [TabGroup.ID: ProvisionalGroup] = [:]
@@ -51,17 +47,22 @@ final class AppModel {
         store: AppStore,
         profileStore: ProfileStore = ProfileStore(),
         searchEngine: @escaping () -> SearchEngine = { .google },
-        provisionalNow: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }
+        provisionalNow: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime },
+        recentlyClosedStore: RecentlyClosedStore = RecentlyClosedStore()
     ) {
         self.store = store
         self.profileStore = profileStore
         self.searchEngine = searchEngine
         self.provisionalNow = provisionalNow
+        self.recentlyClosedStore = recentlyClosedStore
         let profileRegistry = profileStore.load()
         let availableProfiles = profileRegistry.profiles
         profiles = availableProfiles
         let data = store.load(fallback: AppStore.defaults(searchEngine: searchEngine()))
-        var loadedWorkspaces = data.workspaces.isEmpty ? [Workspace()] : data.workspaces
+        var loadedWorkspaces = data.workspaces.isEmpty
+            ? [Workspace()]
+            : data.workspaces.filter { !$0.isPrivate }
+        if loadedWorkspaces.isEmpty { loadedWorkspaces = [Workspace()] }
         let knownProfileIDs = Set(availableProfiles.map(\.id))
         for index in loadedWorkspaces.indices where !knownProfileIDs.contains(loadedWorkspaces[index].profileID) {
             loadedWorkspaces[index].profileID = BrowserProfile.defaultID
@@ -74,6 +75,7 @@ final class AppModel {
         for index in workspaces.indices { workspaces[index].normalizeSidebar() }
         normalizeWorkspaceOrder()
         if let selectedID { selectionHistory = [selectedID] }
+        recentlyClosed = recentlyClosedStore.load()
     }
 
     // MARK: - Active space and ordering
@@ -193,12 +195,24 @@ final class AppModel {
 
     @discardableResult
     func addBlankTab(toGroup groupID: TabGroup.ID? = nil) -> WebApp {
-        let provider = searchEngine()
-        return addApp(
-            title: provider.displayName,
-            urlString: provider.homepageURL.absoluteString,
+        addApp(
+            title: "New Tab",
+            urlString: InternalPage.newTab.urlString,
             toGroup: groupID
         )
+    }
+
+    /// Startup entry point for the New Tab page: reuse the active Space's
+    /// existing one instead of stacking duplicates.
+    @discardableResult
+    func selectOrAddNewTabPage() -> WebApp {
+        if let existing = activeWorkspace.tabs.first(where: {
+            $0.urlString == InternalPage.newTab.urlString
+        }) {
+            select(existing.id)
+            return existing
+        }
+        return addBlankTab()
     }
 
     @discardableResult
@@ -289,6 +303,22 @@ final class AppModel {
         persist()
     }
 
+    func setAudible(_ id: WebApp.ID, _ audible: Bool) {
+        var next = audibleTabIDs
+        if audible {
+            guard !next.contains(id) else { return }
+            next.insert(id)
+        } else {
+            guard next.remove(id) != nil else { return }
+        }
+        audibleTabIDs = next
+    }
+
+    func clearAudibleTabs() {
+        guard !audibleTabIDs.isEmpty else { return }
+        audibleTabIDs = []
+    }
+
     func removeApp(_ id: WebApp.ID) {
         guard let location = locate(id) else { return }
         let workspaceIndex = location.workspace
@@ -301,18 +331,24 @@ final class AppModel {
         } ?? workspace.sidebarItems.count
         let childIndex = group?.tabIDs.firstIndex(of: id)
 
-        recentlyClosed.append(ClosedTab(
-            app: workspace.tabs[location.tab],
-            workspaceID: workspace.id,
-            groupID: group?.id,
-            topLevelIndex: topIndex,
-            childIndex: childIndex
-        ))
-        if recentlyClosed.count > 25 { recentlyClosed.removeFirst(recentlyClosed.count - 25) }
+        if !workspace.isPrivate {
+            recentlyClosed.append(ClosedTab(
+                app: workspace.tabs[location.tab],
+                workspaceID: workspace.id,
+                groupID: group?.id,
+                topLevelIndex: topIndex,
+                childIndex: childIndex
+            ))
+            if recentlyClosed.count > RecentlyClosedStore.capacity {
+                recentlyClosed.removeFirst(recentlyClosed.count - RecentlyClosedStore.capacity)
+            }
+            recentlyClosedStore.save(recentlyClosed)
+        }
 
         removeTabReference(id, from: workspaceIndex, pruneEmptyGroups: true)
         workspaces[workspaceIndex].tabs.removeAll { $0.id == id }
         selectionHistory.removeAll { $0 == id }
+        setAudible(id, false)
 
         if workspaces[workspaceIndex].selectedTabID == id {
             let remaining = workspaces[workspaceIndex].orderedTabIDs
@@ -345,6 +381,7 @@ final class AppModel {
     @discardableResult
     func reopenLastClosedTab() -> WebApp? {
         guard let closed = recentlyClosed.popLast() else { return nil }
+        recentlyClosedStore.save(recentlyClosed)
         let workspaceIndex = workspaces.firstIndex { $0.id == closed.workspaceID } ?? activeIndex
         activeWorkspaceID = workspaces[workspaceIndex].id
         workspaces[workspaceIndex].tabs.append(closed.app)
@@ -417,6 +454,65 @@ final class AppModel {
             workspaces[activeIndex].sidebarItems.firstIndex { $0.referenceID == id }
         } ?? workspaces[activeIndex].sidebarItems.count
         workspaces[activeIndex].sidebarItems.insert(.tab(tabID), at: index)
+        persist()
+    }
+
+    /// Applies one native sidebar reorder (macOS 27 `reorderContainer`).
+    /// `sources` are `SidebarItem.referenceID`s — tab or group IDs — in drag
+    /// order; `groupID` is the destination collection (nil = top level) and
+    /// `before` the item to land ahead of (nil = append). Groups only live at
+    /// the top level, so any move that includes a group lands at the top level.
+    func applySidebarReorder(sources: [UUID], toGroup groupID: TabGroup.ID?, before: UUID?) {
+        guard !sources.isEmpty else { return }
+        let workspace = workspaces[activeIndex]
+
+        var movedTabs: [WebApp.ID] = []
+        var movedGroups: [TabGroup.ID] = []
+        for id in sources {
+            if workspace.groups.contains(where: { $0.id == id }) {
+                movedGroups.append(id)
+            } else if workspace.tabs.contains(where: { $0.id == id }) {
+                movedTabs.append(id)
+            }
+        }
+        guard !movedTabs.isEmpty || !movedGroups.isEmpty else { return }
+
+        for id in movedGroups {
+            workspaces[activeIndex].sidebarItems.removeAll {
+                $0.kind == .group && $0.referenceID == id
+            }
+        }
+        for id in movedTabs {
+            removeTabReference(id, from: activeIndex, pruneEmptyGroups: false)
+        }
+
+        let destinationGroup: TabGroup.ID? = movedGroups.isEmpty ? groupID : nil
+
+        if let destinationGroup,
+           let groupIndex = activeGroupIndex(destinationGroup),
+           !movedTabs.isEmpty {
+            var insertIndex = workspaces[activeIndex].groups[groupIndex].tabIDs.count
+            if let before,
+               let index = workspaces[activeIndex].groups[groupIndex].tabIDs.firstIndex(of: before) {
+                insertIndex = index
+            }
+            workspaces[activeIndex].groups[groupIndex].tabIDs.insert(contentsOf: movedTabs, at: insertIndex)
+            workspaces[activeIndex].groups[groupIndex].isCollapsed = false
+            if workspaces[activeIndex].groups[groupIndex].tabIDs.count >= 3 {
+                confirmGroup(destinationGroup)
+            }
+        } else {
+            var items: [SidebarItem] = movedTabs.map(SidebarItem.tab)
+            items.append(contentsOf: movedGroups.map(SidebarItem.group))
+            var insertIndex = workspaces[activeIndex].sidebarItems.count
+            if let before,
+               let index = workspaces[activeIndex].sidebarItems.firstIndex(where: { $0.referenceID == before }) {
+                insertIndex = index
+            }
+            workspaces[activeIndex].sidebarItems.insert(contentsOf: items, at: insertIndex)
+        }
+
+        pruneEmptyGroups(in: activeIndex, excluding: destinationGroup)
         persist()
     }
 
@@ -700,7 +796,8 @@ final class AppModel {
     }
 
     func profile(_ id: BrowserProfile.ID) -> BrowserProfile? {
-        profiles.first { $0.id == id }
+        if id == BrowserProfile.incognitoID { return .incognitoProfile }
+        return profiles.first { $0.id == id }
     }
 
     func profile(forTab tabID: WebApp.ID) -> BrowserProfile {
@@ -710,6 +807,16 @@ final class AppModel {
             return defaultProfile
         }
         return profile(workspace.profileID) ?? defaultProfile
+    }
+
+    func isPrivateTab(_ id: WebApp.ID) -> Bool {
+        workspaces.contains { workspace in
+            workspace.isPrivate && workspace.tabs.contains { $0.id == id }
+        }
+    }
+
+    func isPrivateWorkspace(_ id: Workspace.ID) -> Bool {
+        workspaces.first(where: { $0.id == id })?.isPrivate == true
     }
 
     @discardableResult
@@ -744,7 +851,8 @@ final class AppModel {
     @discardableResult
     func rebindWorkspace(_ workspaceID: Workspace.ID, to profileID: BrowserProfile.ID) -> Bool {
         guard profiles.contains(where: { $0.id == profileID && !$0.isArchived }),
-              let index = workspaces.firstIndex(where: { $0.id == workspaceID }) else {
+              let index = workspaces.firstIndex(where: { $0.id == workspaceID }),
+              !workspaces[index].isPrivate else {
             return false
         }
         let previousProfileID = workspaces[index].profileID
@@ -781,6 +889,28 @@ final class AppModel {
         activeWorkspaceID = workspace.id
         recordSelection(tab.id)
         persist()
+        return workspace
+    }
+
+    /// Creates a session-only incognito space and switches to it. The space
+    /// never enters `apps.json`; its tabs, history and downloads disappear with
+    /// the app session.
+    @discardableResult
+    func addPrivateWorkspace() -> Workspace {
+        let tab = WebApp(
+            title: "New Tab",
+            urlString: InternalPage.newTab.urlString
+        )
+        let workspace = Workspace(
+            profileID: BrowserProfile.incognitoID,
+            symbol: "eye.slash",
+            tabs: [tab],
+            isPrivate: true
+        )
+        onWorkspaceSwitch?(activeWorkspaceID, workspace.id)
+        workspaces.append(workspace)
+        activeWorkspaceID = workspace.id
+        recordSelection(tab.id)
         return workspace
     }
 
@@ -825,6 +955,10 @@ final class AppModel {
     func removeWorkspace(_ id: UUID) {
         guard workspaces.count > 1,
               let index = workspaces.firstIndex(where: { $0.id == id }) else { return }
+        if !workspaces[index].isPrivate,
+           !workspaces.contains(where: { !$0.isPrivate && $0.id != id }) {
+            return
+        }
         if activeWorkspaceID == id,
            let nextID = workspaces.first(where: { $0.id != id })?.id {
             onWorkspaceSwitch?(id, nextID)
@@ -922,7 +1056,10 @@ final class AppModel {
         pendingPersist?.cancel()
         normalizeWorkspaceOrder()
         for index in workspaces.indices { workspaces[index].normalizeSidebar() }
-        store.save(WorkspacesData(workspaces: workspaces, activeWorkspaceID: activeWorkspaceID))
+        let persisted = workspaces.filter { !$0.isPrivate }
+        let persistedActiveID = persisted.first(where: { $0.id == activeWorkspaceID })?.id
+            ?? persisted.first?.id
+        store.save(WorkspacesData(workspaces: persisted, activeWorkspaceID: persistedActiveID))
     }
 
     private func normalizeWorkspaceOrder() {
